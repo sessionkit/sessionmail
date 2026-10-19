@@ -1,0 +1,38 @@
+Content-Type: multipart/mixed; boundary="===============7532085270583488652=="
+MIME-Version: 1.0
+Subject: stdlib mixed
+
+--===============7532085270583488652==
+Content-Type: multipart/alternative;
+ boundary="===============1691454051371446613=="
+MIME-Version: 1.0
+From: carol@example.org
+To: dave@example.net
+Subject: stdlib mime
+
+--===============1691454051371446613==
+Content-Type: text/plain; charset="utf-8"
+MIME-Version: 1.0
+Content-Transfer-Encoding: base64
+
+SGkgRGF2ZSwKClRoZSBudW1iZXJzIGFyZSBhdHRhY2hlZC4gQ2Fmw6kgYXQgMTA/CgotLSAKQ2Fy
+b2wK
+
+--===============1691454051371446613==
+Content-Type: text/html; charset="utf-8"
+MIME-Version: 1.0
+Content-Transfer-Encoding: base64
+
+PGh0bWw+PGJvZHk+PHA+SGkgRGF2ZSw8L3A+PHA+VGhlIG51bWJlcnMgYXJlIGF0dGFjaGVkLiBD
+YWYmZWFjdXRlOyBhdCAxMD88L3A+PC9ib2R5PjwvaHRtbD4K
+
+--===============1691454051371446613==--
+
+--===============7532085270583488652==
+Content-Type: application/octet-stream; Name="x.bin"
+MIME-Version: 1.0
+Content-Transfer-Encoding: base64
+
+AAFiaW5hcnk=
+
+--===============7532085270583488652==--

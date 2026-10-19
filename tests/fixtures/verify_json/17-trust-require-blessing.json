@@ -1,0 +1,1 @@
+{"rc": 1, "reason": "bless-absent", "result": "good", "schema": 1, "signature": null, "trust": {"agent": "ann", "leg": "3-bless", "line": "TRUST: FAIL leg=3-bless reason=bless-absent", "reason": "bless-absent", "verdict": "FAIL"}}

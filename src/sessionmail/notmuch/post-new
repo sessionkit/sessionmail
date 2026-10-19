@@ -1,0 +1,300 @@
+#!/bin/sh
+# post-new — auto-classification of fleet mail at index time.
+# Installed 2030-07-15. Runs after every `notmuch new` indexes new
+# messages; retags are batch + idempotent (the `not tag:` guards keep
+# re-runs cheap).
+#
+# Rules:
+#   +agent       all agent-to-agent mail (path:agents/**, or the config key
+#                sessionmail.agent_query)
+#   +memory      the fleet memory mailbox (agents/memory/**, or the config key
+#                sessionmail.memory_query) — episodic memory
+#   +superseded  RE-DERIVED FROM THE MAIL — see the long note below. This is the
+#                one that makes the memory survive losing its own index.
+#
+# Absolute binary paths for grep and perl: this hook also runs under a
+# launchd agent that runs `notmuch new`, whose PATH has no /opt/homebrew/bin,
+# and whose `grep` must not be whatever shim happens to be on an agent's PATH
+# (an interactive shell here resolves `grep` to ugrep, which has different
+# regex semantics — that once cost a deaf listener).
+#
+# notmuch is FOUND, never assumed: the hardcoded Homebrew path was
+# wrong on Linux and Intel macs. In order:
+#   1. $SESSIONMAIL_NOTMUCH, sessionmail's one setting for the binary
+#      (src/sessionmail/_notmuch.py). Set but not runnable is an error: no
+#      fallback hides a wrong setting.
+#   2. `notmuch` on PATH.
+#   3. The first runnable of NOTMUCH_PATHS: launchd's PATH
+#      (/usr/bin:/bin:/usr/sbin:/sbin) has no Homebrew prefix, so the hook
+#      would go blind under it without this list. It is postfix/nm-deliver's
+#      list (one host, one notmuch), and a candidate, not THE path.
+# None found: ONE line on stderr and exit 1, so `notmuch new` reports a
+# failed hook instead of a silent no-op that looks like an idle mailbox.
+NOTMUCH_PATHS="/opt/homebrew/bin/notmuch /usr/local/bin/notmuch /usr/bin/notmuch"
+if [ -n "${SESSIONMAIL_NOTMUCH:-}" ]; then
+  case $SESSIONMAIL_NOTMUCH in
+    */*) NOTMUCH=$SESSIONMAIL_NOTMUCH ;;
+    *)   NOTMUCH=$(command -v "$SESSIONMAIL_NOTMUCH" 2>/dev/null) ;;
+  esac
+else
+  NOTMUCH=$(command -v notmuch 2>/dev/null)
+  if [ -z "$NOTMUCH" ]; then
+    for _p in $NOTMUCH_PATHS; do
+      [ -x "$_p" ] && { NOTMUCH=$_p; break; }
+    done
+  fi
+fi
+if [ -z "$NOTMUCH" ] || [ ! -f "$NOTMUCH" ] || [ ! -x "$NOTMUCH" ]; then
+  echo "post-new: notmuch not found (SESSIONMAIL_NOTMUCH=${SESSIONMAIL_NOTMUCH:-unset}, PATH=$PATH, then $NOTMUCH_PATHS): nothing tagged" >&2
+  exit 1
+fi
+GREP=/usr/bin/grep
+PERL=/usr/bin/perl
+POST_NEW_TIMEOUT=300
+
+# The two path queries are config keys, read like post_new_command below
+# (openspec/changes/store-index, notmuch-hook). Unset or
+# empty, each is today's query and the batch is byte-identical to before. A
+# store index's paths are relative to the STORE root, where `agents/**` can
+# never match, so a store profile sets `sessionmail.agent_query = path:**`.
+# A value is spliced before `and not tag:X`: one term, or parenthesized.
+# Never `*`: `* and not tag:agent` is a Xapian parse error that drops the
+# whole batch, +memory included (E16).
+agent_query=$("$NOTMUCH" config get sessionmail.agent_query 2>/dev/null)
+memory_query=$("$NOTMUCH" config get sessionmail.memory_query 2>/dev/null)
+printf '+agent -- %s and not tag:agent\n+memory -- %s and not tag:memory\n' \
+  "${agent_query:-path:agents/**}" "${memory_query:-path:agents/memory/**}" \
+  | "$NOTMUCH" tag --batch
+
+# ---------------------------------------------------------------------------
+# RE-DERIVE `superseded` FROM THE MESSAGES THEMSELVES
+#
+# Why this exists. Measured on 2030-07-15, not assumed:
+#
+#   notmuch tags live in a Xapian index, and that index is a DERIVED artefact.
+#   You are meant to be able to delete it and rebuild from the maildir. We did.
+#   `rm -rf xapian && notmuch new` — and the `superseded` tag was GONE, at which
+#   point the current-truth query
+#
+#       tag:memory AND NOT tag:superseded
+#
+#   RESURRECTED A FALSIFIED MEMORY and served it as fact: "wedge status:
+#   PERSISTS — reboot or root autopsy needed", a diagnosis we had already
+#   disproved hours earlier.
+#
+#   A memory system that can forget it was corrected is not a memory system.
+#   That is a straight falsification of supersede-by-retag — the paper's claim
+#   #2 — and the strongest attack available on it. So we close it, rather than
+#   argue with it.
+#
+# The rule this enforces: A SUPERSEDE IS ONLY REAL IF IT IS DECLARED IN AN
+# IMMUTABLE MESSAGE. A prose subject ("SUPERSEDED: …") and an In-Reply-To are
+# not enough — no hook can act on those without guessing. `message send
+# --supersedes <msgid>` writes a `Supersedes:` header into the message (the
+# STANDARD one: RFC 2156 for email, RFC 5536 §3.2.12 for netnews); this hook
+# reads those headers back out of the maildir and re-applies the tag. Messages
+# from the first hours of 2030-07-15 carry the pre-rename `X-Supersedes:`
+# spelling — immutable, so this hook honours BOTH forever.
+#
+#   The tag is how you find it. The message is how you know it's true.
+#
+# The tag is now a PROJECTION of the mail, rebuildable from nothing but the
+# messages on disk. Delete the whole index and every correction comes back.
+#
+# Idempotent. Cost history: v1 ran one `grep -l` pass over the
+# whole corpus per run — fine at 1.4k messages, but by 2030-08-06 the corpus
+# was 16k and the scan was 0.586s of `notmuch new`'s 0.642s (91.3%). Carriers
+# are now found via the INDEXED headers (sub-ms):
+#   index.header.Supersedes=Supersedes   index.header.XSupersedes=X-Supersedes
+# Both live in ~/.notmuch-config (set 2030-08-06).
+# That file survives index deletion, so rebuild-from-nothing still holds; a
+# NEWLY added indexed header needs a one-off `notmuch reindex '*'` (~11s).
+# The sexp presence form is the ONLY faithful query measured: infix wildcard /
+# regex forms (`Supersedes:"*"`, `Supersedes:/./`) over-match — 256 hits for 5
+# real headers on 2030-08-06. If the indexed query errors (config entry lost,
+# notmuch built without sexp), the hook falls back to the original full grep
+# and SAYS SO on stderr — a silent degrade here would look exactly like an
+# idle mailbox.
+# 2030-09-08: O(NEW CARRIERS), ONE PROCESS. Measured at load 75-88:
+# the loop below used to walk EVERY carrier (750 of 40k messages) and
+# spawn one `notmuch tag` PER CARRIER PER DELIVERY - 94 deliveries in flight
+# = ~70,000 tag processes queued on the single Xapian write lock (163 notmuch
+# processes live, postfix 93 deep, agent mail 10 min late). Now:
+#   - only carriers NOT yet tagged supersedes-applied are read (indexed, sub-ms);
+#   - every retag goes into ONE `notmuch tag --batch`, so a delivery costs one
+#     process however many carriers there are;
+#   - the carrier is tagged supersedes-applied in the same batch, so the next
+#     run sees none of them. A carrier whose maildir file has moved since the
+#     index last saw it (flag rename, :2, -> :2,S) is skipped silently until
+#     `notmuch new` refreshes the path - the old loop had the same gap.
+#     Idempotent; rebuild-from-nothing still holds - after an index wipe
+#     all carriers re-apply once, in one batch.
+carriers=$("$NOTMUCH" search --query=sexp --output=files \
+             '(and (or (Supersedes *) (XSupersedes *)) (not (tag supersedes-applied)))' 2>/dev/null)
+if [ $? -ne 0 ]; then
+  echo "post-new: indexed Supersedes query failed; falling back to full-corpus grep" >&2
+  carriers=$("$NOTMUCH" search --output=files -- 'not tag:supersedes-applied' 2>/dev/null \
+    | tr '\n' '\0' \
+    | xargs -0 $GREP -l -i -E -m1 '^(x-)?supersedes:' 2>/dev/null)
+fi
+# An id spliced into a query is quoted the notmuch way: inside
+# id:"...", an embedded `"` is DOUBLED, Xapian's quoted-term rule and the
+# form `notmuch dump` writes. Spliced raw, `<q"t@x>` became id:"q"t@x", which
+# matches nothing: the target was never superseded and the carrier never
+# applied, so it was re-read on every run. Pure sh, so a carrier costs no
+# extra process. Sets $idq.
+id_query() {
+  idq= _rest=$1
+  while :; do
+    case $_rest in
+      *\"*) idq=$idq${_rest%%\"*}\"\"; _rest=${_rest#*\"} ;;
+      *) break ;;
+    esac
+  done
+  idq="id:\"$idq$_rest\""
+}
+printf '%s\n' "$carriers" \
+  | while read -r f; do
+      [ -n "$f" ] || continue
+      sup=$(awk 'NF==0{exit} /^([Xx]-)?[Ss][Uu][Pp][Ee][Rr][Ss][Ee][Dd][Ee][Ss]:/{sub(/^[^:]*:[ \t]*/,""); print; exit}' "$f" 2>/dev/null \
+            | tr -d '<> \r\t')
+      cid=$(awk 'NF==0{exit} /^[Mm][Ee][Ss][Ss][Aa][Gg][Ee]-[Ii][Dd]:/{sub(/^[^:]*:[ \t]*/,""); print; exit}' "$f" 2>/dev/null \
+            | tr -d '<> \r\t')
+      [ -n "$sup" ] || continue
+      id_query "$sup"; supq=$idq
+      printf '+superseded -- %s\n' "$supq"
+      # A carrier is DONE only once its target is in the index. If the
+      # target arrives later (another box, a sync, a late delivery), the
+      # carrier stays pending so the next run tags the target; marking it
+      # applied here would leave the target unsuperseded until an index
+      # wipe (found by the sessionmail test, 2030-10-01).
+      # A failed or empty count leaves the carrier pending; the next run retries.
+      n=$("$NOTMUCH" count -- "$supq" 2>/dev/null)
+      case "$cid:$n" in
+        :*|*:|*:0|*:*[!0-9]*) ;;
+        *) id_query "$cid"; printf '+supersedes-applied -- %s\n' "$idq" ;;
+      esac
+    done \
+  | "$NOTMUCH" tag --batch 2>/dev/null
+
+# ---------------------------------------------------------------------------
+# THE POST-NEW COMMAND: an opt-in, detached run after the tagging
+#
+# With the notmuch config key `sessionmail.post_new_command` set to an
+# absolute path to an executable, every hook run ends by asking for one run
+# of it; with the key unset (the default) the hook ends here, as it always
+# has. On:   notmuch config set sessionmail.post_new_command /abs/path
+#      Off:  notmuch config set sessionmail.post_new_command
+#
+# The command can never block or fail indexing:
+#   - the hook only touches `again` and spawns a runner that leaves this
+#     process group (setsid in the parent, BEFORE the fork, so no launchd or
+#     pipe kill of the caller's group can reach the child) with every fd on
+#     /dev/null, then exits 0 without waiting;
+#   - one run at a time: the runner holds a kernel flock (it dies with its
+#     holder, and is close-on-exec, so the command never holds it). A runner
+#     that finds it held exits: the holder re-checks `again` AFTER it
+#     releases, so an arrival during a run gives exactly one more run;
+#   - the command's own `notmuch new` sees SESSIONMAIL_IN_POST_NEW_COMMAND,
+#     tags as usual and skips this seam, so it never re-fires itself;
+#   - the command gets no arguments, cwd /, its own process group, stdin
+#     /dev/null, stdout+stderr appended to the log, and an environment built
+#     from nothing (HOME, launchd's PATH, NOTMUCH_CONFIG, the guard): the
+#     same whoever triggered the run. It is killed at POST_NEW_TIMEOUT
+#     seconds (TERM to its group, KILL 5 s later); its exit status is logged
+#     and otherwise ignored.
+# State, created only when the key is set: $HOME/.sessionmail/post-new/
+# (`lock`, `again`, `log`, rolled to `log.1` past 1 MiB). HOME and not
+# TMPDIR or SESSIONMAIL_HOME: launchd, postfix and agents must all take the
+# same lock, and no caller's environment may move it.
+#
+# Every failure here is silent toward notmuch: `true` and not `:`, because a
+# failed redirection on a POSIX special builtin exits a POSIX shell (dash),
+# braces or not; and the braces carry the 2>/dev/null over the redirection.
+[ -z "${SESSIONMAIL_IN_POST_NEW_COMMAND:-}" ] || exit 0
+cmd=$("$NOTMUCH" config get sessionmail.post_new_command 2>/dev/null)
+[ -n "$cmd" ] && [ -n "${HOME:-}" ] || exit 0
+state=$HOME/.sessionmail/post-new
+{ /bin/mkdir -p "$state" && true > "$state/again"; } 2>/dev/null || exit 0
+[ -x "$PERL" ] || { echo "not run: $PERL is missing" > "$state/no-perl"; exit 0; } 2>/dev/null
+$PERL - "$state" "$NOTMUCH" "$POST_NEW_TIMEOUT" >/dev/null 2>&1 <<'RUNNER'
+use strict; use warnings; use POSIX (); use Fcntl qw(:flock);
+my ($state, $notmuch, $timeout) = @ARGV;
+# Detach. setsid returns -1 on failure (as a group leader), never undef.
+my $sid = POSIX::setsid();
+defined(my $pid = fork) or exit 0;
+exit 0 if $pid;
+POSIX::setsid() if $sid == -1;
+chdir "/";
+open STDIN, "<", "/dev/null"; open STDOUT, ">", "/dev/null"; open STDERR, ">", "/dev/null";
+opendir(my $d, "/dev/fd"); my @fds = grep { /^\d+$/ && $_ > 2 } readdir $d; closedir $d;
+POSIX::close($_) for @fds;
+
+my %env = (HOME => $ENV{HOME}, PATH => "/usr/bin:/bin:/usr/sbin:/sbin",
+           SESSIONMAIL_IN_POST_NEW_COMMAND => 1);
+$env{NOTMUCH_CONFIG} = $ENV{NOTMUCH_CONFIG} if defined $ENV{NOTMUCH_CONFIG};
+my $log = "$state/log";
+
+sub note {
+  open(my $l, ">>", $log) or return;
+  print $l POSIX::strftime("%Y-%m-%dT%H:%M:%SZ", gmtime), " [$$] @_\n";
+  close $l;
+}
+
+# Read on every pass, so unsetting the key stops a loop at its next pass.
+sub configured {
+  open(my $p, "-|", $notmuch, "config", "get", "sessionmail.post_new_command") or return "";
+  my $v = <$p> // ""; close $p; chomp $v; return $v;
+}
+
+# Wait for a child, at most $secs; 1 if it ended.
+sub reap {
+  my ($kid, $secs) = @_;
+  my $done = eval { local $SIG{ALRM} = sub { die "timeout\n" }; alarm $secs; waitpid($kid, 0); alarm 0; 1 };
+  return $done ? 1 : 0;
+}
+
+sub run_once {
+  my $cmd = configured();
+  return if $cmd eq "";
+  rename $log, "$log.1" if (-s $log // 0) > (1 << 20);
+  unless ($cmd =~ m{^/} && -f $cmd && -x _) {
+    note "not run: '$cmd' is not an absolute path to an executable";
+    return;
+  }
+  note "start $cmd";
+  my $t0 = time;
+  my $kid = fork;
+  unless (defined $kid) { note "not run: fork failed: $!"; return }
+  if (!$kid) {
+    setpgrp(0, 0);
+    open STDOUT, ">>", $log; open STDERR, ">&", \*STDOUT;
+    %ENV = %env;
+    { exec { $cmd } $cmd }
+    POSIX::_exit(127);
+  }
+  my $how;
+  if (reap($kid, $timeout)) {
+    $how = ($? & 127) ? "signal=" . ($? & 127) : "exit=" . ($? >> 8);
+  } else {
+    kill "TERM", -$kid;
+    reap($kid, 5) or do { kill "KILL", -$kid; waitpid($kid, 0) };
+    $how = "timeout=${timeout}s";
+  }
+  note "end $how secs=" . (time - $t0);
+}
+
+# One run at a time. `again` is cleared BEFORE the run, so an arrival during
+# it sets it again; whether to go round is decided AFTER the release, so no
+# arrival is ever lost. A flag it cannot clear ends the runner (logged), so
+# it never spins; the next arrival retries.
+while (1) {
+  open(my $lock, ">>", "$state/lock") or exit 0;
+  flock($lock, LOCK_EX | LOCK_NB) or exit 0;
+  if (unlink "$state/again") { run_once() }
+  elsif (!$!{ENOENT}) { note "not run: cannot clear again: $!"; close $lock; exit 0 }
+  close $lock;
+  last unless -e "$state/again";
+}
+RUNNER
+exit 0

@@ -1,0 +1,15 @@
+From: Carol <carol@example.org>
+To: Dave <dave@example.net>
+Subject: flowed-single-crlf
+Date: Thu, 03 Jan 2030 12:00:00 +0000
+Message-ID: <flowed-single-crlf@example.org>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"; format=flowed; delsp=yes
+Content-Transfer-Encoding: 8bit
+
+Hi Dave,
+
+The numbers are attached. Café at 10?
+
+-- 
+Carol

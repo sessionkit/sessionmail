@@ -1,0 +1,25 @@
+From: Carol <carol@example.org>
+To: Dave <dave@example.net>
+Subject: apple-mail-alt
+Date: Thu, 03 Jan 2030 12:00:00 +0000
+Message-ID: <apple-mail-alt@example.org>
+MIME-Version: 1.0
+Content-Type: multipart/alternative;
+	boundary="Apple-Mail=_5A2E7C1D-8B3F-4E2A-9C1D-0F6B2A3C4D5E"
+X-Mailer: Apple Mail (2.3774.300.61.1.2)
+
+
+--Apple-Mail=_5A2E7C1D-8B3F-4E2A-9C1D-0F6B2A3C4D5E
+Content-Transfer-Encoding: quoted-printable
+Content-Type: text/plain;
+	charset=utf-8
+
+Hi Dave,=0A=0AThe numbers are attached. Caf=C3=A9 at 10?
+
+--Apple-Mail=_5A2E7C1D-8B3F-4E2A-9C1D-0F6B2A3C4D5E
+Content-Transfer-Encoding: quoted-printable
+Content-Type: text/html;
+	charset=utf-8
+
+<html><body>Hi Dave, Caf=C3=A9 at 10?</body></html>
+--Apple-Mail=_5A2E7C1D-8B3F-4E2A-9C1D-0F6B2A3C4D5E--

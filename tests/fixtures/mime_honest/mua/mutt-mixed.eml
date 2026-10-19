@@ -1,0 +1,28 @@
+From: Carol <carol@example.org>
+To: Dave <dave@example.net>
+Subject: mutt-mixed
+Date: Thu, 03 Jan 2030 12:00:00 +0000
+Message-ID: <mutt-mixed@example.org>
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary=xYzAbC123dEf
+Content-Disposition: inline
+User-Agent: Mutt/2.2.12 (2023-09-09)
+
+
+--xYzAbC123dEf
+Content-Type: text/plain; charset=us-ascii
+Content-Disposition: inline
+
+Patch attached.
+
+--xYzAbC123dEf
+Content-Type: text/x-diff; charset=us-ascii
+Content-Disposition: attachment; filename="fix.patch"
+
+--- a/x
++++ b/x
+@@ -1 +1 @@
+-a
++b
+
+--xYzAbC123dEf--

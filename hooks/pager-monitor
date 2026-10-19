@@ -1,0 +1,23 @@
+#!/bin/sh
+# pager-monitor - the root plugin's monitor command:
+# `pager listen --monitor`, from PATH, the same `pager` the hooks run
+# (hooks/pager-hook). One pager per seat: a marketplace or kit install has
+# no checkout beside its cached plugin, so PATH is the only pager that
+# works everywhere. It never looks for a checkout's virtualenv; a worktree
+# proof puts its own pager first on PATH when it launches the seat.
+#
+# `exec`, twice (monitors/monitors.json and here): the pager REPLACES the
+# shells, so its parent is claude itself (caller-gone means claude-gone)
+# and it has no children.
+#
+# Not in a root `bin/`: Claude Code puts a plugin's `bin/` on every seat's
+# Bash PATH, and this is not a command for a seat to type.
+#
+# NO `pager` ON PATH: Claude Code does not restart a monitor that exits, so
+# say so on stdout - the one channel the seat hears - in the pager's own
+# DEAF form, and exit 2, the pager's "could not look".
+if ! command -v pager >/dev/null 2>&1; then
+    echo "pager: DEAF - the pager monitor found no \`pager\` on PATH (run \`uv tool install sessionmail\`). Run \`pager listen\` in the background to listen once it is installed."
+    exit 2
+fi
+exec pager listen --monitor

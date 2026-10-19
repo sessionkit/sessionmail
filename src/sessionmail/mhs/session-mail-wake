@@ -1,0 +1,726 @@
+#!/usr/bin/env python3
+"""session-mail-wake — the boot readout: what the mail substrate holds for
+this box, PEEK-ONLY. By design, a wake is a NOTIFICATION, never a completion —
+so this verb reads and claims NOTHING. new/ is untouched; read-state, closed-
+state (mail-close convention) and truth-state (Supersedes) all live in
+messages and are only PROJECTED here.
+
+Sections, budget-capped, each ending with its own token cost:
+
+  BOOT    the shelf: newest surviving message addressed to <box>+boot
+          (file-level X-Original-To match — the notmuch index cannot query
+          '+' and is a derived artefact; boot must not depend on it),
+          Supersedes-chain collapsed, BODY included only if its signature
+          verifies AND it is From the box owner, under the badge
+          "signature verifies · signer NOT pinned" (plain verify never says
+          whose key it is: no key is pinned yet). Otherwise REFUSED, body
+          withheld, and the wake exits 3 after every section has printed.
+  RECENT  threads touching <box> in the last 2 days, one line each, noise-
+          filtered, closed-loop threads dropped (a newer post resurfaces
+          them — mute semantics, query-time projection, nothing to rot).
+  COUNTS  what rests unread in the box, and the next hop (list -> read).
+
+Box resolution, first hit wins, printed: argv box, else SESSION_SEAT ->
+TM_AGENT_ADDRESS -> CLAUDE_CODE_AGENT -> session id (short form). Same
+cascade as `session mail arm`, so wake and arm always describe one agent.
+
+Usage:
+  memory wake [<box>] [-a|--all] [-n|--dry-run]
+  session-mail-wake --ext-cache-version
+  session-mail-wake --classify-ext <ext>...
+
+--ext-cache-version prints the shared stamp-cache DERIVATION version — the
+same number `session mail list --ext-cache-version` prints, and the v<N> in
+the cache path. Both verbs read it from mail-ext.lib.sh (this one through the
+library's CLI form, two languages one rail), so one shared cache can never be
+written under two versions. Diagnostic: it resolves no box and reads no mail.
+
+--classify-ext prints what KIND of address each mailbox extension is — bare |
+mine | other-session | tag, one `<ext><TAB><class>` line each; pass '' for the
+bare box. `session mail list --classify-ext` prints the same answers, because
+both verbs read them from the ONE classification seam in mail-ext.lib.sh —
+this one through the same library CLI form, batched into a SINGLE call per
+run. Neither verb carries a classification rule of its own, and neither owns
+the session-id shape rule they delegate to. Diagnostic: it resolves no box and
+opens no message.
+
+Ancestry: ported from one agent's own print-thread script, generalised:
+nothing here is agent-specific —
+conventions derive from the box name. print-thread remains the richer
+thread-reader; this verb is the boot slice every agent gets for free.
+"""
+import email, email.policy, email.utils, json, os, re, shlex, shutil, subprocess, sys
+
+# Python 3.11 or later (requires-python), checked before anything that needs
+# it. The package starts this script on its own interpreter; a run by hand
+# takes the shebang's python3, PATH's, and on an older one refuses in one line.
+# Plain 3.9 syntax, so 3.9 can parse it; a no-op when the script is loaded in-process.
+if sys.version_info < (3, 11):
+    _verb = "wake"
+    print("session-mail-wake: needs Python 3.11 or later (this is %s); run it through "
+          "`memory %s`, which uses sessionmail's own Python"
+          % (".".join(map(str, sys.version_info[:3])), _verb), file=sys.stderr)
+    sys.exit(2)
+
+# The package's interpreter for every bundled script this one starts: the
+# bash ones (the shims, the verifier's wrapper) read it, having no
+# sys.executable of their own. SET to this interpreter, never inherited.
+# Only when run as a script, so an importer's environment is left alone.
+if __name__ == "__main__":
+    os.environ["SESSIONMAIL_PYTHON"] = sys.executable
+
+DRY = False
+SCRIPT_DIR = os.path.dirname(os.path.realpath(__file__))
+
+# ── THE HERMETIC-CALLER RAIL ────────────────────────────────────
+# wake is a HELPER: other programs run it, and some of them run it with a
+# deliberately empty environment on purpose (taskmaster's parity fixture sets
+# PATH="" as a hermetic contract). Every child wake spawns — the box-resolution
+# library's interpreter, the signature verifier, notmuch — used to be found,
+# and to find ITS OWN tools, through whatever PATH the caller happened to
+# leak. A caller with no PATH therefore did not get a degraded wake; it got a
+# wrong one. Both halves measured in this worktree:
+#
+#   PATH="" python3 session-mail-wake <box>
+#     as shipped:  "cannot run the box-resolution library at <lib> ([Errno 2]
+#                  ... 'bash') — broken checkout?"  ← the checkout was intact.
+#                  `subprocess.run(["bash", …])` PATH-resolves the INTERPRETER,
+#                  so exec died before the library was ever opened, and the one
+#                  diagnostic the caller got sent them to inspect a healthy tree.
+#     interpreter pinned but PATH still empty: mail-box.lib.sh's own `tr` and
+#                  `grep` are PATH-resolved too, so `_mbl_lc` produced an EMPTY
+#                  name and step 1 matched "$root/" — EVERY name resolved to the
+#                  mail ROOT, rc 0. That is the silent-empty family
+#                  reopened from the outside: a confident briefing about a
+#                  directory nobody asked for. Pinning bash alone is not a fix.
+#
+# So, two rules, kept here rather than repeated at three call sites:
+#   1. the interpreter is resolved to an ABSOLUTE path before we spawn it;
+#   2. children are handed a usable PATH only when the caller has none — the
+#      caller's PATH always wins when it has one. This BACKFILLS, it never
+#      overrides (session-start:2731's `os.execvpe("bash", …, host_environ())`
+#      is the opposite contract and is deliberately left alone: PATH
+#      resolution into the USER's environment is the feature there).
+
+def system_path():
+    """A minimal absolute PATH, for children of a caller that has none."""
+    try:
+        p = os.confstr("CS_PATH")
+    except (AttributeError, ValueError, OSError):
+        p = None
+    return p or "/usr/bin:/bin"
+
+SYSTEM_PATH = system_path()
+
+def system_bash():
+    """An ABSOLUTE bash, never a bare word handed to execvp. Same shape as
+    test_session_start.py:853, plus a look down SYSTEM_PATH so a caller with
+    no PATH of its own still gets the real interpreter rather than the
+    /bin/bash guess."""
+    return (shutil.which("bash") or shutil.which("bash", path=SYSTEM_PATH)
+            or "/bin/bash")
+
+BASH = system_bash()
+
+def child_env():
+    env = dict(os.environ)
+    if not env.get("PATH"):
+        env["PATH"] = SYSTEM_PATH
+    return env
+
+CHILD_ENV = child_env()
+
+def sh(args, resolve=False):
+    """Child runner for the PEEK sections. Returns stdout, or None when the
+    child COULD NOT ANSWER (binary missing, or nonzero exit). None means
+    "I could not look"; "" keeps meaning "I looked and there was nothing".
+    §4 inversion: wait CLAIMS, so it may fail closed; the
+    peek verbs must degrade LOUDLY and OPEN — swallowing FileNotFoundError
+    here rendered a host without notmuch as RECENT "— 0 threads shown of 0",
+    exit 0: the silent-empty family inside the verb that documents it, and it
+    fooled the boot readouts that relied on it, twice."""
+    if DRY:
+        tag = "resolve (ran)" if resolve else "would run    "
+        print(f"  {tag}: {shlex.join(args)}")
+        if not resolve:
+            return ""
+    try:
+        p = subprocess.run(args, capture_output=True, text=True, env=CHILD_ENV)
+    except FileNotFoundError:
+        # Deliberately NOT the raw exception text: it carries "[Errno 2]" and
+        # a path, which reads as a broken checkout (the lesson:
+        # never name a cause the instrument has not established).
+        print(f"memory wake: ⚠ could not run '{args[0]}' — not found on "
+              f"this host's PATH; the section it feeds degrades to "
+              f"COULD-NOT-LOOK", file=sys.stderr)
+        return None
+    if p.returncode != 0:
+        err1 = (p.stderr or "").strip().splitlines()
+        print(f"memory wake: ⚠ '{shlex.join(args[:2])} …' exited "
+              f"{p.returncode}{': ' + err1[0] if err1 else ''} — the section "
+              f"it feeds degrades to COULD-NOT-LOOK",
+              file=sys.stderr)
+        return None
+    return p.stdout
+
+def resolve_box(argv):
+    if argv and not argv[0].startswith("-"):
+        return argv.pop(0).lower(), "argv"
+    for var in ("SESSION_SEAT", "TM_AGENT_ADDRESS", "CLAUDE_CODE_AGENT"):
+        v = os.environ.get(var, "")
+        if v:
+            return v.lower(), var
+    for var in ("CLAUDE_CODE_SESSION_ID", "CLAUDE_SESSION_ID"):
+        v = os.environ.get(var, "")
+        if v:
+            # FULL uuid — the third copy of the truncation rule, flipped in
+            # lockstep with arm's SID_BOX and wait's MY_SID.
+            # Truncating here would make a successor's boot wake read a box
+            # that does not exist and report "predecessor left nothing".
+            return v.lower(), var
+    sys.exit("memory wake: cannot resolve a box — pass one, or set "
+             "SESSION_SEAT / TM_AGENT_ADDRESS / CLAUDE_CODE_AGENT (or run "
+             "inside a Claude Code tool call for the session id).")
+
+def ext_cache_version():
+    """The SHARED stamp-cache derivation version, read from mail-ext.lib.sh.
+
+    Two languages, one rail — the same arrangement require_box() uses below,
+    and for the same reason: the number lives in ONE file, and both writers of
+    that cache (list sources the library; wake shells out to its CLI form) read
+    it from there. A python copy of the constant would be a second spelling of
+    the one thing whose whole job is to be identical in two places — and a
+    cache written under two versions is precisely what versioning it prevents.
+    """
+    lib = os.path.join(SCRIPT_DIR, "mail-ext.lib.sh")
+    if not os.path.isfile(lib):
+        sys.exit(f"memory wake: the stamp-cache library is missing at "
+                 f"{lib} — broken checkout?")
+    try:
+        p = subprocess.run([BASH, lib, "version"], capture_output=True,
+                           text=True, env=CHILD_ENV)
+    except OSError as e:
+        sys.exit(f"memory wake: cannot run the bash interpreter "
+                 f"'{BASH}' ({e}) — the stamp-cache library needs bash. The "
+                 f"library itself is present at {lib}; this is the "
+                 f"environment, not the checkout.")
+    if p.returncode != 0 or not p.stdout.strip():
+        sys.exit(f"memory wake: the stamp-cache library at {lib} did not "
+                 f"report a version (rc={p.returncode}): "
+                 f"{p.stderr.strip() or '(no stderr)'}")
+    return p.stdout.strip()
+
+def classify_exts(exts):
+    """THE CLASSIFICATION SEAM, reached the only way python may reach it.
+
+    "What KIND of address is this extension" — bare / mine / other-session /
+    tag. The rule is not here, and a python copy of it must never appear here:
+    it lives once, in mail-ext.lib.sh's `classify_for_list`, which itself
+    delegates the session-id SHAPE rule to the shared box rail rather than
+    writing the regex out a third time (see that file's seam block, on second-copy drift
+    — §7 on why a divergent copy goes
+    silently HOST-dependent when both these scripts ship in two places).
+
+    Same two-languages-one-rail arrangement as require_box() below and
+    ext_cache_version() above, and for the same reason: one rule, one file, two
+    readers. What is different here is the BATCHING. The stamp map answers one
+    question per RUN; classification is asked once per MESSAGE, and a project
+    box is 20-30K messages — a subprocess each would put back exactly the cost
+    this design exists to remove. So the whole batch goes down one pipe, in one
+    call, and comes back in input order.
+
+    Takes an iterable of extensions; returns a list of (extension, class)
+    pairs, in the order given. Refuses loudly rather than answering thinly:
+    a run that could not classify must not print a listing that quietly implies
+    it did (design.md §4bis — a readout may never assert a property it did not
+    enforce).
+    """
+    exts = list(exts)
+    if not exts:
+        return []
+    for e in exts:
+        if "\n" in e:
+            sys.exit("memory wake: an extension cannot contain a newline "
+                     f"({e!r}) — the classification seam is line-oriented.")
+    lib = os.path.join(SCRIPT_DIR, "mail-ext.lib.sh")
+    if not os.path.isfile(lib):
+        sys.exit(f"memory wake: the classification library is missing at "
+                 f"{lib} — broken checkout?")
+    try:
+        p = subprocess.run([BASH, lib, "classify"], input="\n".join(exts) + "\n",
+                           capture_output=True, text=True, env=CHILD_ENV)
+    except OSError as e:
+        sys.exit(f"memory wake: cannot run the bash interpreter "
+                 f"'{BASH}' ({e}) — the classification library needs bash. The "
+                 f"library itself is present at {lib}; this is the "
+                 f"environment, not the checkout.")
+    if p.returncode != 0:
+        sys.exit(f"memory wake: the classification library at {lib} "
+                 f"refused (rc={p.returncode}): "
+                 f"{p.stderr.strip() or '(no stderr)'}")
+    lines = p.stdout.split("\n")
+    if lines and lines[-1] == "":
+        lines.pop()
+    # ONE ANSWER PER INPUT, IN ORDER. Checked rather than assumed: this is the
+    # seam a whole disclosure default rests on, and a short reply silently
+    # re-pairing extensions with other extensions' classes is precisely the
+    # invisible-omission class the filter exists to prevent.
+    if len(lines) != len(exts):
+        sys.exit(f"memory wake: the classification library at {lib} "
+                 f"answered {len(lines)} of {len(exts)} extensions — refusing "
+                 f"a partial classification.")
+    out = []
+    for ext, line in zip(exts, lines):
+        got, _, cls = line.rpartition("\t")
+        if got != ext or not cls:
+            sys.exit(f"memory wake: the classification library at {lib} "
+                     f"answered out of order or malformed ({line!r} for "
+                     f"{ext!r}) — refusing to guess which class belongs to "
+                     f"which address.")
+        out.append((ext, cls))
+    return out
+
+
+def require_box(box, root):
+    """THE READ-SIDE RAIL — resolve the box, or refuse loudly.
+
+    `resolve_box` above answers "what NAME did you mean"; it has never
+    answered "does that box EXIST". Without this, wake asked for a name that
+    was never delivered to returns a complete, confident briefing — "no shelf
+    mail … predecessor left nothing", exit 0. That is the worst member of the
+    silent-empty family, because a successor booting with a short session id
+    is told its predecessor left nothing while the handover sits in the box
+    next door: precisely the failure the succession design exists to close.
+
+    Resolution is NOT reimplemented here. It shells out to mail-box.lib.sh —
+    the same function session-mail-list and session-mail-read source — so a
+    short session id expands to its full-uuid box, and a name that resolves
+    to nothing produces ONE refusal wording across all three verbs. Two
+    languages, one rail; a python copy of the rule would be a fourth copy of
+    exactly the kind that made E7.
+
+    A `+extension` is an ADDRESS within a box: it is stripped for resolution
+    and re-attached, so `wake <sid>+boot` still reads the shelf.
+    """
+    base, sep, ext = box.partition("+")
+    lib = os.path.join(SCRIPT_DIR, "mail-box.lib.sh")
+    # TWO FAILURES, TWO SENTENCES. The library and the interpreter
+    # that runs it are different artefacts living in different places — one in
+    # this checkout, one in the environment — so neither may be reported as
+    # the other. The missing LIBRARY is asked about first, by name, because it
+    # is the only one of the two that a broken checkout explains.
+    if not os.path.isfile(lib):
+        sys.exit(f"memory wake: the box-resolution library is missing at "
+                 f"{lib} — broken checkout?")
+    try:
+        p = subprocess.run([BASH, lib, base, root], capture_output=True,
+                           text=True, env=CHILD_ENV)
+    except OSError as e:
+        # Only the INTERPRETER can fail here: the library was just confirmed
+        # present, and a library bash itself cannot read is bash's error (rc
+        # 127 on stderr), never an exec failure of ours. So name bash, name
+        # where we looked, and do not send the caller to inspect a tree that
+        # this very function just found intact.
+        sys.exit(f"memory wake: cannot run the bash interpreter "
+                 f"'{BASH}' ({e}) — the box-resolution library needs bash, "
+                 f"and none was found on PATH or at /bin/bash. The library "
+                 f"itself is present at {lib}; this is the environment, not "
+                 f"the checkout.")
+    if p.returncode != 0:
+        sys.exit("memory wake: " + (p.stderr.strip() or
+                 f"no such mailbox '{base}' under {root}"))
+    path = p.stdout.strip()
+    return os.path.basename(path) + sep + ext, os.path.dirname(path)
+
+def header_block(path, cap=16384):
+    try:
+        with open(path, "rb") as fh:
+            return fh.read(cap).split(b"\n\n", 1)[0].decode("utf-8", "replace")
+    except OSError:
+        return ""
+
+def hdr(block, name):
+    m = re.search(rf'(?im)^{re.escape(name)}:\s*(.+)$', block)
+    return m.group(1).strip() if m else ""
+
+def boot_wants(box):
+    """Shelf addresses PARSE BY FORM.
+    A scope-form box (contains '+', e.g. `session+web-12.foreman`) shelves at
+    `<box>.boot`; a legacy role-first box shelves at `<box>+boot`. During the
+    pilot's MIXED WINDOW both forms can rest in one scope-form box (an old tool
+    appends '+boot' to whatever box name it holds), so a scope-form box reads
+    BOTH; a role-first box has exactly one well-formed shelf address (its
+    new-form spelling has no '+', so postfix would deliver it to a different
+    basedir — it can never appear in this scan).
+    ⛔ NOT HANDLED HERE, on purpose (this owns the READER only): the
+    two-BOX half of the mixed window — a predecessor's legacy shelf resting in
+    the old `<role>.<scope>` box while the successor boots on the project box —
+    is r04/pilot territory; parse-by-form cannot cover two boxes.
+    Returns (primary, wants) — wants lowercased for the exact-match loop."""
+    if "+" in box:
+        return box + ".boot", (box.lower() + ".boot", box.lower() + "+boot")
+    return box + "+boot", (box.lower() + "+boot",)
+
+
+def boot_section(box, root):
+    """The shelf readout. PEEK-ONLY file-level scan: the notmuch index cannot
+    query '+' (tokenizer; measured as a 29k-token burn in print-thread's
+    history) and an index is a derived artefact — boot must survive without
+    it. Latest-per-Supersedes-chain, then newest Date wins.
+    Shelf selection is by EXACT localpart match against boot_wants(box); a
+    localpart that is shelf-shaped FOR THIS BOX but parses as NEITHER form is
+    §4bis'd: warned on stderr and treated as ABSENT — never silently read as
+    ours (a known failure with the sign flipped: present-and-WRONG), and never
+    hidden under a confident 'predecessor left nothing' line."""
+    primary, wants = boot_wants(box)
+    basedir = os.path.join(root, box.split("+", 1)[0])
+    boxl = box.lower()
+    cands = []
+    near = []  # (localpart, filename): shelf-shaped for us, well-formed as nothing
+    for sub in ("new", "cur"):
+        d = os.path.join(basedir, sub)
+        if not os.path.isdir(d):
+            continue
+        for fn in sorted(os.listdir(d)):
+            path = os.path.join(d, fn)
+            if not os.path.isfile(path):
+                continue
+            head = header_block(path)
+            m = re.search(r'(?im)^(?:X-Original-To|Delivered-To):\s*<?([^>\s@]+)',
+                          head)
+            if not m:
+                continue
+            lp = m.group(1).lower()
+            if lp in wants:
+                cands.append((path, head))
+                continue
+            # §4bis near-miss: targets OUR box name, carries a boot-ish tail,
+            # but is well-formed as NO box's shelf. A localpart that ends in
+            # exactly '.boot' or '+boot' is some OTHER (longer-named) box's
+            # well-formed shelf — not ours, not malformed: skip in silence.
+            rest = lp[len(boxl):]
+            if lp.startswith(boxl) and rest and "boot" in rest \
+                    and not lp.endswith(".boot") and not lp.endswith("+boot"):
+                near.append((m.group(1), fn))
+    mixed = " [mixed window: legacy +boot also read]" if len(wants) > 1 else ""
+    print(f"═══ BOOT — the shelf at {primary}{mixed} (peek: nothing claimed) ═══")
+    for lp, fn in near:
+        print(f"memory wake: ⚠ shelf-shaped localpart '{lp}' ({fn}) "
+              f"parses as NEITHER shelf form (want {primary}"
+              f"{' or legacy ' + box + '+boot' if len(wants) > 1 else ''}) — "
+              f"ignored, NOT read as the shelf (§4bis)", file=sys.stderr)
+    if not cands:
+        if near:
+            print(f"(no WELL-FORMED shelf at {primary} — {len(near)} "
+                  f"shelf-shaped message(s) ignored as malformed, see stderr; "
+                  f"one of those may have been MEANT as the shelf, so this is "
+                  f"absence-with-a-warning, not a clean absence)\n")
+        else:
+            print(f"(no shelf mail at {primary} — predecessor left nothing, or "
+                  f"used the queue)\n")
+        return 0
+    dead = set()
+    pat = re.compile(r'(?im)^(?:X-)?Supersedes:\s*<?([^>\s]+)>?')
+    for _, head in cands:
+        dead.update(pat.findall(head))
+    live = []
+    for path, head in cands:
+        mid = re.search(r'(?im)^Message-ID:\s*<?([^>\s]+)', head)
+        if mid and mid.group(1) in dead:
+            continue
+        try:
+            ts = email.utils.parsedate_to_datetime(hdr(head, "Date")).timestamp()
+        except Exception:
+            ts = 0.0
+        live.append((ts, path, head))
+    live.sort(reverse=True)
+    ts, path, head = live[0]
+    refusal, body, sig = shelf_verdict(path, box)
+    if refusal:
+        # REFUSED: nothing of the letter is printed but its Message-ID,
+        # never its Subject or body (both are the sender's words, and the sender
+        # is exactly what failed). The newest letter is refused, never replaced
+        # by an older one (the newest-wins selection is unchanged here).
+        BOOT_REFUSED.append(refusal)
+        mid = re.search(r'(?im)^Message-ID:\s*<?([^>\s]+)', head)
+        out = [f"⊘ REFUSED: the newest shelf letter <{mid.group(1)[:80] if mid else '?'}>"
+               f" — {refusal}",
+               "  body withheld, nothing shown in its place (memory wake exits 3)"]
+    else:
+        out = [f"{hdr(head, 'Subject')}",
+               f"  from {hdr(head, 'From')} · {hdr(head, 'Date')} · [{sig}]"]
+        out += ["  " + l for l in body.splitlines()]
+    n_rest = len(cands) - 1
+    if n_rest:
+        out.append(f"  ({n_rest} older message(s) on the shelf: superseded or "
+                   f"shadowed — they REST, query on demand)")
+    text = "\n".join(out)
+    print(text)
+    cost = len(text) // 4
+    print(f"— shelf newest {'REFUSED' if refusal else 'shown'} · ≈{cost} tok\n")
+    return cost
+
+#: The BOOT refusals of this run: any one makes the wake exit 3, as
+#: its help promises ("3 signature refused"), after every section has printed.
+BOOT_REFUSED = []
+
+def shelf_from(raw):
+    """The From of a shelf letter, reduced as MHS 170 reduces it (mhs-thread
+    short_from: the innermost <...>, then the local part), lowercased; None
+    unless the mail carries exactly ONE From. Parsed by the email package,
+    never by hdr()'s first-line regex: a FOLDED From reads one way to a line
+    regex and another to the verifier, and the owner test must read what the
+    signature covers."""
+    msg = email.message_from_bytes(raw, policy=email.policy.compat32)
+    got = msg.get_all("From") or []
+    if len(got) != 1:
+        return None
+    v = re.sub(r"\s+", " ", str(got[0])).strip()
+    i = v.rfind("<")
+    j = v.find(">", i + 1) if i != -1 else -1
+    if i != -1 and j != -1:
+        v = v[i + 1:j]
+    m = re.match(r'([^<@\s]+)', v.strip())
+    return m.group(1).lower() if m else None
+
+def load_sig():
+    """_sig.py BY PATH from this script's own install (PATH's python3 cannot
+    import the package): the verifier's parse, and the one definition of what
+    a reader may say about a letter that verifies (UNPINNED, REFUSE_UNPINNED)."""
+    import importlib.util
+    spec = importlib.util.spec_from_file_location(
+        "sessionmail_sig_shelf", os.path.join(SCRIPT_DIR, "..", "_sig.py"))
+    S = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(S)
+    return S
+
+def shelf_verdict(path, box):
+    """(refusal, body, badge) for the newest shelf letter: refusal is None
+    when it is shown. Interim, with NO key pinning: a letter is shown only if
+    its signature verifies AND it is From the box owner (the box itself, as
+    `pager listen` resolves it), and then under _sig.UNPINNED, never "sig OK":
+    plain-mode verify is self-attributing, so it vouches for the key the mail
+    carries and never says whose key that is. Unsigned, a BAD
+    signature, any other verifier answer and a From that is not the owner are
+    each REFUSED (a body that cannot be shown as signed is withheld, as
+    before: the shelf is a listing). _sig.REFUSE_UNPINNED
+    (the F/R switch) refuses the rest too."""
+    verify = os.path.join(SCRIPT_DIR, "session-mail-verify")
+    if not os.access(verify, os.X_OK):
+        return "no verifier beside this script, so nothing vouches for it", None, None
+    # env=CHILD_ENV: the verifier is an absolute path, but its `#!/usr/bin/
+    # env bash` shebang is not — under a caller with no PATH it would exit
+    # 127 and every shelf letter would be refused.
+    rc = subprocess.run([verify, path], capture_output=True,
+                        env=CHILD_ENV).returncode
+    if rc == 2:
+        return "unsigned (no X-Session-Signature), so nothing vouches for it", None, None
+    if rc == 1:
+        return "its signature does NOT verify (mail-verify rc=1)", None, None
+    if rc != 0:
+        return f"it could not be verified (mail-verify rc={rc})", None, None
+    try:
+        with open(path, "rb") as fh:
+            raw = fh.read()
+    except OSError as e:
+        return f"it cannot be read ({e.strerror or type(e).__name__})", None, None
+    owner = box.lower()
+    who = shelf_from(raw)
+    if who is None:
+        return "its From is not ONE readable header, so its sender cannot be told", None, None
+    if who != owner:
+        return f"From is {who[:40]!r}, not the box owner {owner!r}", None, None
+    try:
+        S = load_sig()
+    except Exception as e:
+        return f"_sig.py cannot be loaded beside this reader ({type(e).__name__})", None, None
+    if S.REFUSE_UNPINNED:
+        return S.UNPINNED_REFUSED, None, None
+    # The letter shown is the text its signature covers: the file just
+    # verified, read by _sig.signed_text (the verifier's own parse and the
+    # bytes p= hashes), never get_body, which obeys an unsigned
+    # Content-Disposition (a keyless edit emptied the shelf that way).
+    text, why = S.signed_text(raw)
+    if text is not None:
+        return None, text.strip(), S.UNPINNED
+    if why == S.NO_TEXT:
+        return None, "(no text/plain part: nothing signed to show)", S.UNPINNED
+    # A body that cannot be shown as signed prints the withheld line, and the
+    # wake KEEPS GOING, rc unchanged: the shelf is one section of a listing,
+    # not a cat (pinned by test_memory_signed_body).
+    return None, f"⊘ body withheld: {why}", S.UNPINNED
+
+def closed_thread_ids(box):
+    """Threads whose newest to-me activity is my own CLOSED marker (the
+    mail-close convention: a reply From me To <box>+closed, Subject leading
+    "CLOSED"). Query-time projection; nothing to rot on an index rebuild.
+    notmuch subject: matching is loose, so candidates are confirmed strictly."""
+    closure_q = f"from:{box} and subject:closed"
+    def newest_by_thread(q):
+        out = sh(["notmuch", "search", "--format=json", "--sort=newest-first", q],
+                 resolve=True)
+        if out is None:
+            return None  # could not look — caller must not treat as "none closed"
+        r = {}
+        for t in json.loads(out or "[]"):
+            r.setdefault(t["thread"], (t["timestamp"], t.get("subject", "")))
+        return r
+    closed = newest_by_thread(closure_q)
+    if closed is None:
+        return None
+    act = newest_by_thread(f"date:2days.. and to:{box} and not ({closure_q})")
+    if act is None:
+        return None
+    tids = set()
+    for tid, (cts, csub) in closed.items():
+        if not csub.startswith("CLOSED"):
+            continue
+        if cts >= act.get(tid, (0, ""))[0]:
+            tids.add("thread:" + tid)
+    return tids
+
+def recent_section(box):
+    # R6/AC7: the header NAMES the scope — these are threads to the
+    # INVOKING SEAT (the box the cascade resolved), not "the mailbox".
+    print(f"═══ RECENT — threads to {box} active in the last 2 days "
+          f"(one line each) ═══")
+    cap = 25
+    out = sh(["notmuch", "search", "--sort=newest-first",
+              f"date:2days.. and to:{box}"])
+    if out is None:
+        # §4/§4bis: COULD NOT LOOK is not "nothing recent". Weakened
+        # wording, no counts asserted, no "0 threads shown of 0" — that line
+        # is EARNED only when the index answered. Degrade OPEN: boot/counts
+        # still render (a peek verb never fails the whole readout closed).
+        print("(RECENT unavailable — the index could not be queried, see "
+              "stderr. This is COULD NOT LOOK, not 'no recent threads'; "
+              "no thread accounting was done.)")
+        print("— RECENT degraded: could not look\n")
+        return 0
+    raw = [ln for ln in out.splitlines() if "SUPERSEDED by" not in ln]
+    if DRY:
+        return 0
+    A = re.escape(box.upper())
+    noise_pats = [
+        ("control",  r'(?i);\s*(?:speak|continue|stop|pause)\s*EOM\s*(?:\(|$)'),
+        ("test",     r'(?i);\s*[^;]*\btest\b[^;]*EOM\s*(?:\(|$)'),
+        ("boot",     rf';\s*{A}-BOOT\b'),
+    ]
+    counts, rec = {}, []
+    for ln in raw:
+        for name, pat in noise_pats:
+            if re.search(pat, ln):
+                counts[name] = counts.get(name, 0) + 1
+                break
+        else:
+            rec.append(ln)
+    c_tids = closed_thread_ids(box)
+    if c_tids is None:
+        # The listing itself answered, but the closed-marker query did not.
+        # §4bis: the filter that DID NOT RUN is named as not applied — never
+        # silently treated as "no threads are closed" (a closed thread showing
+        # up unlabelled is recoverable; a false "0 closed" is not).
+        print("(closed-thread filter NOT APPLIED — the closed-marker index "
+              "query failed, see stderr; a CLOSED thread may be listed below)")
+        c_tids = set()
+    rec, kept = [], rec
+    for ln in kept:
+        if ln.split(None, 1)[0] in c_tids:
+            counts["closed"] = counts.get("closed", 0) + 1
+        else:
+            rec.append(ln)
+    def slim(ln):
+        ln = re.sub(r'^thread:\S+\s+', '', ln)
+        ln = re.sub(r'@[\w.-]+', '', ln)
+        ln = re.sub(r'\s*\(agent inbox[^)]*\)', '', ln)
+        return ln
+    text = "\n".join(slim(ln) for ln in rec[:cap])
+    print(text)
+    if len(rec) > cap:
+        print(f"…and {len(rec) - cap} more threads")
+    if counts:
+        acct = " · ".join(f"{v} {k}" for k, v in sorted(counts.items()))
+        print(f"(hidden, query on demand: {acct})")
+    cost = len(text) // 4
+    print(f"— {len(rec)} threads shown of {len(raw)} · ≈{cost} tok\n")
+    return cost
+
+def counts_section(box, root):
+    """R7/AC7: TWO figures, separately LABELLED, each naming its
+    scope. The old single figure counted everything in the basedir's new/ and
+    called it {box}'s — for a scope-form seat the basedir is the shared
+    project box, so the seat read 900 messages as its own; scoping to the
+    seat and quietly OMITTING the total would be the same lie mirrored
+    Both numbers, both labels, and a message with no readable
+    delivery stamp is named rather than silently falling out of the seat
+    figure (§4bis: '0 for you' must not be a stampless-box artefact)."""
+    base = box.split("+", 1)[0]
+    basedir = os.path.join(root, base)
+    d = os.path.join(basedir, "new")
+    n_total = n_seat = n_unstamped = 0
+    boxl = box.lower()
+    if os.path.isdir(d):
+        for fn in os.listdir(d):
+            path = os.path.join(d, fn)
+            if not os.path.isfile(path):
+                continue
+            n_total += 1
+            m = re.search(r'(?im)^(?:X-Original-To|Delivered-To):\s*<?([^>\s@]+)',
+                          header_block(path))
+            if not m:
+                n_unstamped += 1
+            elif m.group(1).lower() == boxl:
+                n_seat += 1
+    print(f"═══ COUNTS ═══")
+    print(f"{n_seat} message(s) addressed exactly to {box} resting unclaimed "
+          f"(by delivery stamp)")
+    print(f"{n_total} total resting in {base}'s new/ (all addresses: "
+          f"other seats, sessions, extensions incl. +boot)")
+    if n_unstamped:
+        print(f"⚠ {n_unstamped} of the {n_total} carry no readable delivery "
+              f"stamp — not counted in the seat figure, and the seat figure "
+              f"cannot vouch for them (§4bis)")
+    print(f"— next hop: message list {base} · then message read {base} <n>")
+    return 0
+
+def main():
+    global DRY
+    argv = sys.argv[1:]
+    if any(a in ("-h", "--help") for a in argv):
+        sys.exit(__doc__)
+    if "--ext-cache-version" in argv:
+        print(ext_cache_version())
+        return
+    if "--classify-ext" in argv:
+        exts = argv[argv.index("--classify-ext") + 1:]
+        if not exts:
+            sys.exit("memory wake: --classify-ext needs at least one "
+                     "extension (pass '' for the bare box).")
+        for ext, cls in classify_exts(exts):
+            print(f"{ext}\t{cls}")
+        return
+    DRY = any(a in ("-n", "--dry-run") for a in argv)
+    argv = [a for a in argv if a not in ("-n", "--dry-run", "-a", "--all")]
+    for a in list(argv):
+        if a.startswith("-"):
+            sys.exit(f"memory wake: unknown flag {a!r}\n{__doc__}")
+    box, src = resolve_box(argv)
+    root = os.environ.get("SESSION_MAIL_ROOT",
+                          os.path.expanduser("~/.mail/agents"))
+    # Exists, or we say so — never a confident briefing about a box that is
+    # not there. Short forms expand here, so the name in the banner below is
+    # already the canonical one.
+    box, root = require_box(box, root)
+    print(f"memory wake: box {box}  [source: {src}] — PEEK-ONLY, "
+          f"nothing is claimed or marked", file=sys.stderr)
+    total = 0
+    total += boot_section(box, root)
+    total += recent_section(box)
+    total += counts_section(box, root)
+    print(f"═══ wake total ≈{total} tok ═══")
+    if BOOT_REFUSED:
+        print(f"memory wake: BOOT REFUSED — {BOOT_REFUSED[0]}; exit 3", file=sys.stderr)
+        sys.exit(3)
+
+if __name__ == "__main__":
+    main()

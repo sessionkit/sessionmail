@@ -1,0 +1,67 @@
+# notmuch profile for the store ${store}, rendered by `store-index profile`
+# from sessionmail's notmuch/notmuch-config.store.template.
+# Do not edit by hand: change the template and re-render with --force.
+#
+# Use: NOTMUCH_PROFILE=${store}, always together with SESSIONMAIL_INDEX=store
+# and never empty. Searches this store's own index, never the
+# host index.
+
+[database]
+# Derived, never committed. `store-index build` makes it a symlink to the
+# current generation.
+path=${database_path}
+mail_root=${mail_root}
+# Never created: the tool runs the hook itself, so a bare `notmuch new` under
+# this profile tags nothing and does not fail.
+hook_dir=${hook_dir}
+
+# --- Today's settings, kept as they are (~/.notmuch-config) ----------------
+
+[new]
+tags=unread;inbox;
+ignore=.DS_Store;/^sent$/
+
+[search]
+exclude_tags=deleted;spam;
+
+[maildir]
+# true, for phase 1. The tool's tag
+# pass runs under a copy with false, so it renames nothing.
+synchronize_flags=true
+
+[index]
+header.Task=Task
+header.Project=Project
+header.Supersedes=Supersedes
+header.XSupersedes=X-Supersedes
+header.XProject=X-Project
+header.Type=Type
+header.Store=Store
+header.Status=Status
+header.Session=X-Session-From
+header.DeliveredTo=Delivered-To
+header.XTask=X-Task
+header.Refs=References
+header.Verb=Verb
+header.Noun=Noun
+header.Asker=Asker
+header.Askee=Askee
+header.Channel=Channel
+header.Name=Name
+header.Parent=Parent
+
+[query]
+# atoms and memory verbatim (memory's tag source is OQ3, OPEN). paper loses
+# its `path:agents/**`: path: is relative to this store's root, where that can
+# never match (E6), and a missing named query would count 0 silently (E17).
+memory=tag:memory and not tag:superseded
+paper=tag:unread
+atoms=Type:requirement or Type:decision or Type:idea or Type:finding or Type:question or Type:note
+
+# --- The post-new hook's path queries, root-relative ------------
+
+[sessionmail]
+# Never `*`: spliced before `and not tag:agent` it is a parse error that drops
+# the whole batch (E16).
+agent_query=path:**
+memory_query=path:memory/**

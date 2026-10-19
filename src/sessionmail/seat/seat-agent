@@ -1,0 +1,122 @@
+#!/bin/bash
+# seat-agent: the seat's own ssh-agent, in the foreground, for launchd KeepAlive.
+#
+#     seat-agent ADDRESS [SOCKET]
+#
+# The key is the one scripts/seat-init minted (its layout, never another):
+#
+#     $SESSIONMAIL_HOME/seat-keys/ADDRESS/id_ed25519   the private key, 0600
+#     $SESSIONMAIL_HOME/seat-keys/ADDRESS/seat.pub     the pub DESK_SIGNER_PUB names
+#
+# SOCKET defaults to $SESSIONMAIL_HOME/seat-keys/ADDRESS/agent.sock (0700 dir).
+#
+# 1. checks, before anything starts: the address, the key and its dir (no group or
+#    world bits), no private key beside seat.pub's stem (a dead
+#    agent would be papered over by the file), and the socket path. macOS caps a
+#    socket path at 104 bytes WITH its NUL, so 103 is the longest that binds
+#    (measured: ssh-agent binds 103, refuses 104).
+# 2. a stale socket (nothing answers on it) is removed. A LIVE agent on it is
+#    refused, never replaced; anything that is not a socket is never removed.
+# 3. `ssh-agent -D -a SOCKET`, then the key is loaded from its file and checked
+#    against seat.pub. A failed load stops the agent and exits non-zero.
+# 4. it waits on the agent. The agent's death is exit 1, so launchd restarts the
+#    job; a TERM (launchd stopping it) stops the agent, removes the socket, exit 0.
+#
+# It never runs launchctl and never touches any socket but its own.
+# Exit: 0 stopped by a signal; 1 the agent failed or died; 2 refused, nothing started.
+
+set -u
+unset SSH_AUTH_SOCK SSH_AGENT_PID    # never anyone else's agent (the user's, under launchd)
+
+PROG='message seat agent'
+EX_FAILED=1
+EX_REFUSED=2
+SOCK_MAX=103
+
+say() { printf '%s: %s\n' "$PROG" "$*" >&2; }
+refuse() { say "REFUSED - $*. Nothing was started."; exit "$EX_REFUSED"; }
+loose() {  # group or world bits on $1 (ls, so BSD and GNU alike)
+  local perms
+  perms=$(ls -ld -- "$1") || return 0
+  perms=${perms%% *}
+  [ "${perms:4:6}" != "------" ]
+}
+
+address="${1:-}"
+[ -n "$address" ] || refuse "usage: message seat agent ADDRESS [SOCKET]"
+case "$address" in
+  *+*) refuse "'$address' has a '+': a seat is named with a dot (desk.alice), as seat-init mints it" ;;
+esac
+[[ "$address" =~ ^[a-z0-9][a-z0-9._-]*$ ]] || refuse "'$address' is not a seat address"
+
+sm_home="${SESSIONMAIL_HOME:-$HOME/.sessionmail}"
+# shellcheck disable=SC2088  # a literal ~ from a plist, which launchd never expands
+case "$sm_home" in "~" | "~/"*) sm_home="$HOME${sm_home#\~}" ;; esac
+home="$sm_home/seat-keys/$address"
+key="$home/id_ed25519"
+pub="$home/seat.pub"
+sock="${2:-$home/agent.sock}"
+
+[ -d "$home" ] || refuse "no key home $home: mint the seat first (message seat init)"
+[ -f "$key" ] || refuse "no private key $key"
+[ -f "$pub" ] || refuse "no seat.pub $pub"
+for f in "$home" "$key"; do
+  loose "$f" && refuse "$f has group or world bits: a seat key lives 0600 in 0700"
+done
+[ -e "${pub%.pub}" ] && refuse "${pub%.pub} sits beside seat.pub's stem: with the agent dead, ssh-keygen would sign from it and hide the death"
+
+bytes=$(printf '%s' "$sock" | LC_ALL=C wc -c | tr -d ' ')
+[ "$bytes" -le "$SOCK_MAX" ] || refuse "socket path is $bytes bytes; macOS binds $SOCK_MAX at most (104 with its NUL). Name a shorter SOCKET"
+sock_dir=$(dirname -- "$sock")
+[ -d "$sock_dir" ] || refuse "no directory $sock_dir for the socket"
+
+if [ -L "$sock" ] || { [ -e "$sock" ] && [ ! -S "$sock" ]; }; then
+  refuse "$sock exists and is not a socket: never removed here"
+fi
+if [ -S "$sock" ]; then
+  SSH_AUTH_SOCK="$sock" ssh-add -l >/dev/null 2>&1
+  case $? in
+    0 | 1) refuse "a live agent already answers on $sock: not this job's to replace (stop it first)" ;;
+  esac
+  rm -f -- "$sock" || refuse "could not remove the stale socket $sock"
+  say "removed a stale socket $sock (nothing answered on it)"
+fi
+
+agent=""
+stop() {  # $1: why
+  trap - TERM INT HUP
+  [ -n "$agent" ] && kill "$agent" 2>/dev/null && wait "$agent" 2>/dev/null
+  [ -S "$sock" ] && rm -f -- "$sock"
+  say "$1"
+}
+trap 'stop "stopped by a signal; the agent and its socket are gone"; exit 0' TERM INT HUP
+
+ssh-agent -D -a "$sock" >&2 &
+agent=$!
+for _ in $(seq 1 50); do
+  [ -S "$sock" ] && break
+  kill -0 "$agent" 2>/dev/null || break
+  sleep 0.1
+done
+if [ ! -S "$sock" ]; then
+  stop "FAILED - ssh-agent did not bind $sock"
+  exit "$EX_FAILED"
+fi
+
+if ! out=$(SSH_AUTH_SOCK="$sock" ssh-add -q "$key" </dev/null 2>&1); then
+  stop "FAILED - the key did not load into the agent: $out"
+  exit "$EX_FAILED"
+fi
+blob=$(cut -d' ' -f2 "$pub")
+if ! SSH_AUTH_SOCK="$sock" ssh-add -L 2>/dev/null | grep -qF -- "$blob"; then
+  stop "FAILED - the agent does not hold seat.pub's key ($pub names another key)"
+  exit "$EX_FAILED"
+fi
+say "$address: agent pid $agent holds $(ssh-keygen -l -f "$pub" 2>/dev/null) on $sock"
+
+wait "$agent"
+rc=$?
+agent=""
+[ -S "$sock" ] && rm -f -- "$sock"
+say "FAILED - the agent exited (rc $rc); exit $EX_FAILED so launchd restarts the job"
+exit "$EX_FAILED"

@@ -1,0 +1,20 @@
+From: =?UTF-8?B?SsOpcsO0bWU=?= <uma>
+To: acme
+Date: Tue, 01 Jan 2030 12:00:00 +0000
+Subject: =?UTF-8?B?RMOpY2lzaW9uOiBzaWduIGV2ZXJ5IHBhcnQ=?=
+Message-ID: <1901000000.6.1@hq.session-mail>
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+Content-Transfer-Encoding: 8bit
+X-Project: acme
+X-Task: T-1
+X-Original-Subject:
+ =?UTF-8?B?RMOpY2lzaW9uOiBzaWduIGV2ZXJ5IHBhcnQsIHRoZSBsb25nIHdheSByb3Vu?=
+ =?UTF-8?B?ZA==?=
+Atom-Type: decision
+Atom-Authority: judy
+Atom-Id: D2
+X-Session-From: 0a1b2c3d
+X-Machine: hq
+
+Atom headers on a single part.

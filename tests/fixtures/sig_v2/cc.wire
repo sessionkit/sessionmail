@@ -1,0 +1,13 @@
+From: acme+lead
+To: ivan
+Cc: acmecorp+ops, Uma <uma@hq.example.net>, Eve <eve@hq>
+Date: Tue, 01 Jan 2030 12:00:00 +0000
+Subject: cc vector
+Message-ID: <1901000000.4.1@hq.session-mail>
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+Content-Transfer-Encoding: 8bit
+X-Session-From: 0a1b2c3d
+X-Machine: hq
+
+Three on Cc: bare, qualified, short host.

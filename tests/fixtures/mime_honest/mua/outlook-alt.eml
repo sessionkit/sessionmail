@@ -1,0 +1,29 @@
+From: Carol <carol@example.org>
+To: Dave <dave@example.net>
+Subject: outlook-alt
+Date: Thu, 03 Jan 2030 12:00:00 +0000
+Message-ID: <outlook-alt@example.org>
+MIME-Version: 1.0
+Thread-Topic: numbers
+Thread-Index: AdkAbCdEfGh==
+Content-Language: en-US
+X-MS-Has-Attach: 
+X-MS-TNEF-Correlator: 
+Content-Type: multipart/alternative;
+	boundary="_000_DM6PR11MB1234567890ABCDEFnamprd11prodoutlook_"
+
+--_000_DM6PR11MB1234567890ABCDEFnamprd11prodoutlook_
+Content-Type: text/plain; charset="us-ascii"
+Content-Transfer-Encoding: quoted-printable
+
+Hi Dave,=0A=0AThe numbers.
+
+--_000_DM6PR11MB1234567890ABCDEFnamprd11prodoutlook_
+Content-Type: text/html; charset="us-ascii"
+Content-Transfer-Encoding: quoted-printable
+
+<html><head>
+<meta http-equiv=3D"Content-Type" content=3D"text/html; charset=3Dus-ascii">
+</head><body>Hi Dave</body></html>
+
+--_000_DM6PR11MB1234567890ABCDEFnamprd11prodoutlook_--

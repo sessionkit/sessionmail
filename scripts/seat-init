@@ -1,0 +1,19 @@
+#!/usr/bin/env python3
+"""seat-init's old path: a thin shim.
+
+The script moved, verbatim, into the package as src/sessionmail/seat_init.py.
+This runs that file as __main__, so its arguments, its exits (0 minted, 1 a tool
+failed, 2 refused) and its refusals are the module's own, unchanged. It stays
+while the seat runbook names this path.
+"""
+
+import runpy
+import sys
+from pathlib import Path
+
+TARGET = Path(__file__).resolve().parents[1] / "src" / "sessionmail" / "seat_init.py"
+
+if not TARGET.is_file():
+    print(f"seat-init: REFUSED - {TARGET} is missing. Nothing was written.", file=sys.stderr)
+    sys.exit(2)
+runpy.run_path(str(TARGET), run_name="__main__")

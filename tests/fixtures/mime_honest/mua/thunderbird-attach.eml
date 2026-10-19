@@ -1,0 +1,40 @@
+From: Carol <carol@example.org>
+To: Dave <dave@example.net>
+Subject: thunderbird-attach
+Date: Thu, 03 Jan 2030 12:00:00 +0000
+Message-ID: <thunderbird-attach@example.org>
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="------------mixB0undary1234"
+
+This is a multi-part message in MIME format.
+--------------mixB0undary1234
+Content-Type: multipart/alternative;
+ boundary="------------altB0undary5678"
+
+
+--------------altB0undary5678
+Content-Type: text/plain; charset=UTF-8; format=flowed
+Content-Transfer-Encoding: 8bit
+
+Hi Dave,
+
+The numbers are attached. Café at 10?
+
+-- 
+Carol
+
+--------------altB0undary5678
+Content-Type: text/html; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+<html><body><p>Hi Dave,</p><p>The numbers are attached. Caf&eacute; at 10?</p></body></html>
+
+--------------altB0undary5678--
+--------------mixB0undary1234
+Content-Type: application/pdf; name="report.pdf"
+Content-Disposition: attachment; filename="report.pdf"
+Content-Transfer-Encoding: base64
+
+JVBERi0xLjQKJcOkw7zDtsOfCjIgMCBvYmoKPDwvTGVuZ3RoIDMgMCBSPj4Kc3RyZWFtCg==
+
+--------------mixB0undary1234--

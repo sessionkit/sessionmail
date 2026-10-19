@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+# session-mail-ls — one level of an MHS PATH (`/` = root + labels, ~40 tok)
+# Unix verbs over MHS paths: small plain pieces that combine, not one big
+# special-purpose tool. One reader, mhs-thread, behind all of
+# ls / tree / cat; agent from CLAUDE_CODE_AGENT, root from $<AGENT>_ROOT,
+# --box NAME for a shared box. See `mhs-thread --help` for the flags.
+exec ${SESSIONMAIL_PYTHON:+"$SESSIONMAIL_PYTHON"} "$(dirname "$(realpath "${BASH_SOURCE[0]}")")/mhs-thread" ls "$@"

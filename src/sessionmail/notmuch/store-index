@@ -1,0 +1,830 @@
+#!/usr/bin/env python3
+"""store-index - one notmuch index per store, beside the host index.
+
+An operator tool, shipped as package data like postfix/vmailbox-gen, not a
+fourth console script. Stdlib only, and it imports nothing from
+sessionmail: it must run from a pinned copy as well as from the checkout
+. Where it repeats one of sessionmail's definitions (the
+store marker, notmuch's profile lookup order), a test pins the two together.
+
+Verbs:
+
+  profile STORE [--mail-root DIR] [--force]
+      Render notmuch-config.store.template into ~/.notmuch-config.STORE, and
+      write nothing else. mail_root defaults to ~/.mail/agents/STORE (Q2: one
+      parameter). Refuses, writing nothing, when
+        - mail_root holds no store marker (.tm-store), so a typo cannot
+          index a random tree;
+        - $XDG_CONFIG_HOME/notmuch/STORE/config exists: notmuch reads that
+          file first, so the one written here would be shadowed (E19a);
+          --force does not override this;
+        - ~/.notmuch-config.STORE exists and differs, unless --force.
+      An existing file that already matches is left as it is.
+
+  build STORE
+      Build STORE's index afresh, from its maildir alone, beside the live one,
+      then swap it in. Under STORE's lock:
+        1. a new generation, stores/.STORE.<stamp>, is indexed by
+           `notmuch new --no-hooks` under a scratch copy of the profile P whose
+           database.path names it (P's synchronize_flags=true: `new` reads the
+           flags into tags and renames nothing, E20);
+        2. the post-new hook beside this file tags it, under the TAG COPY: the
+           scratch copy with maildir.synchronize_flags=false, because under
+           true the hook's `notmuch tag` renames maildir files (E20, E22);
+        3. stores/STORE, a symlink, is replaced by rename(2) of a new symlink to
+           the generation (E10): a reader sees the old index or the new one;
+        4. every other generation of STORE is removed: the one the link named,
+           and any orphan (a removed or dangling link is rebuilt, SC4).
+      A failure before the swap removes the new generation and leaves the
+      live link as it was.
+
+  update STORE
+      Incremental: `notmuch new --no-hooks` under P on the live index, then
+      the hook under the tag copy stores/.STORE.tag.cfg (P with exactly one
+      key changed, maildir.synchronize_flags=false). Refuses when there is no
+      built index (run build first): a bare `new` would make stores/STORE a
+      directory that is not a generation.
+
+  Both: P is the file notmuch reads for NOTMUCH_PROFILE=STORE (XDG first,
+  E19a). Its database.path must be stores/STORE and its mail_root must hold
+  the store marker, so neither verb can write the host index or index a
+  random tree. Both hold stores/.STORE.lock (flock) for the whole run, and a
+  second run of either is refused, not queued. Only STORE's lock:
+  one database, one lock (R3). Every notmuch and hook child runs with
+  NOTMUCH_CONFIG, NOTMUCH_DATABASE and NOTMUCH_PROFILE dropped from its
+  environment (E14: an inherited NOTMUCH_DATABASE beats --config, and `new`
+  would rewrite whatever database it names); the hook's NOTMUCH_CONFIG is the
+  tag copy, and its PATH is launchd's. Neither writes a maildir file (R5,
+  SC5) or anything outside ~/.mail/.notmuch/stores/.
+
+  count STORE
+      SC1, made measurable: a file scan of mail_root, the index's
+      `count --exclude=false '*'`, and a second scan, each timestamped:
+        scan-before  <iso>  files=<n>  ids=<n>
+        index        <iso>  <n>
+        scan-after   <iso>  files=<n>  ids=<n>
+      then the set difference against `search --output=messages`: ids the
+      first scan found that the index lacks (scan-only), and ids the index
+      holds that the second scan did not find (index-only), each listed, and
+      the non-mail files (reported, not counted). PASS when ids(before) <=
+      index <= ids(after) and both differences are empty; a quiet-window PASS
+      when the three numbers are also equal (the one a READY quotes). The
+      scan mirrors notmuch 0.40's walk and its idea of mail (E17, E19); see
+      the rules above scan(). Reads only: no lock, no write.
+
+  search [--store A[,B...]] [--limit N] [--format text|json] QUERY...
+      The join over NAMED stores. Every named store's
+      profile P is resolved, and its built index checked, before anything is
+      searched: a store with no profile, or no built index, is refused by
+      name, and nothing is searched (never a fall-back to another index).
+      Then QUERY, as given (notmuch's language; not rewritten, planned or
+      filtered), runs once per store: `notmuch --config=P search
+      --format=json --output=summary --sort=newest-first`, one database per
+      call, as notmuch requires. Rows are keyed by (store, thread id), since
+      thread ids are per database: acme:thread:0001 and other:thread:0001
+      are two threads. They are merged newest first (ties keep --store's
+      order) and each is labelled with its store; --limit N cuts the merged
+      list. A store named twice is searched once. With no --store, the one
+      store searched is NOTMUCH_PROFILE's, the seat's own (it is coupled
+      to the switch); with neither, it refuses. It never reads the host
+      index. Reads only: no lock, no write.
+
+Exit: 0 done (or unchanged), or count PASS; 1 refused, nothing written; 2
+usage; 3 a notmuch or hook child failed (build: the new generation is
+removed, the live index is as it was; update: the live index may hold part
+of the run, and a re-run or a build repairs it; search: nothing is printed);
+4 count FAIL (the index and the scan disagree).
+"""
+
+from __future__ import annotations
+
+import argparse
+import fcntl
+import hashlib
+import json
+import os
+import re
+import shutil
+import subprocess
+import sys
+import tempfile
+import time
+from datetime import datetime
+from email.parser import BytesHeaderParser
+from pathlib import Path
+
+#: sessionmail._boxes.STORE_MARKER: the file that makes a directory a store.
+STORE_MARKER = ".tm-store"
+TEMPLATE = Path(__file__).resolve().parent / "notmuch-config.store.template"
+#: The post-new hook, run explicitly: never installed anywhere.
+HOOK = Path(__file__).resolve().parent / "post-new"
+#: sessionmail._notmuch.BINARY_VAR: sessionmail's one setting for the binary.
+NOTMUCH_VAR = "SESSIONMAIL_NOTMUCH"
+#: The hook's NOTMUCH_PATHS (a test pins the two): where notmuch is looked for
+#: when it is not on PATH, as under launchd's, which has no Homebrew prefix.
+NOTMUCH_PATHS = ("/opt/homebrew/bin/notmuch", "/usr/local/bin/notmuch", "/usr/bin/notmuch")
+#: launchd's PATH, which the hook is written for (and runs under in its test).
+LAUNCHD_PATH = "/usr/bin:/bin:/usr/sbin:/sbin"
+
+
+def find_notmuch(env) -> str:
+    """The notmuch to run, found the way the post-new hook finds it:
+    ENV's SESSIONMAIL_NOTMUCH (a bare name looked up on ENV's PATH), else
+    `notmuch` on ENV's PATH, else the first runnable of NOTMUCH_PATHS. None
+    found: the bare name, so the first call fails loudly (`Failed`, exit 3)."""
+    path = env.get("PATH", "")
+    named = env.get(NOTMUCH_VAR, "")
+    if named:
+        return named if "/" in named else (shutil.which(named, path=path) or named)
+    found = shutil.which("notmuch", path=path)
+    if found:
+        return found
+    return next((p for p in NOTMUCH_PATHS if os.path.isfile(p) and os.access(p, os.X_OK)),
+                "notmuch")
+
+
+#: The notmuch this run uses, and hands to the hook (hook_env), so the tool
+#: and the hook it runs use one binary, under launchd's PATH too.
+NOTMUCH = find_notmuch(os.environ)
+#: sessionmail._index.SCRUBBED: dropped from every notmuch and hook child's
+#: env. An inherited NOTMUCH_DATABASE beats --config's database.path, so
+#: `new` would rewrite whatever database it names (E14).
+SCRUBBED = ("NOTMUCH_CONFIG", "NOTMUCH_DATABASE", "NOTMUCH_PROFILE")
+#: A store's name names files: the profile, and under stores/ the database
+#: link, its `.STORE.<stamp>` generations and `.STORE.lock`. So no
+#: slash, and no leading dot, which would collide with those.
+NAME = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9_.-]*$")
+#: Only `${name}` is a placeholder. Every other `$` is the template's own text
+#: (`[new] ignore` carries the regex `/^sent$/`), so string.Template is not used.
+PLACEHOLDER = re.compile(r"\$\{([a-z_]+)\}")
+
+EX_OK, EX_REFUSED, EX_USAGE, EX_FAILED = 0, 1, 2, 3
+
+
+class Refused(Exception):
+    """A refusal: said on stderr, exit 1, nothing written."""
+
+
+class Failed(Exception):
+    """A notmuch or hook child failed: said on stderr, exit 3."""
+
+
+def home(env: dict[str, str]) -> Path:
+    value = env.get("HOME")
+    return Path(value) if value else Path.home()
+
+
+def xdg_profile(store: str, env: dict[str, str]) -> Path:
+    """The profile file notmuch reads FIRST for NOTMUCH_PROFILE=STORE (E19a;
+    sessionmail._index.candidates). XDG_CONFIG_HOME unset or empty is ~/.config."""
+    xdg = env.get("XDG_CONFIG_HOME") or str(home(env) / ".config")
+    return Path(xdg) / "notmuch" / store / "config"
+
+
+def dot_profile(store: str, env: dict[str, str]) -> Path:
+    """The file this tool writes, and the one notmuch reads second."""
+    return home(env) / f".notmuch-config.{store}"
+
+
+def stores_dir(env: dict[str, str]) -> Path:
+    """Where every store's database lives: derived, never committed (R1)."""
+    return home(env) / ".mail" / ".notmuch" / "stores"
+
+
+def default_mail_root(store: str, env: dict[str, str]) -> Path:
+    return home(env) / ".mail" / "agents" / store
+
+
+def check_store(store: str) -> None:
+    if not NAME.match(store):
+        raise Refused(f"{store!r} is not a store name: letters, digits, '_', '.' "
+                      f"and '-', not starting with '.'")
+
+
+def render(store: str, mail_root: Path, env: dict[str, str]) -> str:
+    database = stores_dir(env) / store
+    values = {
+        "store": store,
+        "database_path": str(database),
+        "mail_root": str(mail_root),
+        "hook_dir": str(database / "hooks"),
+    }
+
+    def fill(m: re.Match) -> str:
+        if m.group(1) not in values:
+            raise Refused(f"{TEMPLATE} names an unknown placeholder {m.group(0)}")
+        return values[m.group(1)]
+
+    return PLACEHOLDER.sub(fill, TEMPLATE.read_text())
+
+
+def write_atomically(path: Path, text: str) -> None:
+    """Write PATH whole or not at all: a temp file beside it, then rename(2).
+    0644, as ~/.notmuch-config is."""
+    fd, tmp = tempfile.mkstemp(dir=str(path.parent), prefix=f".{path.name}.")
+    try:
+        with os.fdopen(fd, "w") as f:
+            f.write(text)
+        os.chmod(tmp, 0o644)
+        os.replace(tmp, path)
+    except BaseException:
+        if os.path.exists(tmp):
+            os.unlink(tmp)
+        raise
+
+
+def profile(store: str, mail_root: str | None, force: bool, env: dict[str, str]) -> str:
+    """Render STORE's profile. Returns what was done; raises Refused."""
+    check_store(store)
+    root = (Path(os.path.abspath(os.path.expanduser(mail_root))) if mail_root
+            else default_mail_root(store, env))
+    marker = root / STORE_MARKER
+    if not marker.exists():
+        raise Refused(f"no store marker at {marker}: {root} is not a store root, so it "
+                      f"will not be indexed; nothing written")
+    shadow = xdg_profile(store, env)
+    if shadow.exists():
+        raise Refused(f"{shadow} exists, and notmuch reads it before "
+                      f"{dot_profile(store, env)} for NOTMUCH_PROFILE={store}, so the "
+                      f"file written here would be shadowed; nothing written "
+                      f"(--force does not override this)")
+    target = dot_profile(store, env)
+    text = render(store, root, env)
+    if target.is_dir():
+        raise Refused(f"{target} is a directory; nothing written")
+    if target.exists():
+        if target.read_text() == text:
+            return f"unchanged: {target}"
+        if not force:
+            raise Refused(f"{target} exists and differs from the rendered profile; "
+                          f"nothing written (--force replaces it)")
+    write_atomically(target, text)
+    return f"wrote {target} (mail_root {root})"
+
+
+# --- build and update -------------------------------------
+
+#: A generation's stamp: `.STORE.<stamp>`. Only a directory whose name is
+#: exactly that is ever removed, so the lock, the copies and another store's
+#: generations (`.STORE.x.<stamp>` for a store `STORE.x`) are never matched.
+STAMP = re.compile(r"\d{8}T\d{6}\.\d{6}")
+SECTION = re.compile(r"^\s*\[([^\]]*)\]\s*$")
+
+
+def keyfile(text: str) -> dict[str, str]:
+    """`section.key` -> value, as GLib's keyfile (notmuch's config) reads it:
+    `#` lines are comments, `key=value` splits at the first `=`."""
+    out: dict[str, str] = {}
+    section = ""
+    for line in text.splitlines():
+        m = SECTION.match(line)
+        if m:
+            section = m.group(1).strip()
+        elif line.strip() and not line.lstrip().startswith("#") and "=" in line:
+            key, _, value = line.partition("=")
+            out[f"{section}.{key.strip()}"] = value.strip()
+    return out
+
+
+def set_key(text: str, section: str, key: str, value: str) -> str:
+    """TEXT with `[section] key` set to VALUE and nothing else changed: the
+    key's line is replaced where it stands, or added at the top of its
+    section, or the section is appended."""
+    lines = text.splitlines()
+    current, header = None, None
+    for i, line in enumerate(lines):
+        m = SECTION.match(line)
+        if m:
+            current = m.group(1).strip()
+            if current == section and header is None:
+                header = i
+            continue
+        if (current == section and not line.lstrip().startswith("#")
+                and line.partition("=")[0].strip() == key and "=" in line):
+            lines[i] = f"{key}={value}"
+            return "\n".join(lines) + "\n"
+    if header is not None:
+        lines.insert(header + 1, f"{key}={value}")
+    else:
+        lines += ["", f"[{section}]", f"{key}={value}"]
+    return "\n".join(lines) + "\n"
+
+
+def tag_copy(text: str, source: Path) -> str:
+    """The tag copy: TEXT with exactly one key changed,
+    maildir.synchronize_flags=false."""
+    note = (f"# store-index's TAG COPY of {source}: the same profile with exactly one key\n"
+            f"# changed, maildir.synchronize_flags=false, so the hook's `notmuch tag`\n"
+            f"# renames no maildir file (E20). Rewritten every run.\n")
+    return note + set_key(text, "maildir", "synchronize_flags", "false")
+
+
+def child_env(env: dict[str, str]) -> dict[str, str]:
+    """ENV without SCRUBBED: every notmuch child's environment (E14)."""
+    return {k: v for k, v in env.items() if k not in SCRUBBED}
+
+
+def hook_env(env: dict[str, str], config: Path) -> dict[str, str]:
+    """The hook's environment: the scrubbed env, NOTMUCH_CONFIG=CONFIG (the
+    tag copy; E3, it beats any profile), launchd's PATH, and this run's
+    NOTMUCH as SESSIONMAIL_NOTMUCH, so the hook runs the tool's binary."""
+    return {**child_env(env), "NOTMUCH_CONFIG": str(config), "PATH": LAUNCHD_PATH,
+            NOTMUCH_VAR: NOTMUCH}
+
+
+def resolve_profile(store: str, env: dict[str, str]) -> tuple[Path, str]:
+    """P, the file notmuch reads for NOTMUCH_PROFILE=STORE, and its text.
+    Refuses unless P's database.path is stores/STORE and its mail_root holds
+    the store marker: the tool writes no other database, indexes no other tree."""
+    check_store(store)
+    tried = [xdg_profile(store, env), dot_profile(store, env)]
+    found = next((p for p in tried if p.is_file()), None)
+    if found is None:
+        raise Refused(f"no profile for {store}: tried {', '.join(map(str, tried))} "
+                      f"(store-index profile {store} writes one); nothing written")
+    text = found.read_text()
+    cfg = keyfile(text)
+    want = stores_dir(env) / store
+    path = cfg.get("database.path", "")
+    if not path or Path(os.path.abspath(os.path.expanduser(path))) != want:
+        raise Refused(f"{found}: database.path is {path!r}, not {want}; store-index "
+                      f"writes only its own stores/ database; nothing written")
+    root = cfg.get("database.mail_root", "")
+    if not root or not (Path(os.path.expanduser(root)) / STORE_MARKER).exists():
+        raise Refused(f"{found}: database.mail_root {root!r} holds no {STORE_MARKER}, so "
+                      f"it is not a store root and will not be indexed; nothing written")
+    return found, text
+
+
+class StoreLock:
+    """stores/.STORE.lock, a kernel flock held for the whole run. A second
+    build or update of STORE is refused, not queued. It dies with its holder."""
+
+    def __init__(self, store: str, env: dict[str, str]):
+        self.path = stores_dir(env) / f".{store}.lock"
+
+    def __enter__(self) -> "StoreLock":
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        self.fd = os.open(str(self.path), os.O_RDWR | os.O_CREAT, 0o644)
+        try:
+            fcntl.flock(self.fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            os.close(self.fd)
+            raise Refused(f"{self.path} is held: another build or update of this store "
+                          f"is running; nothing written") from None
+        return self
+
+    def __exit__(self, *exc) -> None:
+        os.close(self.fd)   # releases the flock; the file stays, as a lock file does
+
+
+def run(argv: list[str], env: dict[str, str], what: str) -> float:
+    """Run a child; raise Failed on a non-zero exit. Returns its seconds."""
+    t0 = time.monotonic()
+    try:
+        done = subprocess.run(argv, env=env, capture_output=True, text=True)
+    except OSError as exc:
+        raise Failed(f"{what}: {exc}") from None
+    if done.returncode != 0:
+        raise Failed(f"{what} exited {done.returncode}: {done.stderr.strip()}")
+    return time.monotonic() - t0
+
+
+def tag(config: Path, env: dict[str, str]) -> float:
+    """The post-new hook, run explicitly under CONFIG."""
+    return run([str(HOOK)], hook_env(env, config), f"the hook under {config}")
+
+
+def counts(config: Path, env: dict[str, str]) -> str:
+    def nm(*args: str) -> str:
+        done = subprocess.run([NOTMUCH, f"--config={config}", *args], env=child_env(env),
+                              capture_output=True, text=True)
+        return done.stdout.strip() if done.returncode == 0 else "?"
+    return (f"count {nm('count', '--exclude=false', '*')}  "
+            f"superseded {nm('count', '--exclude=false', 'tag:superseded')}")
+
+
+def generations(store: str, env: dict[str, str]) -> list[Path]:
+    """Every generation of STORE: `.STORE.<stamp>` directories, never links."""
+    prefix = f".{store}."
+    out = []
+    for p in stores_dir(env).iterdir():
+        if (p.name.startswith(prefix) and STAMP.fullmatch(p.name[len(prefix):])
+                and p.is_dir() and not p.is_symlink()):
+            out.append(p)
+    return sorted(out)
+
+
+def write_copy(path: Path, text: str) -> Path:
+    write_atomically(path, text)
+    return path
+
+
+def build(store: str, env: dict[str, str]) -> str:
+    profile_file, text = resolve_profile(store, env)   # before the lock: a refusal writes nothing
+    with StoreLock(store, env):
+        stores = stores_dir(env)
+        link = stores / store
+        if link.exists() and not link.is_symlink():
+            raise Refused(f"{link} is not a link, so store-index did not make it (a bare "
+                          f"`notmuch new` under the profile would); move it aside; "
+                          f"nothing written")
+        stamp = datetime.now().strftime("%Y%m%dT%H%M%S.%f")
+        gen = stores / f".{store}.{stamp}"
+        gen.mkdir()
+        scratch = stores / f".{store}.build.cfg"
+        tagged = stores / f".{store}.build-tag.cfg"
+        swapped = False
+        try:
+            # The scratch copy: P with database.path at the new generation.
+            # Its tag copy: that, with exactly one key changed (sync off).
+            base = set_key(text, "database", "path", str(gen))
+            write_copy(scratch, base)
+            write_copy(tagged, tag_copy(base, profile_file))
+            t_new = run([NOTMUCH, f"--config={scratch}", "new", "--no-hooks", "--quiet"],
+                        child_env(env), f"notmuch new into {gen.name}")
+            t_tag = tag(tagged, env)
+            # The swap (E10): a new link renamed over the old one, atomically.
+            tmp_link = stores / f".{store}.link.{os.getpid()}"
+            if tmp_link.is_symlink() or tmp_link.exists():
+                tmp_link.unlink()
+            os.symlink(gen.name, str(tmp_link))
+            os.replace(str(tmp_link), str(link))
+            swapped = True
+        finally:
+            for f in (scratch, tagged):
+                if f.exists():
+                    f.unlink()
+            if not swapped:
+                shutil.rmtree(gen, ignore_errors=True)
+        removed = [g.name for g in generations(store, env) if g != gen]
+        for g in removed:
+            shutil.rmtree(stores / g, ignore_errors=True)
+        return (f"built {store}: {link} -> {gen.name} (new {t_new:.2f}s, tags {t_tag:.2f}s)\n"
+                f"  removed: {', '.join(removed) or 'none'}\n"
+                f"  {counts(profile_file, env)}")
+
+
+def update(store: str, env: dict[str, str]) -> str:
+    profile_file, text = resolve_profile(store, env)   # before the lock: a refusal writes nothing
+    with StoreLock(store, env):
+        link = stores_dir(env) / store
+        if not link.is_symlink() or not link.is_dir():
+            raise Refused(f"no built index at {link} (missing, dangling, or not a link): "
+                          f"run `store-index build {store}` first; nothing written")
+        tagged = write_copy(stores_dir(env) / f".{store}.tag.cfg",
+                            tag_copy(text, profile_file))
+        t_new = run([NOTMUCH, f"--config={profile_file}", "new", "--no-hooks", "--quiet"],
+                    child_env(env), f"notmuch new under {profile_file}")
+        t_tag = tag(tagged, env)
+        return (f"updated {store}: {link} -> {os.readlink(str(link))} "
+                f"(new {t_new:.2f}s, tags {t_tag:.2f}s)\n  {counts(profile_file, env)}")
+
+
+# --- count: SC1, a bracket and not a moment ----------------------
+#
+# The scan mirrors notmuch 0.40's walk and its idea of mail, as measured
+# (E17, E19; calibrated against three scratch indexes and the live tree, E21):
+#   - every regular file under mail_root, in any directory: dot-folders such
+#     as .Sent/ count, and so do files outside cur/ and new/;
+#   - never mail_root/.notmuch; a .notmuch folder deeper down IS indexed
+#     (MEASURED, notmuch 0.40: a nested p/.notmuch/ file was indexed,
+#     the top-level one was not, with the database inside the root or not);
+#   - tmp/ is skipped only where its parent holds all of cur, new and tmp;
+#   - new.ignore: a plain entry matches any entry's basename, a /regex/ entry
+#     the entry's path relative to mail_root (E19e);
+#   - symlinked directories are followed (E1);
+#   - a file is mail only if it has a From, To or Subject header that is not
+#     blank (E19c), and its id is its first Message-ID header parsed as
+#     notmuch's _parse_message_id does (parse_message_id below, a port with
+#     its quirks), else that header's unfolded value (line breaks removed,
+#     blanks kept, ends stripped; MEASURED), else
+#     notmuch-sha1-<sha1 of the file> (E19d).
+
+EX_MISMATCH = 4
+
+
+def parse_ignore(spec: str) -> tuple[set[str], list[re.Pattern]]:
+    names: set[str] = set()
+    regexes: list[re.Pattern] = []
+    for item in filter(None, (s.strip() for s in spec.split(";"))):
+        if len(item) > 1 and item.startswith("/") and item.endswith("/"):
+            regexes.append(re.compile(item[1:-1]))
+        else:
+            names.add(item)
+    return names, regexes
+
+
+def header_text(value) -> str:
+    """A header's value as notmuch reads it (GMime): its raw bytes as UTF-8,
+    else as Latin-1 (MEASURED, review bef71c21: `<caf\\xe9@x>` in Latin-1
+    and in UTF-8 both index as `café@x`). The parser hands non-ASCII bytes
+    back as surrogate escapes, so they are recovered before decoding."""
+    raw = str(value).encode("ascii", "surrogateescape")
+    try:
+        return raw.decode("utf-8")
+    except UnicodeDecodeError:
+        return raw.decode("latin-1")
+
+
+#: C's isspace() in notmuch: these six only. Python's str.isspace() is wider
+#: (\x1c-\x1f, U+00A0, ...), and notmuch keeps those in an id (MEASURED:
+#: `<\x1cfs@x>` and `<U+00A0nb@x>` index with the character,
+#: in the C locale and in en_AU.UTF-8 alike).
+C_SPACE = frozenset(" \t\n\v\f\r")
+
+
+def skip_cfws(s: str, i: int) -> int:
+    """notmuch's skip_space_and_comments: blanks and (nested) comments,
+    with a backslash escaping the next character inside a comment."""
+    while i < len(s) and (s[i] in C_SPACE or s[i] == "("):
+        while i < len(s) and s[i] in C_SPACE:
+            i += 1
+        if i < len(s) and s[i] == "(":
+            nesting, i = 1, i + 1
+            while i < len(s) and nesting:
+                if s[i] == "(":
+                    nesting += 1
+                elif s[i] == ")":
+                    nesting -= 1
+                elif s[i] == "\\" and i + 1 < len(s):
+                    i += 1
+                i += 1
+    return i
+
+
+def parse_message_id(value: str) -> str | None:
+    """A port of notmuch 0.40's _parse_message_id (lib/message-file.c), quirks
+    included, each MEASURED against notmuch:
+      - comments and any text before the first `<` are skipped
+        (`junk <tf@x>` is `tf@x`, `<(c)ci@x>` is `ci@x`);
+      - the id runs to the first `>`, or to the end (`<unclosed@x` is
+        `unclosed@x`);
+      - an id of one character or none is None (`<x>`, `<>`, `<  >`), and so
+        is a value with no `<` at all; the caller then uses the raw value;
+      - blanks inside are dropped, but the C loop skips the blank after each
+        one it drops, so `<a b@x>` is `ab@x` and `<a  b@x>` is `a b@x`."""
+    i = skip_cfws(value, 0)
+    while i < len(value) and value[i] != "<":
+        i += 1
+    if i >= len(value):
+        return None
+    s = skip_cfws(value, i + 1)
+    end = value.find(">", s)
+    if end < 0:
+        end = len(value)            # the C's `end` stops on the NUL; strndup stops there too
+    elif end > s:
+        end -= 1
+    if end <= s:
+        return None
+    out = list(value[s:end + 1])
+    k = 0
+    while k < len(out):
+        if out[k] in " \t":
+            del out[k]
+        k += 1
+    return "".join(out)
+
+
+def mail_id(path: str) -> str | None:
+    """The id notmuch gives the file at PATH, or None if it is not mail."""
+    with open(path, "rb") as fh:
+        data = fh.read()
+    end = data.find(b"\n\n")
+    head = data if end < 0 else data[:end + 1]
+    # raw_items(), not get(): get() turns a value holding non-ASCII bytes into
+    # a Header whose str() has already replaced them with U+FFFD.
+    first: dict[str, str] = {}
+    for name, value in BytesHeaderParser().parsebytes(head).raw_items():
+        first.setdefault(name.lower(), value)
+    # Mail needs a From, To or Subject that is not blank (E19c; MEASURED,
+    # review bef71c21: a lone `From:` or `Subject:` with no value is non-mail).
+    if not any(header_text(first.get(h, "")).strip() for h in ("from", "to", "subject")):
+        return None
+    raw = first.get("message-id")
+    # Unfolded as notmuch does: the line breaks go, the folding whitespace
+    # stays, the ends are stripped (MEASURED).
+    raw = re.sub(r"\r?\n", "", header_text(raw)).strip() if raw is not None else ""
+    if not raw:
+        return "notmuch-sha1-" + hashlib.sha1(data).hexdigest()
+    # The parsed id, else the raw value: "better than no message-id at all"
+    # (notmuch; so `bare-id@x`, `foo bar@x` and `<x>` are their own values).
+    parsed = parse_message_id(raw)
+    return raw if parsed is None else parsed
+
+
+class Scan:
+    def __init__(self, files: int, ids: set[str], nonmail: list[str]):
+        self.when = datetime.now().astimezone().isoformat(timespec="seconds")
+        self.files, self.ids, self.nonmail = files, ids, nonmail
+
+
+def scan(root: Path, ignore: str) -> Scan:
+    """Every distinct id notmuch would index under ROOT, by file scan."""
+    names, regexes = parse_ignore(ignore)
+
+    def ignored(rel: str, base: str) -> bool:
+        return base in names or any(r.search(rel) for r in regexes)
+
+    files, ids, nonmail = 0, set(), []
+    for d, dirs, fnames in os.walk(str(root), followlinks=True):
+        maildir = {"cur", "new", "tmp"} <= set(dirs)
+        top = os.path.samefile(d, str(root))
+        dirs[:] = sorted(x for x in dirs
+                         if not (x == ".notmuch" and top) and not (x == "tmp" and maildir)
+                         and not ignored(os.path.relpath(os.path.join(d, x), str(root)), x))
+        for n in sorted(fnames):
+            p = os.path.join(d, n)
+            rel = os.path.relpath(p, str(root))
+            if ignored(rel, n) or not os.path.isfile(p):
+                continue
+            files += 1
+            i = mail_id(p)
+            if i is None:
+                nonmail.append(rel)
+            else:
+                ids.add(i)
+    return Scan(files, ids, nonmail)
+
+
+def index_ids(config: Path, env: dict[str, str]) -> tuple[str, int, set[str]]:
+    """(when, `count --exclude=false '*'`, the id set) of the index. The flag
+    is required: search.exclude_tags would make a correct index look short."""
+    when = datetime.now().astimezone().isoformat(timespec="seconds")
+    argv = [NOTMUCH, f"--config={config}"]
+    try:
+        n = subprocess.run(argv + ["count", "--exclude=false", "*"], env=child_env(env),
+                           capture_output=True, text=True)
+        s = subprocess.run(argv + ["search", "--format=json", "--output=messages",
+                                   "--exclude=false", "*"], env=child_env(env),
+                           capture_output=True, text=True)
+    except OSError as exc:
+        raise Failed(f"notmuch: {exc}") from None
+    for done, what in ((n, "count"), (s, "search")):
+        if done.returncode != 0:
+            raise Failed(f"notmuch {what} exited {done.returncode}: {done.stderr.strip()}")
+    try:
+        return when, int(n.stdout.strip()), set(json.loads(s.stdout or "[]"))
+    except ValueError as exc:
+        raise Failed(f"notmuch gave an unreadable answer: {exc}") from None
+
+
+def count(store: str, env: dict[str, str]) -> tuple[str, bool]:
+    """SC1: scan-before, the index, scan-after; then the verdict. Writes nothing.
+    PASS when ids(before) <= index <= ids(after) and no id is missing or extra;
+    a quiet-window PASS when the three are equal."""
+    profile_file, text = resolve_profile(store, env)
+    link = stores_dir(env) / store
+    if not link.is_dir():
+        raise Refused(f"no built index at {link}: run `store-index build {store}` first")
+    cfg = keyfile(text)
+    root = Path(os.path.expanduser(cfg["database.mail_root"]))
+    ignore = cfg.get("new.ignore", "")
+    before = scan(root, ignore)
+    when, n, indexed = index_ids(profile_file, env)
+    after = scan(root, ignore)
+    missing = sorted(before.ids - indexed)      # scanned before the count, not indexed
+    extra = sorted(indexed - after.ids)         # indexed, not on disk after the count
+    a, b = len(before.ids), len(after.ids)
+    quiet = a == n == b and not missing and not extra
+    ok = a <= n <= b and not missing and not extra
+    lines = [
+        f"scan-before  {before.when}  files={before.files}  ids={a}",
+        f"index        {when}  {n}",
+        f"scan-after   {after.when}  files={after.files}  ids={b}",
+        f"set difference: scan-only {len(missing)}, index-only {len(extra)}",
+    ]
+    lines += [f"  scan-only   {i}" for i in missing] + [f"  index-only  {i}" for i in extra]
+    if after.nonmail:
+        lines.append(f"non-mail (not counted): {len(after.nonmail)}")
+        lines += [f"  {p}" for p in after.nonmail]
+    lines.append(f"{store}: " + ("PASS (quiet window)" if quiet else "PASS" if ok else "FAIL")
+                 + f"  [{root}]")
+    return "\n".join(lines), ok
+
+
+def search_stores(stores: str | None, env: dict[str, str]) -> list[tuple[str, Path]]:
+    """The stores to search, in order, each with its profile P. A store named
+    twice is searched once. With no --store, NOTMUCH_PROFILE's store, the
+    seat's own. Every store is resolved (a profile, and a built index) before
+    anything is searched, so a refusal searches nothing."""
+    if stores is None:
+        own = env.get("NOTMUCH_PROFILE")
+        if own is None:
+            raise Refused("no --store, and no NOTMUCH_PROFILE to name the seat's own "
+                          "store; store-index never searches the host index")
+        if not own:
+            raise Refused("NOTMUCH_PROFILE is empty, so it names no store (notmuch fails "
+                          "every call under it, E19b); name one with --store")
+        names = [own]
+    else:
+        names = list(dict.fromkeys(stores.split(",")))
+    out = []
+    for store in names:
+        profile_file, _ = resolve_profile(store, env)
+        link = stores_dir(env) / store
+        if not link.is_dir():
+            raise Refused(f"no built index for {store} at {link}: run "
+                          f"`store-index build {store}` first; nothing searched")
+        out.append((store, profile_file))
+    return out
+
+
+def search(stores: str | None, query: list[str], limit: int | None,
+           env: dict[str, str]) -> list[dict]:
+    """R4's join: QUERY once per named store, merged newest first. Each row is
+    notmuch's summary object plus "store"; (store, thread) is its key."""
+    resolved = search_stores(stores, env)
+    rows: list[dict] = []
+    for store, profile_file in resolved:
+        argv = [NOTMUCH, f"--config={profile_file}", "search", "--format=json",
+                "--output=summary", "--sort=newest-first"]
+        if limit is not None:
+            argv.append(f"--limit={limit}")   # each store's newest N hold the merged N
+        try:
+            done = subprocess.run(argv + ["--", *query], env=child_env(env),
+                                  capture_output=True, text=True)
+        except OSError as exc:
+            raise Failed(f"notmuch: {exc}") from None
+        if done.returncode != 0:
+            raise Failed(f"notmuch search of {store} exited {done.returncode}: "
+                         f"{done.stderr.strip()}")
+        try:
+            found = json.loads(done.stdout or "[]")
+        except ValueError as exc:
+            raise Failed(f"notmuch gave {store} an unreadable answer: {exc}") from None
+        rows += [{**row, "store": store} for row in found]
+    rows.sort(key=lambda row: -int(row.get("timestamp", 0)))   # stable: ties keep order
+    return rows if limit is None else rows[:limit]
+
+
+def search_line(row: dict) -> str:
+    """One row, as notmuch's text summary with the thread keyed by its store."""
+    when = datetime.fromtimestamp(int(row.get("timestamp", 0))).strftime("%Y-%m-%d %H:%M")
+    return (f"{row['store']}:thread:{row['thread']}  {when}  "
+            f"[{row.get('matched', '?')}/{row.get('total', '?')}]  "
+            f"{row.get('authors', '')}; {row.get('subject', '')} "
+            f"({' '.join(row.get('tags', []))})")
+
+
+def limit_arg(text: str) -> int:
+    n = int(text)
+    if n < 0:
+        raise argparse.ArgumentTypeError(f"{text}: not a count")
+    return n
+
+
+def main(argv: list[str] | None = None, env: dict[str, str] | None = None) -> int:
+    env = dict(os.environ) if env is None else env
+    parser = argparse.ArgumentParser(
+        prog="store-index", description="One notmuch index per store.")
+    verbs = parser.add_subparsers(dest="verb", metavar="VERB")
+    verbs.required = True
+    p = verbs.add_parser("profile", help="render the store's notmuch profile")
+    p.add_argument("store", metavar="STORE")
+    p.add_argument("--mail-root", metavar="DIR",
+                   help="the store's maildir tree (default: ~/.mail/agents/STORE)")
+    p.add_argument("--force", action="store_true",
+                   help="replace an existing profile that differs")
+    b = verbs.add_parser("build", help="build the store's index afresh, then swap it in")
+    b.add_argument("store", metavar="STORE")
+    u = verbs.add_parser("update", help="index the store's new mail, then tag it")
+    u.add_argument("store", metavar="STORE")
+    c = verbs.add_parser("count", help="SC1: scan, count the index, scan again; compare ids")
+    c.add_argument("store", metavar="STORE")
+    s = verbs.add_parser("search", help="R4: QUERY over named stores, joined newest first")
+    s.add_argument("--store", metavar="A[,B...]",
+                   help="the stores to search (default: NOTMUCH_PROFILE's, the seat's own)")
+    s.add_argument("--limit", type=limit_arg, metavar="N", help="at most N rows, merged")
+    s.add_argument("--format", choices=("text", "json"), default="text")
+    s.add_argument("query", nargs="+", metavar="QUERY", help="notmuch's query, as given")
+    args = parser.parse_args(argv)
+    try:
+        if args.verb == "profile":
+            print(profile(args.store, args.mail_root, args.force, env))
+        elif args.verb == "build":
+            print(build(args.store, env))
+        elif args.verb == "update":
+            print(update(args.store, env))
+        elif args.verb == "count":
+            text, ok = count(args.store, env)
+            print(text)
+            return EX_OK if ok else EX_MISMATCH
+        elif args.verb == "search":
+            rows = search(args.store, args.query, args.limit, env)
+            if args.format == "json":
+                print(json.dumps(rows, indent=1))
+            else:
+                for row in rows:
+                    print(search_line(row))
+        return EX_OK
+    except Refused as exc:
+        print(f"store-index {args.verb}: {exc}", file=sys.stderr)
+        return EX_REFUSED
+    except Failed as exc:
+        print(f"store-index {args.verb}: failed: {exc}", file=sys.stderr)
+        return EX_FAILED
+
+
+if __name__ == "__main__":
+    sys.exit(main())

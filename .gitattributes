@@ -1,0 +1,24 @@
+# Release export rules (export-ignore).
+# These paths stay in the tree and in history; `git archive` (and so the
+# release tarball) leaves them out.
+#
+# The `**` line is the contract: gitattributes documents that a directory
+# pattern does not match the paths inside it, so a per-file reader
+# (`git check-attr`) needs `/openspec/**`. The directory line beside it lets
+# `git archive` prune the directory itself. Both RATIFICATION.md files sit
+# under openspec/, so they need no line of their own. docs/internal/ does not
+# exist yet: add `/docs/internal/** export-ignore` here when it does.
+/openspec/ export-ignore
+/openspec/** export-ignore
+# Root-only: `claude plugin validate --strict` fails on a CLAUDE.md at the
+# plugin root ("not loaded as project context").
+/CLAUDE.md export-ignore
+# Internal design drawings: wholly about how the project is run, not about
+# the product. The pair works as for openspec/ above.
+/docs/architecture/ export-ignore
+/docs/architecture/** export-ignore
+# Root-only: the repo's own release-gate config, of no use to a user.
+/.gitready export-ignore
+# The PRIVATE half of the sig_v2 TEST key only: the `.pub` beside it ships, and
+# no test needs the private half (make_vectors.py, which does, says so and exits).
+/tests/fixtures/sig_v2/sessionmail-sig-TEST-VECTORS-ONLY export-ignore

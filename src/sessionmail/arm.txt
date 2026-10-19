@@ -1,0 +1,1 @@
+re-arm with the `pager listen` line your boot instruction gave you (bare `pager listen` if it gave none), in the background (Bash run_in_background: true), never a trailing `&` (not needed when the pager monitor is listening)

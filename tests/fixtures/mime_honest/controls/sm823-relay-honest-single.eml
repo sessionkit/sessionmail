@@ -1,0 +1,25 @@
+From: alice@t4.invalid
+To: bob@t4.invalid
+Date: Wed, 02 Jan 2030 11:00:00 +0000
+Subject: T-4 relay single
+Message-ID: <honest-single@t4.invalid>
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+Content-Transfer-Encoding: 8bit
+X-Session-From: 1a2b3c4d
+X-Machine: t4.invalid
+X-Session-Signature: v=2; a=sshsig; n=session-mail@example.com;
+ h=from:to:cc:subject:date:message-id:in-reply-to:references:supersedes:
+ mime-version:content-type:x-session-from:x-machine;
+ p=ObQ71K3/w2sYuux4pnZiYAzb+exUDdqzepE9qBSNjc0=;
+ b=U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgmn8BxxaYqsxu3NiwTjLVHtshGWTG
+ ns5uRHAWpWHkUbAAAAAYc2Vzc2lvbi1tYWlsQGV4YW1wbGUuY29tAAAAAAAAAAZzaGE1MTIA
+ AABTAAAAC3NzaC1lZDI1NTE5AAAAQEhHtE5BSi3Tv4VxBgH+yO08r9k8G6hlj1e1ZTxm/dqT
+ Frep0xE3iW0wbPyEU4R4LvtrdeEwK3zOdwcXKnRSTQ0=
+
+Pay Alïce 100 €.
+
+---
+
+Only after the audit <ref 7> passes.
+Thanks, Bob.

@@ -1,0 +1,31 @@
+From: Carol <carol@example.org>
+To: Dave <dave@example.net>
+Subject: gmail-attach
+Date: Thu, 03 Jan 2030 12:00:00 +0000
+Message-ID: <gmail-attach@example.org>
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="000000000000mixmixmixmix01"
+
+--000000000000mixmixmixmix01
+Content-Type: multipart/alternative; boundary="000000000000altaltaltalt02"
+
+--000000000000altaltaltalt02
+Content-Type: text/plain; charset="UTF-8"
+
+Data attached.
+
+--000000000000altaltaltalt02
+Content-Type: text/html; charset="UTF-8"
+
+<div dir="ltr">Data attached.</div>
+
+--000000000000altaltaltalt02--
+--000000000000mixmixmixmix01
+Content-Type: text/csv; charset="US-ASCII"; name="data.csv"
+Content-Disposition: attachment; filename="data.csv"
+Content-Transfer-Encoding: base64
+Content-ID: <f_lnq1a2b30>
+X-Attachment-Id: f_lnq1a2b30
+
+YSxiCjEsMgo=
+--000000000000mixmixmixmix01--

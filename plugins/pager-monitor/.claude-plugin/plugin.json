@@ -1,0 +1,10 @@
+{
+  "name": "sessionmail-pager-monitor",
+  "version": "0.0.1",
+  "description": "Retired: the root sessionmail plugin arms the pager monitor, on by default. This plugin arms nothing and stays one release for launches that still pass it as a --plugin-dir.",
+  "author": {
+    "name": "Mike Bailey",
+    "email": "mike@sessionkit.ai"
+  },
+  "homepage": "https://github.com/sessionkit/sessionmail"
+}

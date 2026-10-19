@@ -1,0 +1,5 @@
+# Every change to this repo needs the maintainer's review.
+# Branch protection on the default branch requires a code owner approval,
+# and that setting is INERT without this file.
+
+*       @mbailey

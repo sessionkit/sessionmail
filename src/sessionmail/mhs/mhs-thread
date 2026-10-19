@@ -1,0 +1,2132 @@
+#!/usr/bin/env python3
+"""mhs-thread — the MHS reader behind `memory ls | tree | cat | run PATH` (not a verb itself).
+
+Ported from an earlier print-thread script. Agent from
+CLAUDE_CODE_AGENT / SESSION_AGENT; root hint from $<AGENT>_ROOT; --box NAME
+for a shared box. With --box and NO agent set, no membership is checked
+(nothing is hidden for being unsigned) and the footer says "membership NOT
+checked". Originally: context-conserving view of a mail thread.
+
+Subjects as a tree, superseded filtered,
+bodies only on request. Ends with its own token cost so you know what you paid.
+
+Usage:
+  print-thread QUERY...          notmuch query (e.g. 'subject:"weekly notes"' or thread:ID)
+  print-thread --last-session    the predecessor's registry thread (SESSION UP + replies)
+  print-thread --wake            boot readout: delegates to `memory wake`
+                                 (BOOT+RECENT+COUNTS), then adds RULES + LAST SESSION
+  print-thread --index           the canonical root: every memory category, one page each
+  print-thread --ls              `ls /` of memory: the [ROOT] and its labels only (depth 1)
+  print-thread --boot            wake in one verb: --ls, then the newest signed item under
+                                 [BOOT] with its body (sig-verified; refuses if unsigned)
+  --depth N                      cut the tree N levels below the top (0 = top only)
+  print-thread --path /A/B/10    MHS path (item 70): walk from [ROOT] by subject token.
+                                 A segment is matched against the children's subjects by
+                                 the first rule that hits: the EXACT printed
+                                 name ("/ASKS/[session]"), then the bracket form
+                                 ("/ASKS" -> "[ASKS]"), then CANONICAL (case/spacing, both
+                                 sides: "/ASKS/session"), and for a NUMBERED segment only,
+                                 the "10 ..." prefix. Every name the tree prints is
+                                 therefore a valid segment. A canonical hit spanning two
+                                 spellings refuses as ambiguous; /today and /yesterday map
+                                 to an ISO date first. Renders the subtree (use --depth);
+                                 --resolve prints the Message-ID only
+  --under MSGID                  render only the SUBTREE under MSGID (that message
+                                 and its descendants), not the whole thread
+  -b / --bodies                  include message bodies
+  -a / --all                     don't filter superseded messages
+  -d / --dates                   show [sender date] suffixes (default: sender only)
+  -n / --dry-run                 show the notmuch commands, don't render
+                                 (read-only script — every line copy-pasteable)
+  -h / --help                    this text
+"""
+import json, os, re, shlex, subprocess, sys, threading
+
+# Python 3.11 or later (requires-python), checked before anything that needs
+# it. The package starts this script on its own interpreter; a run by hand
+# takes the shebang's python3, PATH's, and on an older one refuses in one line.
+# Plain 3.9 syntax, so 3.9 can parse it; a no-op when the script is loaded in-process.
+if sys.version_info < (3, 11):
+    _verb = sys.argv[1] if sys.argv[1:2] in (["ls"], ["tree"], ["cat"]) else "ls|tree|cat"
+    print("mhs-thread: needs Python 3.11 or later (this is %s); run it through "
+          "`memory %s`, which uses sessionmail's own Python"
+          % (".".join(map(str, sys.version_info[:3])), _verb), file=sys.stderr)
+    sys.exit(2)
+
+# The package's interpreter for every bundled script this one starts: the
+# bash ones (the shims, the verifier's wrapper) read it, having no
+# sys.executable of their own. SET to this interpreter, never inherited.
+# Only when run as a script, so an importer's environment is left alone.
+if __name__ == "__main__":
+    os.environ["SESSIONMAIL_PYTHON"] = sys.executable
+
+DRY = False   # -n/--dry-run: show the notmuch commands instead of rendering.
+VERB = "the walk"   # the verb a refusal names: ls, tree or cat (else --path)
+              # The script never mutates anything (S01), so dry-run is about
+              # VISIBILITY: black-box users learn the underlying invocations,
+              # and every printed line is copy-pasteable into a shell.
+
+def sh(args, resolve=False):
+    if DRY:
+        tag = "resolve (ran)" if resolve else "would run    "
+        print(f"  {tag}: {shlex.join(args)}")
+        if not resolve:
+            return ""
+    return subprocess.run(args, capture_output=True, text=True).stdout
+
+# One `notmuch show` per query per process. A path read used to fetch
+# the root thread TWICE, both times with bodies (the walk, then render): on
+# one measured root that is 14.8 MB of JSON and 1.1-1.9 s each, for a `tree` that
+# prints subjects only. The same thread without bodies is 3.3 MB and 0.6 s,
+# and its JSON differs from the bodied one only by the missing "body" key
+# (measured on 5879 messages). So: ask for bodies only
+# when something renders one (cat / -b / --boot), and let a bodied fetch serve
+# a body-less request. Nothing here mutates a message, so one parse is shared.
+_SHOWN = {}   # tuple(query) -> (fetched with bodies?, parsed threads)
+
+def show(query, bodies):
+    """`notmuch show --format=json` over QUERY (a list of terms), parsed.
+    None when notmuch printed nothing (or under -n, which only prints the
+    command). Cached for the life of the process. Under -n the cache records
+    the PRINTED fetch, so a dry run prints exactly the fetches a real run
+    makes, flag for flag, and no more (S01)."""
+    key = tuple(query)
+    hit = _SHOWN.get(key)
+    if hit and (hit[0] or not bodies):
+        return hit[1]
+    raw = sh(["notmuch", "show", "--format=json",
+              "--body=true" if bodies else "--body=false"] + list(query))
+    if DRY:
+        _SHOWN[key] = (bodies, None)
+        return None
+    if not raw.strip():
+        return None
+    threads = json.loads(raw)
+    _SHOWN[key] = (bodies, threads)
+    return threads
+
+def short_from(h):
+    # A named From (`Alice <alice@host>`) is its ADDRESS, not its name -
+    # the innermost <...> first, as session-mail-verify's local_part() does.
+    # Reading the name here judged a named memory item NOT the owner's (MHS
+    # 170) and hid it. A bare From reduces exactly as before.
+    v = h.get("From", "?")
+    i = v.rfind("<")
+    j = v.find(">", i + 1) if i != -1 else -1
+    if i != -1 and j != -1:
+        v = v[i + 1:j]
+    m = re.match(r'([^<@\s]+)', v.strip())
+    return m.group(1) if m else "?"
+
+def flatten(node, depth, out):
+    msg, children = node[0], node[1]
+    if msg:
+        out.append((depth, msg))
+    for c in children:
+        flatten(c, depth + (1 if msg else 0), out)
+
+def body_text(msg):
+    parts = []
+    def walk(p):
+        if isinstance(p, list):
+            for x in p: walk(x)
+        elif isinstance(p, dict):
+            if p.get("content-type", "").startswith("text/plain") and isinstance(p.get("content"), str):
+                parts.append(p["content"])
+            walk(p.get("content", []))
+    walk(msg.get("body", []))
+    return "\n".join(parts).strip()
+
+# ── the body of a TRUSTED item ──────────────────────────────────────
+# body_text above is notmuch's JSON: GMime's parse, not the one the verifier hashed. A
+# parse differential between the two let a keyless edit change what a GOOD item showed
+# or `memory run` ran (reproduced). So a member's body comes from signed_body: the
+# file _sig_ok verified, read by _sig.signed_text (the verifier's own leaves() parse and
+# the bytes p= hashes). notmuch stays the INDEX (threads, ids, subjects, From/To); it is
+# never the body of a trusted item. body_text is kept for an UNCHECKED render only
+# (no owner: its footer says membership NOT checked, so it makes no trust claim).
+_SIGMOD = []
+_SIGMOD_LOCK = threading.Lock()   # prefetch() renders from 8 threads
+NO_TEXT = "no-text-part"          # _sig.NO_TEXT, said here so a failed load can still compare
+
+def _sig_mod():
+    """_sig.py BY PATH from beside the verifier (as session-mail-verify's load_sig and
+    the port load it): the canonicaliser the verdict was made with. None when it cannot
+    be loaded (a broken install): every trusted body is then withheld, never guessed."""
+    with _SIGMOD_LOCK:
+        if not _SIGMOD:
+            try:
+                import importlib.util
+                path = os.path.realpath(os.path.join(_HERE, "..", "_sig.py"))
+                spec = importlib.util.spec_from_file_location("sessionmail_sig_body", path)
+                mod = importlib.util.module_from_spec(spec)
+                spec.loader.exec_module(mod)
+                _SIGMOD.append(mod)
+            except Exception:
+                _SIGMOD.append(None)
+        return _SIGMOD[0]
+
+def signed_body(m):
+    """(text, why) for a TRUSTED item: the text its signature covers, read from the file
+    _sig_ok verified (the first existing filename), never notmuch's JSON. text is
+    stripped as body_text strips it; (None, why) when there is no signed text to show:
+    why == NO_TEXT for a signed mail with no text/plain part, else a refusal."""
+    # A NAMED verifier (SESSION_MAIL_VERIFY: the tests' stub, an operator's) is the
+    # verifier, as for the port (_port_load): the leaf reading alone, no re-check.
+    return _leaf_body(m, check=not os.environ.get("SESSION_MAIL_VERIFY"))
+
+def hint_root_body(m):
+    """(text, why) for the PRIMED root when it is NOT a member:
+    the file's first text/plain leaf as PYTHON reads it
+    (signed_text check=False), never notmuch's JSON. It makes no signature claim:
+    render labels it (hint_label) and keeps it out of render.withheld."""
+    return _leaf_body(m, check=False)
+
+def _leaf_body(m, check):
+    fn = next((f for f in m.get("filename", []) if os.path.exists(f)), None)
+    if not fn:
+        return None, "no readable file"
+    S = _sig_mod()
+    if S is None:
+        return None, "_sig.py cannot be loaded beside this reader (a broken install)"
+    try:
+        with open(fn, "rb") as fh:
+            raw = fh.read()
+    except OSError as e:
+        return None, "the file cannot be read (%s)" % (e.strerror or type(e).__name__)
+    text, why = S.signed_text(raw, check=check)
+    return (text.strip() if text is not None else None), why
+
+#: What a reader may say about a member (From the owner, To the owner, signature
+#: verifies in PLAIN mode). Plain mode is self-attributing, so a member's signer is never
+#: known to be the owner's until a key is pinned: never "sig OK". The words and the F/R
+#: switch live in _sig.py, once, for this reader and session-mail-wake's shelf; these are
+#: said here too so a failed load still never prints "sig OK".
+UNPINNED = "signature verifies · signer NOT pinned"
+UNPINNED_REFUSED = "the signer is NOT pinned (no key is known to be the owner's yet)"
+
+def unpinned():
+    """(badge, refuse?, refusal reason) from _sig.py: the F/R switch is REFUSE_UNPINNED."""
+    S = _sig_mod()
+    if S is None:
+        return UNPINNED, False, UNPINNED_REFUSED
+    return (getattr(S, "UNPINNED", UNPINNED), bool(getattr(S, "REFUSE_UNPINNED", False)),
+            getattr(S, "UNPINNED_REFUSED", UNPINNED_REFUSED))
+
+def withheld(why):
+    """The one line a reader shows in place of a body signed_body did not give."""
+    return ("(no text/plain part: nothing signed to show)" if why == NO_TEXT
+            else "⊘ body withheld: %s" % why)
+
+def is_hint_root(m):
+    """Is m the root MHS 90 primed by its hint ($<AGENT>_ROOT)? is_anchor admits it with
+    no signature check; every other node a render prints passed member() (or the walk)."""
+    return bool(PRIMED) and m.get("id", "").strip("<>") == PRIMED
+
+def hint_label(m, member):
+    """The ONE line above the body of a hint-admitted root that is not a member:
+    said the same in cat, tree -b and --index -b (all three print through render),
+    so its body never reads as a signed one. Says WHY it is not a member: an unsigned
+    root says "unsigned", a v1 root outside the v1 shape "signature does not verify"."""
+    why = member.why(m)
+    return "(root admitted by its hint; %s)" % ("unsigned" if why == "unsigned"
+                                                 else member.why_text(m))
+
+def supersede_pairs(flats):
+    """{superseded_id: [superseder_id, ...]} from Supersedes:/X-Supersedes:
+    headers. notmuch's JSON omits nonstandard headers, so read each message
+    file's header block directly (filenames are in the JSON; local IO, capped)."""
+    pairs = {}
+    pat = re.compile(r'(?im)^(?:X-)?Supersedes:\s*<?([^>\s]+)>?')
+    for flat in flats:
+        for _, m in flat:
+            for fn in m.get("filename", []):
+                try:
+                    with open(fn, "rb") as fh:
+                        head = fh.read(8192).split(b"\n\n", 1)[0]
+                    for tid in pat.findall(head.decode("utf-8", "replace")):
+                        pairs.setdefault(tid, []).append(m.get("id", "").strip("<>"))
+                    break
+                except OSError:
+                    continue
+    return pairs
+
+def superseded_ids(flats):
+    """Collect message-ids named in Supersedes:/X-Supersedes: headers."""
+    return set(supersede_pairs(flats))
+
+# ── MHS 170 membership — ONE test, applied wherever a mail takes effect ─────
+# A review found that `ls /RULES`, `tree` and
+# `cat` read an unsigned or forged item as live memory: only `ls /` and
+# `--boot` passed verify=True. Reading this file for it found
+# the same gap wherever a mail can TAKE EFFECT without being printed: the
+# walk's child pick (newest of one spelling wins), `latest`, a Supersedes:
+# header (honoured from any mail in the thread, the wake included), the
+# subject-tag shadows, a fork twin, and the [ROOT] anchor (newest [ROOT] by
+# subject). Headers are not the test — any local sender writes From and To.
+
+PRIMED = ""   # the root hint's Message-ID once root_thread() has primed it
+
+_SIG = {}     # filename -> True (verified) / False (refused) / None (timed out)
+# The filenames among _SIG's False that were refused as UNSIGNED (no
+# X-Session-Signature: the verifier's plain-mode rc 2, or the port's False).
+# A refusal is a refusal either way; this only keeps WHY, so a ⊘ line can say
+# "unsigned" and not call a missing signature a bad one.
+_UNSIGNED = set()
+# A verify is ~80 ms; one that has not answered in this long is a hang, and
+# a hang is NOT a pass (without it one stuck verifier hung every reader).
+VERIFY_TIMEOUT = float(os.environ.get("SESSION_MAIL_VERIFY_TIMEOUT") or 10)
+# The verifier is the sibling session-mail-verify, which is what `session
+# mail-verify` dispatched to: this reader never leaves its own directory.
+# $SESSION_MAIL_VERIFY (a command, shlex-split, the file appended) replaces
+# it; the test suites point it at their stub.
+_HERE = os.path.dirname(os.path.realpath(__file__))
+VERIFY = (shlex.split(os.environ.get("SESSION_MAIL_VERIFY") or "")
+          or [os.path.join(_HERE, "session-mail-verify")])
+
+# ── the same verify, in-process, for _sig_ok ONLY ────────────────────────────
+# A PORT OF A TRUST CHECK. `memory tree /ASKS --depth 1` on one measured root forked
+# the verifier 637 times (bash -> python3 -> two ssh-keygen, 60-100 ms each):
+# ~70% of a 13-19 s read (profiled). For the one shape
+# every real memory mail has (ssh-ed25519 key, sha512, the expected namespace:
+# 6172 of 6172 signed mails on that root) the same
+# check runs here, against the same embedded key, with `cryptography`.
+#
+# FAIL-CLOSED, the rule:
+# this may say GOOD only where `session-mail-verify FILE` exits 0. So it
+# decides exactly two things and hands EVERY other case to the subprocess:
+#   - unsigned (no X-Session-Signature): the reference's rc 2, decided by the
+#     reference's own lines before it ever reaches ssh-keygen -> not a member;
+#   - good: a strictly parsed ed25519/sha512 SSHSIG that cryptography verifies.
+# A bad signature, an odd armor, another key type or hash, a parse error, an
+# exception, anything doubtful: None here, and the subprocess decides.
+# Ed25519: OpenSSL (cryptography) refuses S >= L. OpenSSH's built-in ed25519
+# (ref10, as in Apple's /usr/bin/ssh-keygen) reduces S mod L and accepts it;
+# an OpenSSH linked to libcrypto (Homebrew's) refuses it as OpenSSL does. On
+# everything else they compute the same cofactorless equation over the same
+# bytes. So OpenSSL's yes is a subset of OpenSSH's on either build, and its no
+# goes to the subprocess, which gives the reference's own answer. The weak-key
+# vectors in tests/mhs/test_inproc_verify.py pin that subset on the host that
+# runs them.
+#
+# SINGLE-SOURCED: canonical() and the header parse are not copied. They are
+# the reference's own code, lifted from session-mail-verify at run time, and
+# only from the reference the port was proven against: VERIFY_PORT_PIN is the
+# sha256 of that WHOLE script, byte for byte: the bash wrapper too, which
+# chooses the interpreter and the environment the python runs in (the pin
+# covered only the heredoc until the re-proof at 2bd8a2b, where signature
+# v2 changed the wrapper). If the reference changes AT ALL (a comment
+# included: a trust port is re-read, not diffed by a regex), the pin misses
+# and every verify goes back to the subprocess until the port is re-proven
+# and re-pinned (tests/mhs/test_inproc_verify.py fails and says so).
+#
+# PROVEN AGAINST: the session-mail-verify this file ships beside, at the sha256
+# VERIFY_PORT_PIN names. Only v=1 (or no v=) is ever decided here; v=2 (the
+# sender's default) and every other v= go to the subprocess. v2 is NOT ported.
+# The header is read with _sig's byte parse (its sig_tags, lifted by name with
+# mail_text, never copied), which refuses a mail it cannot read and a mail with
+# more than one X-Session-Signature field; the port inherits both. The v1 shape
+# checks (_sig.v1_defects) are loaded, not pinned, so the port's v1 path
+# follows them by construction and defers.
+#
+# RE-PINNING. Every change to the reference, a comment included, misses the
+# pin. To re-pin: re-read the reference against the port (the python heredoc,
+# the twelve lifted names compared by AST source segment, the bash wrapper that
+# chooses the interpreter), run the differential in
+# tests/mhs/test_inproc_verify.py with its vectors (every refusal the
+# reference makes, v1 and v2), and only then write the new sha256 below. A
+# merge of two branches that each re-pinned is re-read against the MERGED
+# reference: neither parent's pin is the merged one.
+#
+# Not used when SESSION_MAIL_VERIFY names a verifier (the tests' stub, or an
+# operator forcing the subprocess), when this interpreter is not the python3
+# the reference would exec (its wrapper's rule, spelled the same here:
+# $SESSIONMAIL_PYTHON, else PATH's python3), or when ssh-keygen is not on the PATH (the
+# reference fails every mail then; so must this). No verdict is cached across
+# processes: that is a trust-model change, and needs its own decision.
+#
+# KNOWN DIVERGENCE, accepted and documented (no canary). The checks above test that the reference
+# COULD run, not that it DOES. Where the reference itself cannot run, this
+# port still says GOOD on a good mail (cryptographically right, never a
+# forgery) while the broken reference says BAD on every mail. Two causes
+# remain of the four measured in review:
+#   - an ssh-keygen that is on the PATH but fails (only `which` is checked);
+#   - this reader run in UTF-8 mode (-X utf8, or PYTHONUTF8=1) with a
+#     non-UTF-8 locale: it passes the locale check above, and the reference's
+#     python3 does not decode as UTF-8. Under `-I` PYTHONUTF8=1 no
+#     longer reaches the reference, so the variable joins the flag here
+#     (measured: en_US.ISO8859-1 + PYTHONUTF8=1 is utf-8 here, ISO8859-1 there).
+# The wrapper's `-I` removed the other two: PYTHONIOENCODING=ascii (the reference
+# crashed printing its result) and a stdlib module planted in the caller's cwd
+# (`python3 -` put the cwd first on sys.path). The reference ignores both now.
+# In each case the port's GOOD is the right answer for the mail, and the
+# reference's BAD is the environment's fault.
+VERIFY_PORT_PIN = "716efa1d7881fe68c448698d02f23eae187a545f0a5eb48aaa0dffc2083e2c68"
+_PORT = []    # [namespace] once loaded, [None] when the port is off
+_PORT_LOCK = threading.Lock()   # prefetch() verifies from 8 threads
+
+def _verify_python(text):
+    """The python heredoc session-mail-verify execs
+    (`exec "${SESSIONMAIL_PYTHON:-python3}" -I - <<'PYEOF'`)."""
+    head = "<<'PYEOF'\n"
+    i = text.index(head) + len(head)
+    return text[i:text.index("\nPYEOF\n", i) + 1]
+
+def _port():
+    with _PORT_LOCK:
+        if not _PORT:
+            try:
+                _PORT.append(_port_load())
+            except Exception:
+                _PORT.append(None)
+        return _PORT[0]
+
+def _port_load():
+    import ast, base64, email, hashlib, io, shutil, struct, textwrap, types
+    if os.environ.get("SESSION_MAIL_VERIFY"):
+        return None   # a named verifier is the verifier: never second-guess it
+    ref = VERIFY[0]
+    if len(VERIFY) != 1 or ref != os.path.join(_HERE, "session-mail-verify"):
+        return None
+    # The wrapper's own rule, `exec "${SESSIONMAIL_PYTHON:-python3}"`: ONE
+    # rule in two places, which the port's equivalence rests on. `which`
+    # finds a bare name on PATH and takes a path as given, as bash's exec
+    # does; a value that is not executable is None, and the port is off.
+    py3 = shutil.which(os.environ.get("SESSIONMAIL_PYTHON") or "python3")
+    if not py3 or os.path.realpath(py3) != os.path.realpath(sys.executable):
+        return None   # the reference parses mail with ANOTHER python's email
+    if not shutil.which("ssh-keygen"):
+        return None   # the reference cannot pass anything without it
+    import locale
+    if (locale.getpreferredencoding(False) or "").lower().replace("-", "") != "utf8":
+        return None   # the reference's open() would not decode as UTF-8
+    with open(ref, "rb") as fh:
+        whole = fh.read()
+    if hashlib.sha256(whole).hexdigest() != VERIFY_PORT_PIN:
+        return None   # not the reference this port was proven against
+    src = _verify_python(whole.decode("utf-8"))
+    from cryptography.exceptions import InvalidSignature
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+    want = {"BEGIN", "END", "HDRS", "SIGH", "MAIL_NS_DEFAULT",
+            "local_part", "canonical", "parse_sshsig", "keytype",
+            "sig_tags", "mail_text", "v1_refusal"}
+    body = []
+    for node in ast.parse(src).body:
+        names = ([t.id for t in node.targets if isinstance(t, ast.Name)]
+                 if isinstance(node, ast.Assign) else
+                 [node.name] if isinstance(node, ast.FunctionDef) else [])
+        if names and set(names) <= want:
+            body.append(node)
+    got = {n.name if isinstance(n, ast.FunctionDef) else n.targets[0].id for n in body}
+    if got != want:
+        return None
+
+    class _Exit(Exception):
+        """the reference would have exited here: not ours to decide"""
+
+    def _exit(*_a):
+        raise _Exit()
+
+    class _Null:
+        def write(self, *_a): pass
+        def flush(self): pass
+
+    # canonical() can print a limit notice and sys.exit(3): both land here,
+    # never on this reader's stderr (the output stays byte-identical).
+    # The reference reads the header with _sig's byte parse, loaded BY
+    # PATH from its own install (its load_sig): the port loads the same file,
+    # so sig_tags runs the same parser here as there. No _sig.py: port off.
+    sig_path = os.path.realpath(os.path.join(os.path.dirname(os.path.realpath(ref)),
+                                             "..", "_sig.py"))
+    if not os.path.isfile(sig_path):
+        return None   # the reference refuses every mail then (a broken install)
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("sessionmail_sig_port", sig_path)
+    sig = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(sig)
+    ns = {"__builtins__": __builtins__, "base64": base64, "email": email,
+          "hashlib": hashlib, "io": io, "os": os, "struct": struct, "textwrap": textwrap,
+          "sys": types.SimpleNamespace(exit=_exit, stderr=_Null())}
+    exec(compile(ast.Module(body=body, type_ignores=[]), ref, "exec"), ns)
+    ns["_Exit"] = _Exit
+    ns["_S"] = sig
+    ns["_Ed25519PublicKey"] = Ed25519PublicKey
+    ns["_InvalidSignature"] = InvalidSignature
+    return ns
+
+_B64 = re.compile(r"[A-Za-z0-9+/]+={0,2}\Z")
+
+def _sshsig_fields(raw):
+    """SSHSIG blob -> (pubkey32, namespace, sig64), for EXACTLY the shape the
+    port handles: version 1, a plain ssh-ed25519 key, empty reserved, sha512,
+    an ssh-ed25519 signature, no trailing byte. Anything else: None."""
+    import struct
+    off = [0]
+    def take():
+        if off[0] + 4 > len(raw):
+            raise ValueError("short")
+        (n,) = struct.unpack(">I", raw[off[0]:off[0] + 4])
+        if off[0] + 4 + n > len(raw):
+            raise ValueError("short")
+        v = raw[off[0] + 4:off[0] + 4 + n]
+        off[0] += 4 + n
+        return v
+    def ed25519(blob, size):
+        inner, o = [], 0
+        for _ in range(2):
+            if o + 4 > len(blob):
+                return None
+            (n,) = struct.unpack(">I", blob[o:o + 4])
+            inner.append(blob[o + 4:o + 4 + n])
+            o += 4 + n
+        if o != len(blob) or inner[0] != b"ssh-ed25519" or len(inner[1]) != size:
+            return None
+        return inner[1]
+    try:
+        if raw[:6] != b"SSHSIG" or raw[6:10] != b"\x00\x00\x00\x01":
+            return None
+        off[0] = 10
+        pub, namespace, reserved, hashalg, sig = take(), take(), take(), take(), take()
+    except ValueError:
+        return None
+    if off[0] != len(raw) or reserved != b"" or hashalg != b"sha512":
+        return None
+    pub, sig = ed25519(pub, 32), ed25519(sig, 64)
+    if pub is None or sig is None:
+        return None
+    return pub, namespace, sig
+
+def _sig_inproc(fn):
+    """session-mail-verify FILE's verdict, where the port can give it EXACTLY:
+    True (it would exit 0), False (it would exit 2: unsigned), or None, which
+    is every other case, for the subprocess to decide."""
+    P = _port()
+    if P is None or fn.startswith("-"):
+        return None
+    try:
+        return _sig_inproc_with(P, fn)
+    except Exception:
+        return None
+
+def _sig_inproc_with(P, fn):
+    import base64, hashlib
+    # ↓ session-mail-verify's own main flow, line for line, to ssh-keygen.
+    # The header is read by the reference's OWN sig_tags (lifted
+    # above, never copied): _sig's byte parse, the one v2 verifies with.
+    with open(fn, "rb") as fh:
+        raw_b = fh.read()
+    tags, why = P["sig_tags"](P["_S"], raw_b)
+    if why is not None:
+        return None                # its ambiguous(): rc 1; the subprocess says so
+    if tags is None:
+        return False                                  # its sys.exit(2)
+    # The reference dispatches on v= here: v=2 goes to verify_v2
+    # (_sig.py, a different canonical form), any other v= but 1 is its rc 3.
+    # The port is a port of the v1 path ONLY: every other v= is the
+    # subprocess's to decide (re-proven at 2bd8a2b).
+    if tags.get("v", "1") != "1":
+        return None
+    try:
+        msg = P["email"].message_from_string(P["mail_text"](raw_b))
+    except ValueError:
+        return None                # its undecodable refusal: the subprocess's
+    ns = tags.get("n", P["MAIL_NS_DEFAULT"])
+    b = tags["b"]
+    armor = (P["BEGIN"] + "\n"
+             + "\n".join(P["textwrap"].wrap(b, 70))
+             + "\n" + P["END"] + "\n")
+    blob, sig_ns = P["parse_sshsig"](armor)
+    keyline = f"{P['keytype'](blob)} {base64.b64encode(blob).decode()}"
+    try:
+        data = P["canonical"](msg)
+    except P["_Exit"]:
+        return None
+    # ↑ what the reference hands ssh-keygen: armor, ns, data. ssh-keygen is
+    # stricter than python's base64, so only the canonical encoding passes.
+    if not _B64.match(b) or len(b) % 4:
+        return None
+    sigraw = base64.b64decode(b, validate=True)
+    if base64.b64encode(sigraw).decode() != b:
+        return None
+    if base64.b64decode("".join(armor.splitlines()[1:-1]), validate=True) != sigraw:
+        return None
+    got = _sshsig_fields(sigraw)
+    if got is None:
+        return None
+    pub, namespace, sig = got
+    if (not ns or "\x00" in ns or namespace != ns.encode("utf-8")
+            or blob != sigraw[14:14 + len(blob)]
+            or keyline.split(" ", 1)[0] != "ssh-ed25519"):
+        return None
+    def string(v):
+        return len(v).to_bytes(4, "big") + v
+    signed = (b"SSHSIG" + string(namespace) + string(b"") + string(b"sha512")
+              + string(hashlib.sha512(data).digest()))
+    try:
+        P["_Ed25519PublicKey"].from_public_bytes(pub).verify(sig, signed)
+    except P["_InvalidSignature"]:
+        return None      # the reference may still say good (S >= L): ask it
+    # The reference's own v1_refusal (lifted above), after a good
+    # crypto, as there: a refused shape is its rc 1, the subprocess's to say.
+    if P["v1_refusal"](P["_S"], raw_b) is not None:
+        return None
+    return True
+
+def _sig_ok(m):
+    fn = next((f for f in m.get("filename", []) if os.path.exists(f)), None)
+    if not fn:
+        return False
+    if fn not in _SIG:
+        got = _sig_inproc(fn)   # True / False only where EXACT
+        if got is not None:
+            _SIG[fn] = got
+            if got is False:
+                _UNSIGNED.add(fn)   # the port's False IS the reference's rc 2
+            return got
+        try:
+            rc = subprocess.run([*VERIFY, fn], capture_output=True,
+                                timeout=VERIFY_TIMEOUT).returncode
+            _SIG[fn] = rc == 0
+            if rc == 2:
+                _UNSIGNED.add(fn)   # plain mode's rc 2: unsigned, never "bad"
+        except subprocess.TimeoutExpired:
+            # UNKNOWN, not False: a mail we could not check is not a member,
+            # and a Supersedes: it carries still RETIRES its target
+            # (MemberPairs.blocked) — a timeout never hands a step back to
+            # the version it replaced.
+            _SIG[fn] = None
+    return _SIG[fn]
+
+def _sig_unsigned(m):
+    """Was m's refusal (an earlier _sig_ok(m) False) for carrying NO
+    signature? Only the reason; the verdict is _sig_ok's."""
+    fn = next((f for f in m.get("filename", []) if os.path.exists(f)), None)
+    return fn in _UNSIGNED
+
+# ── v1 membership reads the SIGNED To ───────────────────────────────
+# v1 signs five headers (session-mail-verify HDRS), and of To only local_part(To): the
+# innermost <...> (else the whole field) cut at the first '@'. It never signs Cc, a
+# display name, a comment or a second address. header_faults searched notmuch's To + Cc,
+# so bytes no v1 signature covers met the "to" half: a keyless `Cc: alice` (or To
+# rewritten to '"alice@h" <bob@h>', 'bob@h (alice@h)', 'bob@h, alice@h') made alice's
+# own v1 mail To bob a member of alice's tree. The contract (model B): for a mail read as
+# v1, the "to" half holds only if today's search hits on To (never Cc) AND the file's To,
+# reduced as the verifier signs it, is the recipient. v2 signs To and Cc (_sig.FLOOR):
+# today's To+Cc search stands. A pure narrowing: no mail gains membership.
+_SIGNED_TO = {}   # filename -> (version, To): one header read per file, as _SIG
+
+def _v1_local_part(v):
+    """COPY of session-mail-verify's local_part() (a heredoc script: it cannot be
+    imported; _root._local_part is the other copy). tests/test_memory_v1_signed_to.py pins
+    it equal to the verifier's on every form. The verifier lost its strip_tag flag
+    away (its one caller was leg 2), so this copy has none either."""
+    v = " ".join(str(v or "").split())
+    i = v.rfind("<")
+    j = v.find(">", i + 1) if i != -1 else -1
+    if i != -1 and j != -1:
+        v = " ".join(v[i + 1 : j].split())
+    v = v.split("@", 1)[0].lower()
+    return v
+
+def _read_signed_to(fn):
+    """(version, to) for the file at fn, read as the verifier reads it: version from
+    _sig's byte parse (signature_value + parse_header, the two calls of the verifier's
+    sig_tags), to from email.message_from_string(the text).get("to") (its v1 canonical).
+    "2" only on a POSITIVE v=2; "unsigned" for no X-Session-Signature at all (rc 2:
+    never GOOD, so today's reading stands and rc 2's why stays "unsigned"); every other
+    mail is "1", FAIL CLOSED: an absent v= (the verifier's default), a header that does
+    not parse, a file or _sig.py that cannot be read. to is None when it cannot be read."""
+    S = _sig_mod()
+    try:
+        with open(fn, "rb") as fh:
+            raw = fh.read()
+    except OSError:
+        return "1", None
+    if S is None:
+        return "1", None
+    try:
+        sv = S.signature_value(raw)
+        if not sv:
+            return "unsigned", None
+        if S.parse_header(sv).get("v", "1") == "2":
+            return "2", None
+    except Exception:
+        pass   # unreadable: fail closed to v1
+    try:
+        import email, io
+        text = io.TextIOWrapper(io.BytesIO(raw)).read()   # the verifier's mail_text
+        return "1", email.message_from_string(text).get("to", "")
+    except Exception:
+        return "1", None   # a v1 mail that does not decode: the verifier's BAD too
+
+def _signed_to(m):
+    """_read_signed_to for THE file _sig_ok verifies (the first existing filename).
+    No file on disk: "unsigned" (nothing to verify: _sig_ok refuses it, no verify)."""
+    fn = next((f for f in m.get("filename", []) if os.path.exists(f)), None)
+    if not fn:
+        return "unsigned", None
+    if fn not in _SIGNED_TO:
+        _SIGNED_TO[fn] = _read_signed_to(fn)
+    return _SIGNED_TO[fn]
+
+class Unverifiable(Exception):
+    """A mail that decides the answer could not be verified (timed out)."""
+
+class Members:
+    """MHS 170: a mail is memory iff From the owner (any sender, for a shared
+    box) AND To/Cc the recipient at any plus-tag AND its signature verifies.
+    Cc counts for v2 only, which signs it; a v1 mail's To must BE the recipient
+    in the reduction v1 signs (_signed_to).
+    Call it on one notmuch message; the verdict is kept per Message-ID.
+
+    LAZY on purpose: a real root thread is ~1600 mails, ~670 of them
+    superseders, and one verify is ~80 ms (measured), so
+    checking the thread up front is ~55 s. Only a mail that could take effect
+    is verified, and prefetch() runs a known batch (a node's children, a
+    rendered subtree) in parallel."""
+    def __init__(self, owner, recip=None, shared=False):
+        self.owner, self.recip, self.shared = owner, recip or owner, shared
+        self._memo = {}
+
+    def header_faults(self, m):
+        """The header halves m fails: [] or some of "from", "to".
+        Plus-tag is NOT the test; owner-as-recipient is. The pre-standard
+        tree used +rules/+convo/… (110 of 168 mails as of 2030-08-25).
+        Case-blind, as the verifier's local_part() is."""
+        h, bad = m["headers"], []
+        if not (self.shared or short_from(h).lower() == self.owner.lower()):
+            bad.append("from")
+        if not self._names(h.get("To", "") + " " + h.get("Cc", "")) or self._v1_to_fault(m):
+            bad.append("to")
+        return bad
+
+    def _names(self, field):
+        """Today's search: does FIELD name the recipient at any plus-tag?"""
+        return re.search(r'(?<![\w.-])' + re.escape(self.recip) + r'(\+[\w-]+)?@',
+                         field or "", re.I) is not None
+
+    def _v1_to_fault(self, m):
+        """For a mail that passes today's To+Cc search, does the v1 reading
+        refuse it? Read as v1, the "to" half ALSO needs the search to hit on To alone
+        and the file's To, reduced as v1 signs it, to be the recipient (any +tag).
+        False for v2 and for a mail with no signature (today's reading). Only called
+        once the search hit, so a header slip costs no file read (stays LAZY)."""
+        version, to = _signed_to(m)
+        if version != "1":
+            return False
+        if not self._names(m["headers"].get("To", "")) or to is None:
+            return True
+        # The signed value is local_part(To), +tag and all. "r or r+tag" is
+        # local_part(To) cut at its first '+' == r for any r with no '+', and keeps
+        # a plus-named box (whose own '+' that cut would lose) as the search does.
+        signed, r = _v1_local_part(to), self.recip.lower()
+        return not (signed == r or signed.startswith(r + "+"))
+
+    def headers_ok(self, m):
+        return not self.header_faults(m)
+
+    def why(self, m):
+        """None for a member, else WHICH half of the test failed:
+        "from", "to" or "from+to" (the headers), "unsigned" (it carries no
+        signature: the verifier's rc 2), "signature" (the verifier
+        refused the signature it carries) or "timeout" (it never answered).
+        The verdicts are exactly __call__'s; this only keeps the reason. The signature is
+        checked only when the headers pass, as before: a header slip costs
+        no verify (stays LAZY)."""
+        mid = m.get("id", "")
+        if mid not in self._memo:
+            bad = self.header_faults(m)
+            if bad:
+                self._memo[mid] = "+".join(bad)
+            else:
+                sig = _sig_ok(m)
+                self._memo[mid] = (None if sig is True else "timeout" if sig is None
+                                   else "unsigned" if _sig_unsigned(m) else "signature")
+        return self._memo[mid]
+
+    def why_text(self, m):
+        """why(), said for a person: which header, holding what, or the
+        signature. A header slip reads differently from a forgery, and a
+        mail with NO signature from one whose signature fails."""
+        r = self.why(m)
+        if r is None:
+            return ""
+        h, out = m["headers"], []
+        if "from" in r.split("+"):
+            out.append("From is %r, not the owner %r" % (short_from(h)[:40], self.owner))
+        if "to" in r.split("+"):
+            if self._names(h.get("To", "") + " " + h.get("Cc", "")):
+                # To/Cc DOES name it, but no v1 signature covers where.
+                to = _signed_to(m)[1]
+                out.append("v1 signs only To's address (%s), never Cc or the rest of "
+                           "To: it is not %r (any +tag)"
+                           % ("unreadable" if to is None else repr(_v1_local_part(to)[:40]),
+                              self.recip))
+            else:
+                out.append("To/Cc does not name %r (any +tag)" % self.recip)
+        if out:
+            return "; ".join(out) + " (signature not checked)"
+        return {"timeout": "verify timed out",
+                "unsigned": "unsigned (no X-Session-Signature)"}.get(r, "signature does not verify")
+
+    def __call__(self, m):
+        return self.why(m) is None
+
+    def unknown(self, m):
+        """Would be a member, but its verify timed out: neither in nor out."""
+        return self.why(m) == "timeout"
+
+    def counts(self, m):
+        """May m TAKE EFFECT — retire, shadow, make a fork? A member may, and
+        so may an unknown one: whatever it might change is withheld, never
+        answered without it. Only a member
+        is SHOWN or RUN."""
+        return self(m) or self.unknown(m)
+
+    def prefetch(self, msgs):
+        todo = [m for m in msgs if m.get("id", "") not in self._memo and self.headers_ok(m)]
+        if len(todo) > 1:
+            from concurrent.futures import ThreadPoolExecutor
+            with ThreadPoolExecutor(max_workers=8) as ex:
+                list(ex.map(_sig_ok, todo))
+
+class AssumedMembers:
+    """Members with some verdicts ASSUMED: each id in `assign` answers True
+    or False as given and is never unknown; every other mail keeps the
+    verdict it already has. The walk weighs mails whose verify timed out by
+    trying each one both ways."""
+    def __init__(self, base, assign):
+        self.base, self.assign = base, assign
+
+    def __call__(self, m):
+        mid = m.get("id", "")
+        return self.assign[mid] if mid in self.assign else self.base(m)
+
+    def unknown(self, m):
+        return False if m.get("id", "") in self.assign else self.base.unknown(m)
+
+    def counts(self, m):
+        return self(m) or self.unknown(m)
+
+    def prefetch(self, msgs):
+        pass    # the verdicts it weighs are already in; it never verifies
+
+class MemberPairs:
+    """supersede_pairs() as MHS 170 reads it: a Supersedes: counts only when
+    the mail CARRYING it is a member. Serves as both a reader's `pairs` map
+    (.get) and its `dead` set (`in`), resolved per id on first use, so a
+    superseder nobody walks past is never verified."""
+    def __init__(self, flats, member):
+        self.raw = supersede_pairs(flats)
+        self.member = member
+        self.by_id = {m.get("id", "").strip("<>"): m for flat in flats for _, m in flat}
+        self._memo = {}
+
+    def get(self, mid, default=None):
+        if mid not in self._memo:
+            self._memo[mid] = [s for s in self.raw.get(mid, [])
+                               if s in self.by_id and self.member(self.by_id[s])]
+        return self._memo[mid] or (default if default is not None else [])
+
+    def blocked(self, mid):
+        """Superseders of mid whose verify timed out. They retire mid (a
+        superseder we cannot check must not un-supersede it) but replace
+        it with nothing: the step is gone, and the readers say why."""
+        return [s for s in self.raw.get(mid, [])
+                if s in self.by_id and self.member.unknown(self.by_id[s])]
+
+    def __contains__(self, mid):
+        return bool(self.get(mid)) or bool(self.blocked(mid))
+
+    def assuming(self, member):
+        """These pairs as `member` (an AssumedMembers) reads them: the same
+        headers and index, a memo of its own."""
+        other = object.__new__(MemberPairs)
+        other.raw, other.by_id, other.member, other._memo = self.raw, self.by_id, member, {}
+        return other
+
+    def __iter__(self):
+        return (k for k in self.raw if k in self)
+
+    def prefetch(self, ids):
+        """Verify, in parallel, every superseder reachable from `ids` through
+        Supersedes: chains. A chain is walked one link at a time (v1 is dead
+        only if v2 is a member, v2 only if v3 is…), so without this the
+        ~190-letter [BOOT] chain ran its verifies in series: 18 s for
+        `cat /BOOT/latest` (measured)."""
+        seen, todo, msgs = set(), [i.strip("<>") for i in ids], []
+        while todo:
+            for sid in self.raw.get(todo.pop(), []):
+                if sid not in seen and sid in self.by_id:
+                    seen.add(sid)
+                    msgs.append(self.by_id[sid])
+                    todo.append(sid)
+        self.member.prefetch(msgs)
+
+def member_pairs(flats, member):
+    """The supersede pairs `member` honours; member None = every mail (a plain
+    notmuch query, where there is no owner to be a member of)."""
+    return MemberPairs(flats, member) if member else supersede_pairs(flats)
+
+def is_anchor(m, member):
+    """May m be the [ROOT] a walk or `ls /` starts from? The primed hint
+    always may (MHS 90 vetted it); any other [ROOT] only as a member."""
+    return (not member or m.get("id", "").strip("<>") == PRIMED or member(m))
+
+NUM = re.compile(r'^(\d+(?:\.\d+)*)\s')    # an ITEM's number: "10 …", "10.10 …"
+
+_BY_ID = {}     # id(flat) -> (flat, {message-id: index}); flats are never mutated
+
+def flat_index(flat):
+    """{message-id (no <>): index} for one flat, built once per flat."""
+    hit = _BY_ID.get(id(flat))
+    if hit is None or hit[0] is not flat:
+        hit = (flat, {m.get("id", "").strip("<>"): j for j, (_, m) in enumerate(flat)})
+        _BY_ID[id(flat)] = hit
+    return hit[1]
+
+def survivors(flat, j, dead, pairs, seen=None):
+    """The surviving end(s) of flat[j]'s Supersedes chain: [j] when it is
+    live, else every live mail its superseders lead to (depth-first, in
+    chain order; may repeat when chains converge — callers de-dup)."""
+    by_id = flat_index(flat)
+    seen = {j} if seen is None else seen
+    mid = flat[j][1].get("id", "").strip("<>")
+    if mid not in dead:
+        return [j]
+    out = []
+    for sid in pairs.get(mid, []):
+        k = by_id.get(sid)
+        if k is None or k in seen:
+            continue
+        seen.add(k)
+        out += survivors(flat, k, dead, pairs, seen)
+    return out
+
+def effective_children(flat, i, dead, pairs, only=None):
+    """Indices of node i's children AS THE TREE MEANS THEM (MHS: a supersede
+    is a replacement IN PLACE). A live direct child is itself; a dead direct
+    child is replaced by the surviving end(s) of its Supersedes chain, which
+    sit deeper (the superseder is a reply to the item it replaces). Two
+    survivors of one item = a FORK: both are returned, so a renderer shows
+    both flagged and never silently picks one.
+    only: resolve just these direct-child indices — a walk opening ONE
+    segment need not resolve, and so verify, every chain beside it."""
+    d = flat[i][0]
+    out = []
+    for j in range(i + 1, len(flat)):
+        d2, m2 = flat[j]
+        if d2 <= d:
+            break
+        if d2 == d + 1 and (only is None or j in only):
+            out += survivors(flat, j, dead, pairs)
+    # Survivors are a SET of messages. Two dead siblings whose
+    # chains CONVERGE on one superseder (v1 -> v3 and v2 -> v3) reached v3
+    # once per dead sibling, so `run` executed item 15 three times and item
+    # 17 three times on one measured wake (18 items run, 11 distinct). A FORK is two
+    # DIFFERENT survivors under one number;
+    # one survivor named twice is not a fork. Keep first occurrence, in order.
+    seen_out = set()
+    out = [j for j in out if not (j in seen_out or seen_out.add(j))]
+    # Numbered items sort by number (the number IS the filename); labels and
+    # unnumbered suggestions keep thread order, ahead of the items.
+    def key(j):
+        s = flat[j][1]["headers"].get("Subject", "").strip()
+        mm = re.match(r"^(\d+(?:\.\d+)*)\s", s)
+        return (1, [int(x) for x in mm.group(1).split(".")], j) if mm else (0, [], j)
+    return sorted(out, key=key)
+
+def item_forks(flat, i, pairs, member=None, only=None):
+    """MHS 110, the ONE fork predicate: {number: [j, ...]} for every
+    item number that two or more DIFFERENT surviving items carry under
+    flat[i]. ls, tree, cat, latest, --boot and the walk all ask it, and only
+    it; a reader never counts twins its own way again.
+
+    Survivors are the tree's own (effective_children: a dead child is
+    replaced IN PLACE by the live end(s) of its Supersedes chain), so the key
+    is the EFFECTIVE parent flat[i], never a twin's literal In-Reply-To: a
+    fix that replies to the item it replaces is still a twin of its sibling.
+
+    pairs MUST be member_pairs(<every flat the fetch returned>, member) and
+    flat must be uncut below i: a depth or --under cut hides superseders and
+    turns predecessors back into twins (one live letter listed as FORK x19).
+
+    A survivor counts when member is None or member.counts(m): a member, or a
+    mail whose verify timed out (it may be a member, so the pick is
+    withheld). Callers split the two with member.unknown(). A non-member
+    never counts, and its Supersedes retires nothing (MHS 170, unchanged).
+    only: as effective_children's, to resolve a subset of direct children."""
+    eff = effective_children(flat, i, pairs, pairs, only=only)
+    if member is not None:
+        member.prefetch([flat[j][1] for j in eff])
+    by_num = {}
+    for j in eff:
+        m = flat[j][1]
+        nm = NUM.match(m["headers"].get("Subject", "").strip())
+        if not nm or (member is not None and not member.counts(m)):
+            continue
+        by_num.setdefault(nm.group(1), []).append(j)
+    return {n: js for n, js in by_num.items() if len(js) > 1}
+
+def item_number(m):
+    """The item number of message m, or None for a label or a suggestion."""
+    nm = NUM.match(m["headers"].get("Subject", "").strip())
+    return nm.group(1) if nm else None
+
+def direct_children(flat, i):
+    """Indices of flat[i]'s literal (In-Reply-To) children."""
+    d, out = flat[i][0], []
+    for j in range(i + 1, len(flat)):
+        if flat[j][0] <= d:
+            break
+        if flat[j][0] == d + 1:
+            out.append(j)
+    return out
+
+def chain_of(flat, j, pairs):
+    """j and every mail a Supersedes: chain from j could hand the walk: raw
+    headers, nothing verified — it only says which chains matter."""
+    by, out, todo = flat_index(flat), [j], [j]
+    raw = getattr(pairs, "raw", pairs)
+    while todo:
+        for sid in raw.get(flat[todo.pop()][1].get("id", "").strip("<>"), []):
+            k = by.get(sid)
+            if k is not None and k not in out:
+                out.append(k)
+                todo.append(k)
+    return out
+
+def number_forked(flat, i, num, pairs, member):
+    """item_forks(...)[num] or [] — resolving only the direct children whose
+    raw chain holds an item `num`, so a check for 10 never verifies 20's
+    chain. The predicate decides; this only narrows what it must resolve."""
+    only = {j for j in direct_children(flat, i)
+            if any(item_number(flat[k][1]) == num for k in chain_of(flat, j, pairs))}
+    return item_forks(flat, i, pairs, member, only=only).get(num, []) if only else []
+
+class Fork(Exception):
+    """A walk step, `latest` or --boot reached a FORKED item (MHS 110)."""
+    def __init__(self, flat, num, copies):
+        super().__init__(num)
+        self.flat, self.num, self.copies = flat, num, copies
+
+def refuse_fork(fork, where, verb, recip, member=None):
+    """Say a FORK and exit 2 — run's fork exit, and `memory cat`'s
+    documented "2 … ambiguous". Worded as session-mail-run's fork_help:
+    every copy by Message-ID, OLDEST FIRST (the order is said: spec.md:110
+    wants the tie-break stated), and an unnumbered supersede that settles it.
+    No body is printed: opening either copy is the silent pick MHS 110 bans."""
+    flat = fork.flat
+    copies = sorted(fork.copies, key=lambda j: (flat[j][1].get("timestamp", 0), j))
+    lines = ["memory: REFUSED: item %s is a FORK (MHS 110) under %s: %d copies survive, "
+             "so %s opens NEITHER." % (fork.num, where, len(copies), verb),
+             "  copies, oldest first:"]
+    for j in copies:
+        m = flat[j][1]
+        lag = "   (UNVERIFIED: verify timed out after %gs)" % VERIFY_TIMEOUT \
+            if member is not None and member.unknown(m) else ""
+        lines.append("  copy <%s>  %s%s" % (m.get("id", "").strip("<>"),
+                                          m["headers"].get("Subject", "").strip(), lag))
+    lines.append("  To resolve: retire the copy you do NOT want with an UNNUMBERED mail:")
+    lines.append("    message send %s+memory --supersedes '<ID>' -s 'retired' --no-body" % recip)
+    lines.append("  A numbered superseder (\"%s ...\") is one more copy: the fork stays." % fork.num)
+    sys.stdout.flush()
+    sys.stderr.write("\n".join(lines) + "\n")
+    sys.exit(2)
+
+def latest_item(flat, i, pairs, member):
+    """The newest SURVIVING numbered item under flat[i] (MHS 70 `latest`),
+    or None. Found newest-first, so a long [BOOT] chain costs a verify or two.
+    A candidate survives iff it is a member, not dead, and reached from a
+    direct child through member superseders: the walk effective_children
+    makes, run backwards. Raises Unverifiable when a mail that could be the
+    answer timed out, and Fork when the answer's number is forked (MHS 110:
+    `latest` never silently picks one twin; spec.md:76-78)."""
+    ds = set(direct_children(flat, i))
+    by = flat_index(flat)
+    def subj(j):
+        return flat[j][1]["headers"].get("Subject", "").strip()
+    cands = {k for j in ds for k in chain_of(flat, j, pairs)}
+    targets = {}
+    for t, sids in pairs.raw.items():
+        for sid in sids:
+            targets.setdefault(sid, []).append(t)
+    def reached(k, seen):
+        if k in ds:
+            return True
+        for t in targets.get(flat[k][1].get("id", "").strip("<>"), []):
+            kt = by.get(t)
+            if kt is None or kt in seen:
+                continue
+            seen.add(kt)
+            if kt in ds or (member(flat[kt][1]) and reached(kt, seen)):
+                return True
+        return False
+    order = sorted((k for k in cands if re.match(r'^\d', subj(k))),
+                   key=lambda k: flat[k][1].get("timestamp", 0), reverse=True)
+    for n, k in enumerate(order):
+        if n % 16 == 0:     # verify the next few in parallel, not one by one
+            member.prefetch([flat[x][1] for x in order[n:n + 16]])
+        m = flat[k][1]
+        if member.unknown(m):
+            raise Unverifiable(subj(k))     # newer than any answer: refuse
+        mid_ = m.get("id", "").strip("<>")
+        if member(m) and not pairs.get(mid_) and pairs.blocked(mid_):
+            # Retired only by superseders nobody could check: it may be
+            # the latest still, so there is no answer to fall back to
+            # (`latest` once gave "05 older").
+            raise Unverifiable(pairs.by_id[pairs.blocked(mid_)[0]]["headers"].get("Subject", "").strip())
+        if not member(m) or mid_ in pairs:
+            continue
+        # Its ancestry, verified in parallel before reached() walks it
+        # link by link: /CONVO/latest's answer hangs off a 56-link
+        # reply chain (3.4 s in series, measured).
+        anc, todo = set(), [mid_]
+        while todo:
+            for t in targets.get(todo.pop(), []):
+                kt = by.get(t)
+                if kt is not None and kt not in ds and kt not in anc:
+                    anc.add(kt)
+                    todo.append(t)
+        member.prefetch([flat[x][1] for x in anc])
+        for x in anc:
+            if member.unknown(flat[x][1]):
+                raise Unverifiable(subj(x))
+        if reached(k, {k}):
+            num = item_number(m)
+            twins = number_forked(flat, i, num, pairs, member) if num else []
+            if len([j for j in twins if member(flat[j][1])]) >= 2:
+                raise Fork(flat, num, twins)
+            if twins:
+                # One signed copy and a twin whose verify timed out: it MAY
+                # be a fork (render says "withheld"), so no answer either.
+                raise Unverifiable(next(subj(j) for j in twins if member.unknown(flat[j][1])))
+            return k
+    return None
+
+def canon_name(s):
+    """One label name, canonicalised — for BOTH sides of a comparison.
+
+    MHS §Kinds: "Trailing or differing spaces/case are the same label —
+    resolvers canonicalise." An earlier bug's root cause was canonicalising only the
+    TYPED side (`"[%s]" % seg.upper()`) against a RAW subject, which made every
+    label the walker prints but the standard does not spell — `[session]`,
+    `2030-06-09` — unreachable by any spelling."""
+    return re.sub(r"\s+", " ", s.strip()).casefold()
+
+def match_child(seg, kids, is_item):
+    """Resolve ONE path segment against a node's children.
+
+    kids: [(index, subject)] — subjects exactly as the walker PRINTS them.
+    Returns (hits, rule): the indices matched by the first tier that matched
+    anything, and that tier's name; ([], None) if no tier matched.
+
+    The tiers, in order. Literal first, so every name the walker prints
+    round-trips to itself before any convenience rule can run — the walker's
+    output language must be a subset of this resolver's input language, which
+    is what "one resolver" means:
+
+      exact        the printed name typed straight back: `/ASKS/[session]`
+      bracket      the MHS bare label word: `/ASKS` -> "[ASKS]" (docstring above)
+      canonical    case- and whitespace-insensitive, both sides, with and
+                   without brackets: `/ASKS/session`, `/ASKS/SESSION`
+      item-prefix  "10" -> "10 subject" — NUMBERED ITEMS ONLY
+
+    item-prefix is gated on is_item deliberately. Measured: a prefix
+    rule on a LABEL segment turns a refusal into a wrong answer with rc 0 —
+    `/WEEK/today`, on a day whose label was never written, opens whichever
+    sibling was posted last. A number is an item's identity by construction; a
+    label's name is not a prefix of its meaning."""
+    seg_c = canon_name(seg)
+    bracket = "[%s]" % seg
+    bracket_c = canon_name(bracket)
+    tiers = [("exact",     lambda sj: sj == seg),
+             ("bracket",   lambda sj: sj == bracket),
+             ("canonical", lambda sj: canon_name(sj) in (seg_c, bracket_c))]
+    if is_item:
+        tiers.append(("item-prefix", lambda sj: sj.startswith(seg + " ")))
+    for rule, test in tiers:
+        hits = [j for j, sj in kids if test(sj)]
+        if hits:
+            return hits, rule
+    return [], None
+
+def near_misses(seg, kids):
+    """Children a LOOSER rule would have opened, and this one deliberately did not.
+
+    Named in the refusal (charter 2) so a reader can see what was left shut and
+    type the exact name: these are precisely the siblings that a prefix rule on
+    a label segment would have handed back silently."""
+    seg_c = canon_name(seg)
+    return [sj for _j, sj in kids
+            if canon_name(sj) != seg_c and canon_name(sj).startswith(seg_c + " ")]
+
+def render(query, bodies=False, show_all=False, dates=False, under=None, depth=None, under_subject=None,
+           owner=None, recip=None, shared=False):
+    """Render one query. Returns (text, n_shown, n_hidden).
+
+    owner: MHS 170 membership (Members: From, To AND signature) on every edge
+    below the anchor, else the node and its whole subtree are not edges
+    (hidden, counted, reported) — and only a member supersedes, shadows, or
+    makes a fork. There is no unverified owner render: a path render without
+    the signature was a review finding.
+    Owner tags are printed only when the sender is NOT the owner — under
+    membership that never happens, so a tag is a warning, not decoration."""
+    n_unmember = 0
+    member = Members(owner, recip, shared) if owner else None
+    # Whether THIS render checked membership at all. With no
+    # owner (`--box NAME` and no CLAUDE_CODE_AGENT / SESSION_AGENT) it builds
+    # no Members, so nothing is hidden for being unsigned and n_unmember stays
+    # 0. A footer that reads that 0 as "all members" lies; it reads this first.
+    # Set before the early returns, so no caller sees a stale verdict.
+    render.checked = member is not None
+    # The members whose body was WITHHELD (a refusal, not NO_TEXT), as
+    # (subject, id, why). `cat` reads it: a trusted path that cannot show the
+    # signed text fails closed, exit 3. A listing (tree -b) shows the line and
+    # keeps going.
+    render.withheld = []
+    threads = show(query, bodies)
+    if DRY:
+        return ("", 0, 0)
+    if threads is None:
+        return ("(no messages match: %s)" % " ".join(query), 0, 0)
+    out_lines, n_shown, n_hidden = [], 0, 0
+    flats = []
+    for thread in threads:
+        flat = []
+        for top in thread:
+            flatten(top, 0, flat)
+        flats.append(flat)
+    # The UNCUT fetch: supersede pairs and forks are computed over it, never
+    # over the --under / --depth cuts below (a superseder below the
+    # cut was never read, so `ls` counted predecessors as twins, FORK x19).
+    full = flats
+    if under_subject and not under:
+        # Anchor on a SUBJECT inside the matched thread (e.g. "[ROOT]") — the
+        # FHS view: the root is a directory, find it by name, then `ls`.
+        # Newest match wins so a superseding [ROOT] beats the original.
+        # Only a MEMBER may be the anchor (or the primed hint itself): an
+        # unsigned "[ROOT]" reply, newest in the thread, took over `ls /`.
+        best = None
+        for flat in flats:
+            for _, m in flat:
+                if m["headers"].get("Subject", "").strip() == under_subject:
+                    if under_subject == "[ROOT]" and not is_anchor(m, member):
+                        continue
+                    if under_subject != "[ROOT]" and member and not member(m):
+                        continue
+                    if best is None or m.get("timestamp", 0) > best.get("timestamp", 0):
+                        best = m
+        if member:
+            bts = best.get("timestamp", 0) if best else -1
+            late = [m for flat in flats for _, m in flat
+                    if m["headers"].get("Subject", "").strip() == under_subject
+                    and m.get("timestamp", 0) > bts and member.unknown(m)]
+            if late:
+                sys.exit("memory: a newer %s could not be verified (verify timed out after %gs) — "
+                         "refusing rather than anchor on an older one" % (under_subject, VERIFY_TIMEOUT))
+        if best is None:
+            sys.exit("memory: no message with subject %r in the matched thread(s)" % under_subject)
+        under = best.get("id", "")
+    if under:
+        # Subtree scoping (the tree with subjects only from one message down).
+        # notmuch has no subtree query —
+        # `id:X` returns the WHOLE thread — so we render the thread and cut.
+        # A message's descendants are exactly the entries that follow it in the
+        # flattened walk while depth stays GREATER than its own; the first
+        # entry back at its depth is its next sibling. Depths are re-based so
+        # the chosen message prints flush left.
+        want = under if under.startswith("<") else "<%s>" % under
+        want = want.strip("<>")
+        cut = []
+        for flat in flats:
+            for i, (d, m) in enumerate(flat):
+                if m.get("id", "").strip("<>") == want:
+                    sub = [(0, m)]
+                    for d2, m2 in flat[i + 1:]:
+                        if d2 <= d:
+                            break
+                        sub.append((d2 - d, m2))
+                    cut.append(sub)
+                    break
+        if not cut:
+            # Refuse loudly: silently rendering the whole thread would answer a
+            # narrow question with a wide, expensive lie.
+            sys.exit("memory: --under %s not found in the matched thread(s)" % under)
+        flats = cut
+    # Anchored = the top of the render was CHOSEN (a walk, --under, or an
+    # anchor subject) and checked there. Unanchored (--index), depth 0 is
+    # whatever the thread's top-level nodes are — an unsigned mail threaded
+    # in by References sits there — so depth 0 gets the anchor test too.
+    anchored = bool(under)
+    dead = member_pairs(full, member) if not show_all else set()
+    where = {}      # message-id -> (uncut flat, index)
+    for ff in full:
+        for k, (_d, m) in enumerate(ff):
+            where.setdefault(m.get("id"), (ff, k))
+    if depth is not None:
+        # `ls` not `find`: the FHS rule — the root holds
+        # only directories, so a wake lists them and descends on demand.
+        if member and not show_all:
+            # Every chain from a listed mail, verified in parallel: its
+            # superseders may sit below the cut, and they decide what is live.
+            dead.prefetch([m.get("id", "") for flat in flats for d, m in flat if d <= depth])
+        cut = []
+        for flat in flats:
+            kept, seen = [], {m.get("id") for d, m in flat if d <= depth}
+            for d, m in flat:
+                if d > depth:
+                    continue
+                kept.append((d, m))
+                if show_all or d == 0 or m.get("id") not in dead or m.get("id") not in where:
+                    continue
+                # A supersede is a replacement IN PLACE: the live
+                # end of a retired item's chain is listed where the item was,
+                # even when it replied below the cut. Without this `ls /BOOT`
+                # listed no letter at all once v5 was retired by a reply v6.
+                ff, k = where[m.get("id")]
+                for j in survivors(ff, k, dead, dead):
+                    mj = ff[j][1]
+                    if mj.get("id") not in seen:
+                        seen.add(mj.get("id"))
+                        kept.append((d, mj))
+            cut.append(kept)
+        flats = cut
+    if member:
+        member.prefetch([m for flat in flats for _, m in flat])
+    glatest = {}
+    gtags = {}   # leading tag like [R01] / R03 -> newest timestamp. Same tag,
+                 # latest wins: replying with the SAME rule tag supersedes it
+                 # (the supersede-by-reply rule, applied to rules too).
+    TAG = re.compile(r'^\[?([A-Z]{1,3}\d{1,3})\]?(?=[\s\u2014:.\-])')
+    if not show_all:
+        for flat in flats:
+            for _, m in flat:
+                if member and not member.counts(m):
+                    continue    # an unsigned "R05 …" or "NAME v9" shadows nothing;
+                                # an unknown one still does (it may be real)
+                s = m["headers"].get("Subject", "")
+                vm = re.match(r'([A-Z][A-Z-]+)\s+v(\d+)', s)
+                if vm:
+                    glatest[vm.group(1)] = max(glatest.get(vm.group(1), 0), int(vm.group(2)))
+                tm = TAG.match(s)
+                if tm:
+                    ts = m.get("timestamp", 0)
+                    gtags[tm.group(1)] = max(gtags.get(tm.group(1), 0), ts)
+    # FORK detection: two
+    # SURVIVING items with the same number under one parent. Refuse to pick
+    # — report the tie and hide both, never silently take the newest.
+    # ONE predicate: item_forks, keyed on the EFFECTIVE parent, over
+    # the uncut fetch; only a parent whose children this render prints asks.
+    twin = {}       # survivor id -> its fork's key (parent id, number)
+    forks = {}      # (parent id, number) -> count of survivors
+    lagging = {}    # (parent id, number) -> how many of them timed out
+    fork_depth = {} # (parent id, number) -> the depth its children print at
+    if not show_all:
+        for flat in flats:
+            for depth_, m in flat:
+                mid = m.get("id")
+                if depth is not None and depth_ >= depth:
+                    continue    # its children are not printed
+                if mid in dead or mid in twin or mid not in where:
+                    continue
+                if member and depth_ > 0 and not member.counts(m):
+                    continue    # not an edge: its subtree is hidden
+                ff, k = where[mid]
+                for num, js in item_forks(ff, k, dead, member).items():
+                    key = (mid, num)
+                    forks[key] = len(js)
+                    fork_depth[key] = depth_ + 1
+                    for j in js:
+                        twin[ff[j][1].get("id")] = key
+                        if member and member.unknown(ff[j][1]):
+                            lagging[key] = lagging.get(key, 0) + 1
+    fork_said = set()
+    def say_fork(key):
+        if key in fork_said:
+            return
+        fork_said.add(key)
+        # A twin whose verify timed out still withholds the pick,
+        # and the line says so ("FORK ... supersede one" once hid the timeout).
+        num, n, lag = key[1], forks[key], lagging.get(key, 0)
+        why = f"{lag} UNVERIFIED (verify timed out after {VERIFY_TIMEOUT:g}s)"
+        if not lag:
+            line = f"FORK: {num} x{n} — refusing to pick (MHS 110); supersede one"
+        elif n - lag >= 2:
+            line = f"FORK: {num} x{n}, {why} — refusing to pick (MHS 110); supersede one"
+        else:
+            line = f"{num} x{n} withheld — {why} may make a FORK (MHS 110); re-run"
+        out_lines.append(f"{'  ' * fork_depth[key]}└ ⊘ {line}")
+    for flat in flats:
+        # Only a member's "Superseded by …" retires a listing (an unsigned one
+        # once hid all of `ls /`).
+        # An unknown one (verify timed out) withholds it too, and says so.
+        sup = next((m for d, m in flat if d <= 1
+                    and re.match(r'(?i)superseded by', m["headers"].get("Subject", ""))
+                    and (not member or member.counts(m))), None)
+        root_subj = sup["headers"].get("Subject", "") if sup else ""
+        if not show_all and root_subj:
+            if member and member.unknown(sup):
+                out_lines.append(f"⊘ {root_subj}  — UNVERIFIED (verify timed out after {VERIFY_TIMEOUT:g}s): "
+                                 f"{len(flat)} msgs withheld, since it may retire them")
+            else:
+                out_lines.append(f"⊘ {root_subj}  ({len(flat)} msgs skipped — superseded)")
+            n_hidden += len(flat)
+            continue
+        prune = None
+        stack = {}
+        for depth, m in flat:
+            s = m["headers"].get("Subject", "")
+            stack[depth] = m.get("id")
+            if m.get("id") in twin:
+                key = twin[m.get("id")]
+                n_hidden += 1
+                say_fork(key)   # its parent was not printed to say it first
+                prune = depth
+                continue
+            vm = re.match(r'([A-Z][A-Z-]+)\s+v(\d+)', s)
+            if vm and int(vm.group(2)) < glatest.get(vm.group(1), 0):
+                n_hidden += 1
+                continue
+            tm = TAG.match(s)
+            if tm and m.get("timestamp", 0) < gtags.get(tm.group(1), 0):
+                n_hidden += 1
+                continue
+            if m.get("id") in dead:
+                n_hidden += 1
+                continue
+            if prune is not None:
+                if depth > prune:
+                    n_hidden += 1
+                    continue
+                prune = None
+            if member and (depth > 0 or not anchored):
+                h = m["headers"]
+                ok = member(m) if depth > 0 else is_anchor(m, member)
+                if not ok:
+                    n_hidden += 1
+                    n_unmember += 1
+                    if member.unknown(m):
+                        out_lines.append(f"{'  ' * depth}└ ⊘ UNVERIFIED (verify timed out): {s[:60]}   [{short_from(h)}] — subtree hidden; what it supersedes stays retired")
+                    else:
+                        # Name the half that failed: the bracket is
+                        # From, which shows the OWNER when To or the signature
+                        # failed, so it alone cannot tell a slip from a forgery.
+                        # (At depth 0, is_anchor failed only because member(m) did.)
+                        why = member.why_text(m)
+                        out_lines.append(f"{'  ' * depth}└ ⊘ NOT A MEMBER: {s[:60]}   [{short_from(h)}] — {why}; subtree hidden (MHS 170)")
+                    prune = depth
+                    continue
+            n_shown += 1
+            indent = "  " * depth + ("└ " if depth else "")
+            # Date suffix off by default (the date is in the email) —
+            # -d restores. Short sender stays: cheap, and who-said-it matters.
+            who = short_from(m["headers"])
+            tag = "" if owner and who == owner and not shared else f"   [{who}]"
+            if dates:
+                dm = re.search(r'(\d{1,2}\s+\w{3}\s+\d{4})', m["headers"].get("Date", ""))
+                tag = f"   [{who} {dm.group(1) if dm else ''}]"
+            out_lines.append(f"{indent}{s}{tag}")
+            if bodies:
+                if member and is_hint_root(m) and not member(m):
+                    # The primed root is admitted by its
+                    # HINT, not a signature (is_anchor; an anchored depth 0 is never
+                    # member-checked above). Not a member, it gets no signed_body: it
+                    # shows its leaf as Python reads it, under a label that makes no
+                    # signature claim, and stays out of render.withheld (no exit 3).
+                    bt, why = hint_root_body(m)
+                    if bt is None:
+                        bt = ("(no text/plain part)" if why == NO_TEXT
+                              else "(body unreadable: %s)" % why)
+                    bt = hint_label(m, member) + ("\n" + bt if bt else "")
+                elif member:
+                    # A member's body is the text its signature covers.
+                    bt, why = signed_body(m)
+                    if bt is None:
+                        if why != NO_TEXT:
+                            render.withheld.append((s, m.get("id", ""), why))
+                        bt = withheld(why)
+                else:
+                    bt = body_text(m)    # membership NOT checked: the footer says so
+                if bt:
+                    pad = "  " * (depth + 1)
+                    out_lines.extend(pad + l for l in bt.splitlines())
+                    out_lines.append("")
+            # Its forks, said under it: a twin may sit below the --depth cut
+            # (`ls /X`), where no line of its own would ever print.
+            for key in sorted((k for k in forks if k[0] == m.get("id")),
+                              key=lambda k: [int(x) for x in k[1].split(".")]):
+                say_fork(key)
+    render.unmember = n_unmember
+    return ("\n".join(out_lines), n_shown, n_hidden)
+
+# What a footer says when render() checked no membership
+# (render.checked False). Never "signed", never "members": nothing was.
+UNCHECKED = "membership NOT checked (no owner set: no CLAUDE_CODE_AGENT or SESSION_AGENT)"
+
+def unchecked_note():
+    """' · <UNCHECKED>' when the last render() checked no membership, else ''.
+    For the footers that count shown/filtered: a filter that never ran
+    filtered nothing for being unsigned."""
+    return "" if getattr(render, "checked", True) else f" · {UNCHECKED}"
+
+def last_session_query(agent, cur):
+    lines = sh(["notmuch", "search", "--sort=newest-first", "--output=summary",
+                f'to:sessions and subject:"SESSION UP" and from:{agent}'], resolve=True).splitlines()
+    for ln in lines:
+        if cur and cur in ln:
+            continue
+        return [ln.split()[0]]
+    return None
+
+def main():
+    argv = sys.argv[1:]
+    # Unix verbs over MHS paths: ls = one
+    # level, tree = the subtree (--depth N), cat = one item with its body.
+    # `/` alone is the root. boot and wake stop being verbs: they are
+    # `ls /` + `cat /BOOT/latest` and `run /BOOT/WAKE` in the agent MD.
+    _boxpair = []
+    if "--box" in argv:
+        _i = argv.index("--box"); _boxpair = argv[_i:_i + 2]; del argv[_i:_i + 2]
+    global VERB
+    if argv and argv[0] in ("ls", "tree", "cat"):
+        verb = argv.pop(0)
+        VERB = verb
+        target = argv.pop(0) if argv and not argv[0].startswith("-") else "/"
+        if verb == "ls" and target == "/":
+            argv = ["--ls"] + argv
+        else:
+            argv = ["--path", target] + argv
+            if verb == "ls" and "--depth" not in argv:
+                argv += ["--depth", "1"]
+            if verb == "cat":
+                argv += ["--depth", "0", "-b"]
+    argv = _boxpair + argv
+    bodies = any(a in ("-b", "--bodies") for a in argv)
+    show_all = any(a in ("-a", "--all") for a in argv)
+    dates = any(a in ("-d", "--dates") for a in argv)
+    global DRY
+    DRY = any(a in ("-n", "--dry-run") for a in argv)
+    if any(a in ("-h", "--help") for a in argv):
+        sys.exit(__doc__)
+    argv = [a for a in argv if a not in ("-b", "--bodies", "-a", "--all", "-d", "--dates", "-n", "--dry-run")]
+    # --under takes a VALUE, so it is consumed as a pair before the unknown-flag
+    # guard below (which would otherwise reject the bare msgid as a stray arg).
+    # --box NAME ("commons"): render a SHARED
+    # box. Root hint is $<NAME>_ROOT; membership per edge is To the box (any
+    # plus-tag) AND signed — From is any member, not one owner. The
+    # personal rule (From the owner) is the default when --box is absent.
+    box = None
+    if "--box" in argv:
+        i = argv.index("--box")
+        box = argv[i + 1]
+        del argv[i:i + 2]
+    path = None
+    if "--path" in argv:
+        i = argv.index("--path")
+        if i + 1 >= len(argv):
+            sys.exit("memory: --path needs a PATH like /CONVO/today/ASKS\n" + __doc__)
+        path = argv[i + 1]
+        del argv[i:i + 2]
+    resolve_only = "--resolve" in argv
+    argv = [a for a in argv if a != "--resolve"]
+    depth = None
+    if "--depth" in argv:
+        i = argv.index("--depth")
+        if i + 1 >= len(argv) or not argv[i + 1].isdigit():
+            sys.exit("memory: --depth needs a non-negative integer\n" + __doc__)
+        depth = int(argv[i + 1])
+        del argv[i:i + 2]
+    under = None
+    if "--under" in argv:
+        i = argv.index("--under")
+        if i + 1 >= len(argv):
+            sys.exit("memory: --under needs a MSGID\n" + __doc__)
+        under = argv[i + 1]
+        del argv[i:i + 2]
+        if not argv:
+            # No query given: the message's own id pulls its whole thread
+            # (notmuch show is entire-thread by default), which we then cut.
+            argv = ["id:" + under.strip("<>")]
+    # Unknown dash-args must fail LOUD, not become notmuch queries: "-h" once
+    # leaked through as a query and printed 317 messages of one box
+    # (~11k tokens). Substrate's first law: a tool that cannot fail loudly lies.
+    for a in argv:
+        if a.startswith("-") and a not in ("--wake", "--last-session", "--index", "--ls", "--boot"):
+            sys.exit(f"memory: unknown flag {a!r} — refusing to treat it as a query\n{__doc__}")
+    # Identity from the environment, the way `session mail arm` resolves it:
+    # CLAUDE_CODE_AGENT first, SESSION_AGENT second. No default —
+    # a thread reader that silently assumes an owner reads the wrong memory.
+    agent = (os.environ.get("CLAUDE_CODE_AGENT") or os.environ.get("SESSION_AGENT") or "").strip()
+    if not agent and not box:
+        sys.exit("memory: no agent — set CLAUDE_CODE_AGENT (or SESSION_AGENT), or pass --box NAME")
+    cur = os.environ.get("CLAUDE_SESSION_ID", "")[:8]
+    # Recipient principal for membership and the root-hint variable.
+    recip = box or agent
+    root_var = (box or agent).upper().replace("-", "_").replace(".", "_") + "_ROOT"
+
+    def root_thread():
+        # The canonical root: categories hang off one message.
+        # ROOT HINT: $<AGENT>_ROOT (root_var), minted by the launcher
+        # from the agent MD's environment block — the layer with the fewest
+        # writers. Priming check (MHS 90): the hint must resolve to a message
+        # whose subject is [ROOT] and From: the agent, or we refuse loudly.
+        # Fallback when the env var is absent (old launcher, shipwreck): the
+        # subject search, and it says so.
+        raw = os.environ.get(root_var)
+        hint = (raw or "").strip().strip("<>").strip()
+        if raw is not None and not hint:
+            # SET BUT EMPTY ('<>', '  ', '< >') is a launcher that tried and
+            # failed — not an old launcher. The shipwreck search here printed
+            # "$VAR = thread:… ✓", a tick for a hint never used.
+            # Refuse; unset is the announced fallback.
+            sys.exit(f"memory: PRIMING FAILED — ${root_var} is set but empty ({raw!r}). "
+                     "Refusing rather than guessing the root by subject (MHS 90); "
+                     f"unset ${root_var} to take the announced shipwreck search.")
+        if hint:
+            raw = sh(["notmuch", "show", "--format=json", "--body=false",
+                      "--entire-thread=false", f"id:{hint}"], resolve=True)
+            try:
+                msgs = json.loads(raw) if raw.strip() else []
+                flat = []
+                for t in msgs:
+                    for top in t:
+                        flatten(top, 0, flat)
+                m = flat[0][1] if flat else None
+            except Exception:
+                m = None
+            if not m:
+                sys.exit(f"memory: PRIMING FAILED — ${root_var} <{hint}> is not in the store. "
+                         "Not rendering an empty tree (MHS 90).")
+            subj = m["headers"].get("Subject", "").strip()
+            frm = short_from(m["headers"])
+            if subj != "[ROOT]" or (not box and frm != agent):
+                sys.exit(f"memory: PRIMING FAILED — ${root_var} resolves to {subj!r} from {frm!r}, "
+                         f"not [ROOT] from {agent!r}. Refusing (MHS 90).")
+            global PRIMED
+            PRIMED = hint
+            return f"id:{hint}"
+        sys.stderr.write(f"memory: no ${root_var} in the environment — falling back to the subject search (shipwreck path)\n")
+        tid = sh(["notmuch", "search", "--output=threads", "--limit=1",
+                  "--sort=oldest-first",
+                  (f'subject:"[ROOT]" and to:{box}' if box else f'subject:"{agent} ROOT" and from:{agent}')], resolve=True).strip()
+        if not tid:
+            sys.exit(f"no canonical root found (subject:\"{agent} ROOT\")")
+        return tid
+
+    if argv and argv[0] == "--index":
+        text, shown, hidden = render([root_thread()], bodies=bodies, show_all=show_all,
+                                     dates=dates, depth=depth, owner=agent, recip=recip, shared=bool(box))
+        if DRY:
+            return
+        print(text)
+        print(f"\n— {shown} categories+root shown, {hidden} filtered{unchecked_note()} · ≈{len(text) // 4} tok")
+        return
+
+    if path is not None:
+        # MHS path resolution: traversal, no table.
+        # Name = subject token, address = Message-ID, edge = In-Reply-To.
+        # Newest surviving child wins at each step (supersede-aware).
+        import datetime as _dt
+        tid = root_thread()
+        # The walk reads subjects, ids, files and timestamps, never a body; it
+        # fetches bodies only when the render below will print them (cat, -b),
+        # so that render reuses this one fetch.
+        threads = show([tid], bodies and not resolve_only)
+        if DRY:
+            return
+        if threads is None:
+            sys.exit(f"memory: notmuch show printed nothing for the root thread {tid}")
+        flats = []
+        for thread in threads:
+            flat = []
+            for top in thread:
+                flatten(top, 0, flat)
+            flats.append(flat)
+        member = Members(agent, recip, bool(box))
+        pairs = member_pairs(flats, member)
+        dead = pairs
+        def direct(flat, i):
+            return direct_children(flat, i)
+        def chain(flat, j):
+            return chain_of(flat, j, pairs)
+        def children(flat, i, want=None):
+            # A walk step is an edge: only a member is a child (MHS 170).
+            # want(subject): resolve only the chains holding a subject it
+            # accepts. Every link of a chain must be verified (v1 is dead only
+            # if v2 is a member…), so resolving all ~190 [BOOT] letters to
+            # open /BOOT/WAKE cost 262 verifies (measured).
+            ds = direct(flat, i)
+            if want is not None:
+                ds = [j for j in ds if any(want(subj(k)) for k in chain(flat, j))]
+            pairs.prefetch([flat[j][1].get("id", "") for j in ds])
+            eff = effective_children(flat, i, dead, pairs, only=set(ds))
+            member.prefetch([flat[j][1] for j in eff])
+            return [j for j in eff if member(flat[j][1])]
+        def latest(flat, i):
+            # The newest SURVIVING numbered child (latest_item, shared with
+            # --boot); a forked answer raises Fork, never a silent pick.
+            return latest_item(flat, i, pairs, member)
+        def subj(j):
+            return flat[j][1]["headers"].get("Subject", "").strip()
+        def step_pick(flat, i, seg, is_item, ds, mem, prs):
+            # What one walk step opens under these verdicts. A refusal is an
+            # answer too: ("none",) for no child, ("ambiguous", spellings).
+            eff = effective_children(flat, i, prs, prs, only=ds)
+            kids = [(j, subj(j)) for j in eff if mem(flat[j][1])]
+            hits, rule = match_child(seg, kids, is_item)
+            if not hits:
+                return ("none",)
+            spellings = frozenset(sj for j, sj in kids if j in hits)
+            if rule == "canonical" and len(spellings) > 1:
+                return ("ambiguous", spellings)
+            num = fork_at(flat, i, hits, is_item, prs, mem, ds)
+            if num:
+                # A fork is an answer of its own: every verdict that
+                # forks this number agrees, whichever twins it counts.
+                return ("fork", num)
+            return ("pick", max(hits, key=lambda j: flat[j][1].get("timestamp", 0)))
+        def fork_at(flat, i, hits, is_item, prs, mem, ds=None):
+            # The number this step would open, if item_forks says it is
+            # forked under flat[i]; else None. An ITEM segment ("10") names
+            # the number, so any fork of it refuses. A typed full subject
+            # that matches one copy opens that copy (it was named, not
+            # picked); one matching two identical copies is a fork.
+            num = item_number(flat[hits[0]][1])
+            if not num or not (is_item or len(hits) > 1):
+                return None
+            if ds is not None:
+                twins = item_forks(flat, i, prs, mem, only=ds).get(num, [])
+            else:
+                twins = number_forked(flat, i, num, prs, mem)
+            return num if twins else None
+        def fork_of(flat, i, num):
+            # The copies to name in the refusal: the members (or unknowns)
+            # item_forks counts, every chain under flat[i] holding num.
+            return Fork(flat, num, number_forked(flat, i, num, pairs, member))
+        LAG_CAP = 8     # at most 2^8 assignments to weigh; past that, refuse
+        def weigh_step(flat, i, seg, is_item, want, lag):
+            # None when no verdict for the timed-out mails in `lag` can change
+            # what this step opens; otherwise why the walk refuses. Every
+            # true/false assignment is tried, not just all-in and all-out: a
+            # mixed one can open what neither corner does ([LAGMIX]).
+            if len(lag) > LAG_CAP:
+                return ("there are too many to weigh (%d > %d) — refusing rather than open "
+                        "anything without them" % (len(lag), LAG_CAP))
+            ds = {j for j in direct(flat, i) if any(want(subj(k)) for k in chain(flat, j))}
+            ids = [flat[k][1].get("id", "") for k in lag]
+            picks = set()
+            for bits in range(1 << len(ids)):
+                mem = AssumedMembers(member, {mid: bool(bits >> n & 1) for n, mid in enumerate(ids)})
+                picks.add(step_pick(flat, i, seg, is_item, ds, mem, pairs.assuming(mem)))
+                if len(picks) > 1:
+                    return "may change which item this opens — refusing"
+            if step_pick(flat, i, seg, is_item, ds, member, pairs) not in picks:
+                # Every verdict gives one answer and the reader without them
+                # gives another: fail closed rather than trust either.
+                return ("every verdict for them gives one answer, but the walk without them "
+                        "gives another — refusing (fail closed)")
+            return None
+        # locate [ROOT]
+        cur = None
+        for flat in flats:
+            for j, (d, m) in enumerate(flat):
+                if m["headers"].get("Subject", "").strip() == "[ROOT]" and is_anchor(m, member):
+                    if cur is None or m.get("timestamp", 0) > flat[cur][1].get("timestamp", 0):
+                        cur = j
+            if cur is not None:
+                break
+        if cur is None:
+            sys.exit("memory: no [ROOT] in the canonical thread (priming check failed, item 90)")
+        for flat in flats:
+            for j, (d, m) in enumerate(flat):
+                if (m["headers"].get("Subject", "").strip() == "[ROOT]"
+                        and m.get("timestamp", 0) > flat[cur][1].get("timestamp", 0)
+                        and member.unknown(m)):
+                    sys.exit("memory: a newer [ROOT] could not be verified (verify timed out "
+                             "after %gs) — refusing rather than walk from an older one" % VERIFY_TIMEOUT)
+        segs = [x for x in path.strip().split("/") if x]
+        walked = "/"
+        in_boot = False   # the walk's first step opened [BOOT]: a letter to self
+        for seg in segs:
+            if seg == "today":
+                seg = _dt.date.today().isoformat()
+            elif seg == "yesterday":
+                seg = (_dt.date.today() - _dt.timedelta(days=1)).isoformat()
+            is_item = bool(re.match(r'^\d+(\.\d+)*$', seg))   # 10, 10.10 = items; dates = labels
+            # `latest` (MHS 70 magic name): the newest SURVIVING numbered item
+            # under this label — `cat /BOOT/latest` is the letter.
+            if seg == "latest":
+                try:
+                    nxt = latest(flat, cur)
+                except Fork as fk:
+                    refuse_fork(fk, walked, VERB, recip, member)
+                except Unverifiable as e:
+                    sys.exit("memory: %s/latest: %r could not be verified (verify timed out "
+                             "after %gs) — refusing rather than open an older item"
+                             % (walked.rstrip("/"), str(e), VERIFY_TIMEOUT))
+                if nxt is None:
+                    sys.exit("memory: %s has no numbered items for 'latest'" % walked)
+                cur = nxt
+                walked = walked.rstrip("/") + "/" + subj(cur).split()[0]
+                continue
+            want = lambda sj: bool(match_child(seg, [(0, sj)], is_item)[0])
+            kids = [(j, subj(j)) for j in children(flat, cur, want=want)]
+            hits, rule = match_child(seg, kids, is_item)
+            # Any mail in a matching chain whose verify timed out may be the
+            # answer (a newer duplicate) or retire it.
+            # Not every one can: a v1 already retired by a signed
+            # v2, or an older duplicate beside a newer signed one, changes
+            # nothing, and refusing there declined the newest item. So weigh them, and refuse only when
+            # a verdict could change what this step opens.
+            lag = []
+            for j in direct(flat, cur):
+                ch = chain(flat, j)
+                if any(want(subj(k)) for k in ch):
+                    lag += [k for k in ch if k not in lag and member.unknown(flat[k][1])]
+            if lag:
+                why = weigh_step(flat, cur, seg, is_item, want, lag)
+                if why:
+                    sys.exit("memory: mhs-thread resolver: %s/%s: %s could not be verified (verify "
+                             "timed out after %gs) and %s"
+                             % (walked.rstrip("/"), seg, [subj(k) for k in lag], VERIFY_TIMEOUT, why))
+            if not hits or (rule == "canonical" and len({sj for j, sj in kids if j in hits}) > 1):
+                # A refusal names EVERY child and every near miss, so it
+                # resolves them all — the slow path, taken only to say no.
+                kids = [(j, subj(j)) for j in children(flat, cur)]
+            names = [sj[:40] for _j, sj in kids]
+            if not hits and VERB == "cat" and member is not None:
+                # The segment names a child that IS there but is NOT A
+                # MEMBER (unsigned, a bad signature, or From/To not the owner).
+                # That is a refusal, not an absence: exit 3, "signature refused",
+                # as cat's help promises, with WHY and the Message-ID only (the
+                # subject and body are the failed sender's words). A truly absent
+                # child still takes the resolver's line below (exit 1, flagged).
+                ds = [j for j in direct(flat, cur) if any(want(subj(k)) for k in chain(flat, j))]
+                eff = effective_children(flat, cur, dead, pairs, only=set(ds))
+                bad = [j for j in eff if not member(flat[j][1]) and not member.unknown(flat[j][1])
+                       and match_child(seg, [(j, subj(j))], is_item)[0]]
+                if bad:
+                    for j in bad:
+                        print("memory cat: %s/%s: <%s> is NOT A MEMBER (MHS 170): %s — signature "
+                              "refused, nothing shown" % (walked.rstrip("/"), seg, flat[j][1].get("id", "").strip("<>"),
+                                                          member.why_text(flat[j][1])), file=sys.stderr)
+                    sys.exit(3)
+            if not hits:
+                # Charter 2: name the resolver, the rules it tried, and what it
+                # deliberately did NOT open — a refusal a reader can act on.
+                missed = near_misses(seg, kids)
+                rules = "exact, bracket, canonical" + (", item-prefix" if is_item
+                                                       else " (item-prefix is for numbered items only)")
+                sys.exit("memory: mhs-thread resolver: %s has no child %r.\n"
+                         "  rules tried: %s\n%s"
+                         "  children: %s"
+                         % (walked, seg, rules,
+                            ("  near misses NOT opened (type the exact name): %s\n" % missed) if missed else "",
+                            names))
+            spellings = sorted({sj for j, sj in kids if j in hits})
+            if rule == "canonical" and len(spellings) > 1:
+                # A fork of spellings (MHS 110): both are equally the label, so
+                # picking one would be a guess wearing rc 0. Refuse by name.
+                sys.exit("memory: mhs-thread resolver: %s child %r is AMBIGUOUS — the "
+                         "canonical rule matched more than one spelling: %s.\n"
+                         "  type the exact name (the exact rule is tried first, and never guesses).\n"
+                         "  children: %s" % (walked, seg, spellings, names))
+            # A FORK (MHS 110): two surviving copies of the number this
+            # step opens. Refuse by name, exit 2 — never the newest of them.
+            num = fork_at(flat, cur, hits, is_item, pairs, member)
+            if num:
+                refuse_fork(fork_of(flat, cur, num), walked, VERB, recip, member)
+            # Duplicates of ONE spelling that are not items (labels): newest
+            # wins, as before (supersede-aware). MHS 110 forks are items.
+            cur = max(hits, key=lambda j: flat[j][1].get("timestamp", 0))
+            in_boot = in_boot or (walked == "/" and subj(cur) == "[BOOT]")
+            # The trail echoes what you TYPED while the match was literal, and
+            # the child's REAL name when the resolver had to canonicalise — so
+            # `/ASKS/session` reports back that it opened `[session]`, and every
+            # path that worked before still reads exactly as it did.
+            walked = walked.rstrip("/") + "/" + (subj(cur) if rule == "canonical" else seg)
+        # HOIST the walked node through its Supersedes chain (MHS: a supersede
+        # replaces IN PLACE; the superseder is a REPLY so it sits deeper and the
+        # raw walk lands on the anchor). Mirrors effective_children/survivors —
+        # without this, `cat /BOOT/latest` reads a stale letter (found when
+        # cat showed v172 while --path showed v174).
+        if not show_all:
+            # Through the SAME survivors the tree shows: two live ends
+            # of the chain are a FORK and refuse, never the newer of them.
+            sv = [j for j in dict.fromkeys(survivors(flat, cur, pairs, pairs))
+                  if member.counts(flat[j][1])]
+            if len(sv) > 1:
+                num = item_number(flat[cur][1]) or subj(cur)
+                refuse_fork(Fork(flat, num, sv), walked, VERB, recip, member)
+            if sv:
+                cur = sv[0]
+        mid = flat[cur][1].get("id", "")
+        if resolve_only:
+            print("<%s>" % mid)
+            return
+        text, shown, hidden = render([tid], bodies=bodies, show_all=show_all, dates=dates,
+                                     under=mid, depth=depth, owner=agent, recip=recip, shared=bool(box))
+        if VERB == "cat" and getattr(render, "withheld", None):
+            # Decision 3: cat is a TRUSTED path. When it cannot
+            # show the text the signature covers it fails closed, visibly to a
+            # script: nothing on stdout, the withheld line on stderr, exit 3
+            # ("signature refused", as cat's help documents). A signed item with no
+            # text/plain part is not a refusal: it prints its notice, exit 0.
+            for subj_, id_, why in render.withheld:
+                print("memory cat: %s: <%s> %s: %s — signature refused, nothing shown"
+                      % (walked, id_, subj_[:60], withheld(why)), file=sys.stderr)
+            sys.exit(3)
+        badge, refuse, why_r = unpinned()
+        checked = getattr(render, "checked", True)
+        if VERB == "cat" and checked and refuse and in_boot and item_number(flat[cur][1]):
+            # R (the switch in _sig.py): no letter to self is shown until a signer is pinned.
+            print("memory cat: %s: <%s> %s — signature refused, nothing shown"
+                  % (walked, mid.strip("<>"), why_r), file=sys.stderr)
+            sys.exit(3)
+        print(text)
+        # F: what was checked, said where cat counts what it showed. Not under an
+        # unchecked render (no owner): its own note already makes no trust claim.
+        # Only for a MEMBER: a root admitted by its hint alone is labelled as not a
+        # member, and "signature verifies" would be false for it.
+        fence = f" · {badge}" if VERB == "cat" and checked and member(flat[cur][1]) else ""
+        print(f"— {walked} = <{mid}> · {shown} shown, {hidden} filtered{unchecked_note()}{fence} · ≈{len(text) // 4} tok")
+        return
+
+    if argv and argv[0] in ("--ls", "--boot"):
+        # `ls /` — FHS view of memory: the root holds
+        # only labels (directories), never items (files). Depth 1 lists them.
+        tid = root_thread()
+        if argv[0] == "--boot":
+            # --boot prints the letter's body below: fetch the thread ONCE,
+            # with bodies, and let the `ls /` render reuse it. Under
+            # -n this prints that one bodied fetch, as the real run makes it.
+            show([tid], True)
+        text, shown, hidden = render([tid], show_all=show_all, dates=dates,
+                                     under_subject="[ROOT]", depth=depth if depth is not None else 1,
+                                     owner=agent, recip=recip, shared=bool(box))
+        if DRY and argv[0] == "--ls":
+            return
+        if not DRY:
+            # One line says where / comes from and that it primed:
+            # the VARIABLE so a reader knows the layer it
+            # lives in, the ID so the tree is self-identifying, and the
+            # verdict. Per-node owner tags are gone — every edge below is
+            # membership-checked when an owner is set, so "all <agent>" is one
+            # word here. With no owner (--box, no agent env) NOTHING is
+            # checked, and the verdict says so.
+            src = f"${root_var}" if os.environ.get(root_var) else f"subject search (no ${root_var} — shipwreck)"
+            print(f"═══ ls /{' ' + box if box else ''}   {src} = {tid[3:] if tid.startswith('id:') else tid} · [ROOT] {'to ' + box if box else 'from ' + agent} ✓ ═══")
+            print(text)
+            bad = getattr(render, "unmember", 0)
+            # Never a bare "signed". Membership's signature half is
+            # plain-mode verify, which checks a mail against the key the mail
+            # CARRIES (session-mail-verify: plain mode is self-attributing),
+            # so a label From the owner signed by ANOTHER key passes it. The
+            # footer says what was checked, and that the signer was not.
+            # Which signer counts is trust policy, not this line's.
+            who = f"to {box}" if box else agent
+            if not getattr(render, "checked", True):
+                # No owner, no Members,
+                # so bad is 0 because NOTHING was checked. An unsigned label
+                # is shown here; never call that "members" or "signed".
+                verdict = UNCHECKED
+            else:
+                verdict = (f"all members ({who}), signatures verify (signer not pinned)"
+                           if not bad else f"{bad} NOT MEMBERS (see ⊘)")
+            if shown == 0:
+                # Nothing shown is not "all members": say what hid it.
+                verdict = f"NOTHING SHOWN, {hidden} hidden (see ⊘)" + unchecked_note()
+            print(f"— {max(shown - 1, 0)} labels · {verdict} · ≈{len(text) // 4} tok")
+        if argv[0] == "--ls":
+            return
+        # --boot: the newest SURVIVING item under [BOOT] is the letter to self.
+        # Trust before read: the file must verify under
+        # `session mail-verify` — signature AND principal — or we refuse.
+        if DRY:
+            # The re-walk below reuses the one bodied fetch printed above, so
+            # it runs nothing more to show.
+            return
+        print("\n═══ [BOOT] — the letter to self (newest surviving item) ═══")
+        # Re-walk for the newest surviving child of [BOOT] to get its file.
+        threads = show([tid], True)
+        if threads is None:
+            sys.exit(f"memory: notmuch show printed nothing for the root thread {tid}")
+        flats = []
+        for thread in threads:
+            flat = []
+            for top in thread:
+                flatten(top, 0, flat)
+            flats.append(flat)
+        # Membership on the anchor, the items and their supersedes (MHS 170):
+        # an unsigned "[BOOT]" or a newer unsigned item used to be what this
+        # picked, and the verify below then refused the whole wake.
+        member = Members(agent, recip, bool(box))
+        boot = None
+        late = []
+        for flat in flats:
+            for i, (d, m) in enumerate(flat):
+                if m["headers"].get("Subject", "").strip() == "[BOOT]":
+                    if member(m):
+                        boot = (flat, i, d)
+                    elif member.unknown(m):
+                        late.append(m)
+        if late and (boot is None or any(u.get("timestamp", 0) > boot[0][boot[1]][1].get("timestamp", 0)
+                                         for u in late)):
+            sys.exit("memory: REFUSING — a newer [BOOT] label could not be verified (verify timed "
+                     "out after %gs); not reading an older one" % VERIFY_TIMEOUT)
+        if boot is None:
+            sys.exit("memory: no signed [BOOT] label under the root — create it: reply to [ROOT] "
+                     "with subject '[BOOT]', no body (R15)")
+        flat, i, d = boot
+        kids = []
+        for d2, m2 in flat[i + 1:]:
+            if d2 <= d:
+                break
+            if d2 == d + 1:
+                kids.append(m2)
+        # Only ITEMS (leading number) can be the letter; a sub-label like
+        # [WAKE] is a directory, never the letter (MHS kinds, item 140).
+        items = [k for k in kids if re.match(r'^\d', k["headers"].get("Subject", "").strip())]
+        # The letter is `latest` under [BOOT], by the SAME reader as `cat
+        # /BOOT/latest`: pairs over the whole fetched thread, and
+        # candidates down every reply chain. This read [BOOT]'s direct
+        # children with pairs from them alone, so a letter that replies to
+        # the previous one was never seen and its predecessor, retired,
+        # was read as the letter (measured: v5 read, v6 live).
+        pairs = member_pairs(flats, member)
+        try:
+            k = latest_item(flat, i, pairs, member)
+        except Fork as fk:
+            refuse_fork(fk, "/BOOT (the letter to self)", "--boot", recip, member)
+        except Unverifiable as e:
+            sys.exit("memory: REFUSING — the newest [BOOT] letter %r could not be verified, or is "
+                     "retired only by a mail that could not be (verify timed out after %gs); not "
+                     "falling back to an older letter" % (str(e), VERIFY_TIMEOUT))
+        item = flat[k][1] if k is not None else None
+        if item is None:
+            member.prefetch(kids)
+            lagging = [x["headers"].get("Subject", "").strip() for x in kids if member.unknown(x)]
+            if lagging:
+                sys.exit("memory: REFUSING — no signed, surviving letter under [BOOT], and %s could "
+                         "not be verified (verify timed out after %gs)" % (lagging, VERIFY_TIMEOUT))
+            if items:
+                sys.exit("memory: REFUSING — [BOOT] holds %d item(s) and none is a signed, "
+                         "surviving letter (MHS 170)" % len(items))
+            print("(the [BOOT] label is empty — no letter to self yet)")
+            return
+        live = [item]
+        fn = next((f for f in item.get("filename", []) if os.path.exists(f)), None)
+        if not fn:
+            sys.exit("memory: boot item has no readable file")
+        try:
+            v = subprocess.run([*VERIFY, fn], capture_output=True, text=True,
+                               timeout=VERIFY_TIMEOUT)
+        except subprocess.TimeoutExpired:
+            sys.exit("memory: REFUSING boot item — session-mail-verify timed out after %gs"
+                     % VERIFY_TIMEOUT)
+        if v.returncode != 0:
+            sys.exit("memory: REFUSING boot item — session-mail-verify rc=%d\n%s%s"
+                     % (v.returncode, v.stdout, v.stderr))
+        # The letter's body is the text its signature covers: a refusal
+        # refuses the boot, as a failed verify does, before anything is printed;
+        # no text/plain part is a notice.
+        bt, why = signed_body(item)
+        if bt is None and why != NO_TEXT:
+            sys.exit("memory: REFUSING boot item — %s" % withheld(why))
+        bt = withheld(why) if bt is None else bt
+        badge, refuse, why_r = unpinned()
+        if refuse:
+            # R (the switch in _sig.py): refused like a failed verify, before anything prints.
+            sys.exit("memory: REFUSING boot item <%s> — %s" % (item.get("id", ""), why_r))
+        hdr = item["headers"]
+        print(f"{hdr.get('Subject','')}   [{short_from(hdr)} · {hdr.get('Date','')} · {badge}]")
+        print(f"  id: {item.get('id','')}")
+        for l in bt.splitlines():
+            print("  " + l)
+        n_old = len(items) - 1
+        print(f"— {n_old} other boot item(s): superseded, older, or not members · ≈{len(bt) // 4} tok")
+        return
+
+    if argv and argv[0] == "--wake":
+        # Delegation: the base readout —
+        # BOOT (the +boot shelf) + RECENT + COUNTS — has ONE implementation
+        # now, `session mail wake` (ported FROM this script's RECENT, then
+        # generalised). This script no longer carries a
+        # second copy: it delegates, then adds the two agent-specific sections
+        # the generic verb rightly doesn't know: RULES and LAST SESSION.
+        # No legacy fallback on purpose — one implementation, two callers;
+        # a fallback would quietly become the second implementation again.
+        # On this interpreter, by name: by its shebang the wake would run on
+        # PATH's python3.
+        wake = os.path.join(_HERE, "session-mail-wake")
+        cmd = [sys.executable, wake, agent] + (["-n"] if DRY else [])
+        if DRY:
+            print(f"  delegate     : {shlex.join(cmd)}")
+        # Flush before handing stdout to the child: the parent is block-
+        # buffered when piped, the child writes straight through — without
+        # this the delegate line (and any earlier print) lands AFTER the
+        # child's entire readout (observed on this branch's first dry run).
+        sys.stdout.flush()
+        missing = (f"memory: delegation failed — {wake} is missing "
+                   "(a broken sessionmail install)")
+        if not os.path.isfile(wake):
+            sys.exit(missing)   # the interpreter would say so with a bare 2
+        try:
+            r = subprocess.run(cmd)
+        except FileNotFoundError:
+            sys.exit(missing)
+        if r.returncode != 0:
+            sys.exit(f"memory: delegation failed — {wake} exited {r.returncode}")
+        total_cost = 0
+        # RULES: resolve the rules thread by its root subject. (NOT to:{agent}+rules
+        # — notmuch tokenizes on '+', which matches ALL the agent's mail. Found the
+        # hard way: 29k tokens.)
+        tids = []
+        # oldest-first: the TRUE root predates commentary that quotes its
+        # phrase (a RULES index page quoting "ALICE MAIL RULES" once
+        # newest-first resolved BOTH phrases to the how-to thread).
+        for phrase in (f"{agent} MAIL HOW-TO", f"{agent} MAIL RULES",
+                       f"{agent} RULES"):
+            t = sh(["notmuch", "search", "--output=threads", "--limit=1",
+                    "--sort=oldest-first",
+                    f'subject:"{phrase}" and from:{agent}'], resolve=True).strip()
+            if t and t not in tids:
+                tids.append(t)
+        for title, q in [("HOW-TO + RULES — index pages, then the law",
+                          [" or ".join(tids)] if tids else None),
+                         ("LAST SESSION — predecessor's registry thread",
+                          last_session_query(agent, cur))]:
+            print(f"═══ {title} ═══")
+            if not q:
+                print("(none found)\n")
+                continue
+            text, shown, hidden = render(q, bodies=False, show_all=show_all, dates=dates)
+            if DRY:
+                continue
+            print(text)
+            cost = len(text) // 4
+            total_cost += cost
+            print(f"— {shown} shown, {hidden} filtered · ≈{cost} tok\n")
+        print(f"═══ agent extras ≈{total_cost} tok — session wake total above ═══")
+        return
+
+    if argv and argv[0] == "--last-session":
+        query = last_session_query(agent, cur)
+        if not query:
+            sys.exit("no previous session thread found in registry")
+    elif argv:
+        query = argv
+    else:
+        sys.exit(__doc__)
+
+    text, n_shown, n_hidden = render(query, bodies, show_all, dates, under=under)
+    if DRY:
+        return
+    print(text)
+    cost = len(text) // 4
+    note = "" if bodies else "; -b for bodies"
+    print(f"\n— {n_shown} msgs shown, {n_hidden} filtered · ≈{cost} tok{note}")
+
+if __name__ == "__main__":
+    main()

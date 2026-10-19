@@ -1,0 +1,28 @@
+From: Carol <carol@example.org>
+To: Dave <dave@example.net>
+Subject: mutt-pgp-signed
+Date: Thu, 03 Jan 2030 12:00:00 +0000
+Message-ID: <mutt-pgp-signed@example.org>
+MIME-Version: 1.0
+Content-Type: multipart/signed; micalg=pgp-sha256;
+	protocol="application/pgp-signature"; boundary="SiGnEdB0undary"
+Content-Disposition: inline
+
+
+--SiGnEdB0undary
+Content-Type: text/plain; charset=us-ascii
+Content-Disposition: inline
+
+Signed text.
+
+--SiGnEdB0undary
+Content-Type: application/pgp-signature; name="signature.asc"
+Content-Description: PGP signature
+
+-----BEGIN PGP SIGNATURE-----
+
+iQEzBAEBCAAdFiEE
+=abcd
+-----END PGP SIGNATURE-----
+
+--SiGnEdB0undary--

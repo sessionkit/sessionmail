@@ -1,0 +1,260 @@
+#!/usr/bin/env python3
+"""strip-work-stamps: drop the time of day from dated weekday stamps.
+
+    scripts/strip-work-stamps [--check] [--ref REF] [REPO]
+    scripts/strip-work-stamps --self-test
+
+A STAMP is a time, a weekday and a date: HH:MM, optional :SS, optional -HH:MM range end,
+one space, Mon to Sun, one space, YYYY-MM-DD. Every stamp is a HIT, at any hour on any
+day: a public tree carries no time of day beside a dated stamp. The pattern is the release
+measure's with the weekend added and no hour window, so every stamp the narrower measure
+counts (Mon-Fri, from 09:00 up to 17:00) is a hit here too.
+
+THE STRIP removes the time token of each hit (the start, any seconds, any range end) and
+the one space after it. The weekday and the date stay, and nothing else in the line moves:
+a quoted line keeps every word, only its clock time goes. It never adds or drops a
+line, so line numbers are unchanged. It runs to a fixed point, so a second run is a no-op.
+
+THE FILE SET is exactly the one the measure reads: the regular-file members of
+`git archive REF` (default HEAD), so an export-ignore path is never touched; a file with a
+NUL in its first 8192 bytes is binary and skipped, the measure's own test. The edit is made
+to the WORKING TREE copy of each member, as bytes, so encodings and line endings are kept.
+Symlinks are never followed. Nothing is staged or committed: committing is the caller's.
+
+OUTPUT is counts and paths only, never the matched text (the measure's rule). The header
+line is the measure's format, measured BEFORE the strip, then one line per file.
+
+    --check      dry run: print the counts and paths, change nothing, exit 1 on any hit
+    --ref REF    the ref whose archive names the file set (default HEAD)
+    --self-test  run the built-in checks in a scratch repo, exit 0 when all pass
+
+Exit: 0 done (or --check found nothing), 1 --check found hits, 2 usage or git error.
+"""
+from __future__ import annotations
+
+import collections
+import io
+import os
+import re
+import stat
+import subprocess
+import sys
+import tarfile
+
+# The stamp pattern: the release measure's shape, every day of the week.
+STAMP_RE = re.compile(r"[0-9]{1,2}:[0-9]{2}(:[0-9]{2})?(-[0-9]{1,2}:[0-9]{2})?"
+                      r" (Mon|Tue|Wed|Thu|Fri|Sat|Sun) 20[0-9]{2}-[0-9]{2}-[0-9]{2}")
+# The same pattern over bytes. It is pure ASCII, so it finds the same spans the str form
+# finds in the measure's utf8-with-replace decoding, and the file's bytes stay as they were.
+STAMP_RE_B = re.compile(STAMP_RE.pattern.encode("ascii"))
+
+BINARY_PROBE = 8192           # a NUL in this many leading bytes means binary (the measure's)
+
+
+def hits(text):
+    """Every stamp in TEXT (str or bytes), in order: each one is a hit."""
+    rx = STAMP_RE_B if isinstance(text, bytes) else STAMP_RE
+    return list(rx.finditer(text))
+
+
+def is_binary(data: bytes) -> bool:
+    return b"\0" in data[:BINARY_PROBE]
+
+
+def strip_once(data: bytes) -> tuple[bytes, int]:
+    """One pass: cut each hit's time token and the one space after it."""
+    out, pos, n = [], 0, 0
+    for m in hits(data):
+        time_len = len(m.group(0).split(b" ", 1)[0])
+        out.append(data[pos:m.start()])
+        pos = m.start() + time_len + 1          # the time token and its one space
+        n += 1
+    out.append(data[pos:])
+    return b"".join(out), n
+
+
+def strip(data: bytes) -> tuple[bytes, int]:
+    """Strip to a fixed point; return the new bytes and the number of time tokens cut."""
+    total = 0
+    while True:
+        data, n = strip_once(data)
+        if not n:
+            return data, total
+        total += n
+
+
+def members(repo: str, ref: str) -> list[str]:
+    """Regular-file members of `git archive REF`: the measure's file set."""
+    data = subprocess.check_output(["git", "-C", repo, "archive", ref])
+    with tarfile.open(fileobj=io.BytesIO(data)) as t:
+        return [m.name for m in t.getmembers() if m.isfile()]
+
+
+def run(repo: str, ref: str, check: bool, out=sys.stdout, err=sys.stderr) -> int:
+    try:
+        sha = subprocess.check_output(["git", "-C", repo, "rev-parse", "--short", ref],
+                                      text=True, stderr=subprocess.PIPE).strip()
+        names = members(repo, ref)
+    except (subprocess.CalledProcessError, OSError) as e:
+        print(f"strip-work-stamps: git failed on {repo!r} {ref!r}: {e}", file=err)
+        return 2
+    files: collections.Counter[str] = collections.Counter()
+    vals: set[bytes] = set()
+    count = 0
+    for name in names:
+        path = os.path.join(repo, name)
+        try:
+            st = os.lstat(path)
+        except FileNotFoundError:
+            print(f"strip-work-stamps: not in the working tree, skipped: {name}", file=err)
+            continue
+        if not stat.S_ISREG(st.st_mode):
+            continue                               # never follow a symlink
+        with open(path, "rb") as f:
+            data = f.read()
+        if is_binary(data):
+            continue
+        found = hits(data)
+        if not found:
+            continue
+        files[name] += len(found)
+        count += len(found)
+        vals.update(m.group(0) for m in found)
+        if not check:
+            new, _ = strip(data)
+            with open(path, "r+b") as f:           # in place: mode and inode kept
+                f.write(new)
+                f.truncate()
+    label = os.path.basename(os.path.abspath(repo))
+    print(f"{label:13} {sha}  files={len(files):3} hits={count:3} distinct={len(vals):3}",
+          file=out)
+    for name, c in files.most_common():
+        print(f"    {c:3} {name}", file=out)
+    if check:
+        return 1 if files else 0
+    print(f"stripped: {count} time tokens in {len(files)} files (working tree; nothing staged)",
+          file=out)
+    return 0
+
+
+# ── self-test ────────────────────────────────────────────────────────────────
+# Every example stamp is BUILT at run time, so this file's own source is never a hit.
+
+def _stamp(hh: int, mm: int, day: str = "Thu", date: str = "2030-12-05", tail: str = "") -> str:
+    return f"{hh:02d}:{mm:02d}{tail} {day} {date}"
+
+
+def self_test() -> int:
+    import tempfile
+    fails: list[str] = []
+
+    def eq(got, want, what):
+        if got != want:
+            fails.append(f"{what}: got {got!r}, want {want!r}")
+
+    d, dt = "Thu", "2030-12-05"
+    # every hour and every day is a hit; what is not a stamp is not
+    for hh, mm in ((0, 0), (8, 59), (9, 0), (16, 59), (17, 0), (23, 59)):
+        eq(len(hits(_stamp(hh, mm))), 1, f"{hh:02d}:{mm:02d} is a hit")
+    for day in ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"):
+        eq(len(hits(_stamp(10, 0, day=day))), 1, f"a {day} stamp is a hit")
+    eq(len(hits(f"{10:02d}:{0:02d} {d}")), 0, "no date, no stamp")
+    eq(len(hits(f"{dt} {10:02d}:{0:02d}")), 0, "a date then a time is not this shape")
+    eq(len(hits(f"{d}, 05 Dec 2030 {10:02d}:{0:02d}:00 +1100")), 0, "a mail Date header is not")
+    eq(len(hits(_stamp(8, 30, tail="-" + f"{10:02d}:{0:02d}"))), 1, "a range is one stamp")
+    # the strip: the time token and one space go, everything else stays
+    quote = "As noted " + _stamp(13, 17, tail="-" + f"{13:02d}:{22:02d}") + ": keep it"
+    eq(strip(quote.encode())[0].decode(), f"As noted {d} {dt}: keep it", "range end goes too")
+    eq(strip(_stamp(10, 48, tail=":44").encode())[0].decode(), f"{d} {dt}", "seconds go too")
+    eq(strip(("(see the log, " + _stamp(14, 34) + ").").encode())[0].decode(),
+       f"(see the log, {d} {dt}).", "brackets and stop stay")
+    eq(strip(_stamp(8, 0).encode())[0].decode(), f"{d} {dt}", "an early stamp goes too")
+    eq(strip(_stamp(22, 15, day="Sat").encode())[0].decode(), f"Sat {dt}",
+       "a weekend evening stamp goes too")
+    keep = f"{dt} {10:02d}:{0:02d} and {d}, 05 Dec 2030 {10:02d}:{0:02d}:00"
+    eq(strip(keep.encode())[0].decode(), keep, "other time shapes are untouched")
+    two = f"{12:02d}:{0:02d} " + _stamp(13, 0)
+    eq(strip(two.encode())[0].decode(), f"{d} {dt}", "a time the strip exposes goes too")
+    crlf = ("a " + _stamp(11, 2) + "\r\nb\r\n").encode()
+    eq(strip(crlf)[0], f"a {d} {dt}\r\nb\r\n".encode(), "CRLF and line count kept")
+    raw = b"\xff\xfe x " + _stamp(11, 2).encode() + b" \xc3"
+    eq(strip(raw)[0], b"\xff\xfe x " + f"{d} {dt}".encode() + b" \xc3", "invalid utf8 kept")
+    once = strip(quote.encode())[0]
+    eq(strip(once), (once, 0), "a second strip is a no-op")
+    # this file's own source is not a hit
+    with open(os.path.abspath(__file__), "rb") as f:
+        eq(len(hits(f.read())), 0, "own source is not a hit")
+
+    # end to end over a scratch repo: archive set, export-ignore, binary, symlink, check
+    with tempfile.TemporaryDirectory() as tmp:
+        g = ["git", "-C", tmp, "-c", "user.name=t", "-c", "user.email=t@t.invalid"]
+        subprocess.run(["git", "init", "-q", tmp], check=True)
+        line = "noted " + _stamp(10, 30) + " in a file\n"
+        files = {"a.md": line, "src/b.py": "# " + line, "ignored/c.md": line,
+                 "keep.txt": "no stamp here\n", ".gitattributes": "/ignored/** export-ignore\n"}
+        for name, body in files.items():
+            os.makedirs(os.path.dirname(os.path.join(tmp, name)) or tmp, exist_ok=True)
+            with open(os.path.join(tmp, name), "w") as f:
+                f.write(body)
+        with open(os.path.join(tmp, "bin.dat"), "wb") as f:
+            f.write(b"\0" + line.encode())
+        os.symlink("a.md", os.path.join(tmp, "link.md"))
+        with open(os.path.join(tmp, "swap.md"), "w") as f:
+            f.write("swapped\n")
+        subprocess.run(g + ["add", "-A"], check=True)
+        subprocess.run(g + ["commit", "-qm", "base"], check=True)
+        # a member that is a regular file in the archive but a symlink in the working
+        # tree, pointing outside the repo: the strip must not write through it
+        outside = os.path.join(tmp + ".outside")
+        with open(outside, "w") as f:
+            f.write(line)
+        os.remove(os.path.join(tmp, "swap.md"))
+        os.symlink(outside, os.path.join(tmp, "swap.md"))
+        subprocess.run(g + ["update-index", "--assume-unchanged", "swap.md"], check=True)
+        sink = io.StringIO()
+        eq(run(tmp, "HEAD", check=True, out=sink, err=sink), 1, "--check exits 1 on hits")
+        eq(subprocess.run(g + ["status", "--porcelain"], capture_output=True, text=True).stdout,
+           "", "--check changes nothing")
+        report = sink.getvalue()
+        eq("10:30" in report or "2030" in report, False, "the report never shows matched text")
+        eq("files=  2 hits=  2" in report, True, "check counts a.md and src/b.py only")
+        eq(run(tmp, "HEAD", check=False, out=sink, err=sink), 0, "the strip exits 0")
+        changed = subprocess.run(g + ["diff", "--name-only"], capture_output=True,
+                                 text=True).stdout.split()
+        eq(sorted(changed), ["a.md", "src/b.py"], "only archive members with hits change")
+        with open(os.path.join(tmp, "a.md")) as f:
+            eq(f.read(), f"noted {d} {dt} in a file\n", "the line keeps its words")
+        with open(os.path.join(tmp, "ignored/c.md")) as f:
+            eq(f.read(), line, "an export-ignored file is untouched")
+        eq(os.path.islink(os.path.join(tmp, "link.md")), True, "the symlink stays a symlink")
+        with open(outside) as f:
+            eq(f.read(), line, "a working-tree symlink is never written through")
+        subprocess.run(g + ["commit", "-qam", "strip"], check=True)
+        eq(run(tmp, "HEAD", check=True, out=sink, err=sink), 0, "--check is clean after")
+        eq(run(tmp, "HEAD", check=False, out=sink, err=sink), 0, "a second run exits 0")
+        eq(subprocess.run(g + ["status", "--porcelain"], capture_output=True, text=True).stdout,
+           "", "a second run changes nothing")
+        os.remove(outside)
+
+    for f in fails:
+        print("FAIL", f, file=sys.stderr)
+    print(f"self-test: {'FAILED ' + str(len(fails)) if fails else 'ok'}")
+    return 1 if fails else 0
+
+
+def main(argv: list[str]) -> int:
+    import argparse
+    ap = argparse.ArgumentParser(prog="strip-work-stamps",
+                                 description=__doc__.split("\n\n")[0])
+    ap.add_argument("repo", nargs="?", default=".")
+    ap.add_argument("--ref", default="HEAD")
+    ap.add_argument("--check", action="store_true", help="dry run; exit 1 on any hit")
+    ap.add_argument("--self-test", action="store_true", help="run the built-in checks")
+    a = ap.parse_args(argv)
+    if a.self_test:
+        return self_test()
+    return run(a.repo, a.ref, a.check)
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

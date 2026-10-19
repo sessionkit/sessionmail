@@ -1,0 +1,14 @@
+x-session-signature: v=2; a=sshsig; n=session-mail@example.com; h=from:to:cc:subject:date:message-id:in-reply-to:references:supersedes:mime-version:content-type:x-session-from:x-machine; p=xIYNu4JmX29I+6wUeZdSd/6Fk7FjCNeDX8KNWLfqcEg=,fyyVeEfvNY4xwx4fdUVcXuhnHot11bVo1qXXK98EBxk=
+from: Acme <acme+lead@hq.example.net>
+to: Judy <judy@hq.example.net>
+cc: 
+subject: Sign the whole mail: go?
+date: Tue, 01 Jan 2030 12:00:00 +0000
+message-id: <1901000000.3.1@hq.session-mail>
+in-reply-to: 
+references: 
+supersedes: 
+mime-version: 1.0
+content-type: multipart/alternative; boundary="=_sesh890_ffeeddccbbaa99887766554433221100"
+x-session-from: 0a1b2c3d
+x-machine: hq

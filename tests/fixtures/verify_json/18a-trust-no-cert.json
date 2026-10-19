@@ -1,0 +1,1 @@
+{"rc": 1, "reason": "no-cert", "result": "good", "schema": 1, "signature": null, "trust": {"agent": null, "leg": "2-registry", "line": "TRUST: FAIL leg=2-registry reason=no-cert", "reason": "no-cert", "verdict": "FAIL"}}

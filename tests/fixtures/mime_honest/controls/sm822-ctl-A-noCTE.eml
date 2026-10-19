@@ -1,0 +1,12 @@
+From: alice@t3.invalid
+To: bob@t3.invalid
+Date: Wed, 02 Jan 2030 08:00:00 +0000
+Subject: T-3 v1 v1-A
+Message-ID: <v1-A@t3.repro>
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+X-Machine: t3
+X-Session-Signature: v=1; a=sshsig; n=session-mail@example.com; h=from:to:subject:date:message-id; b=U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgmn8BxxaYqsxu3NiwTjLVHtshGWTGns5uRHAWpWHkUbAAAAAYc2Vzc2lvbi1tYWlsQGV4YW1wbGUuY29tAAAAAAAAAAZzaGE1MTIAAABTAAAAC3NzaC1lZDI1NTE5AAAAQJqX4w0OwEDbw2ct7LORau5u11MlPh3A2YD2eCdC1b/CnBdjZ8qMILuT9QuIYGqsIrhecDn6tZ+yjQDGQbIQewM=
+
+Pay Alice 100 dollars.
+Thanks, Bob.

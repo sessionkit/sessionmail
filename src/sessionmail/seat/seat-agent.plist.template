@@ -1,0 +1,66 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  The seat agent's LaunchAgent, a TEMPLATE. `message seat agent`
+  prints this file byte for byte, given its template flag (an XML comment
+  cannot hold the flag's two hyphens). Nothing in sessionmail
+  renders it into ~/Library/LaunchAgents or bootstraps it; the live install is
+  the runbook's, and the operator's. See scripts/seat-agent/README.md.
+
+  Placeholders:
+    @ADDRESS@           the seat, as seat-init minted it (desk.alice)
+    @MESSAGE@           absolute path of `message`, as `command -v message`
+                        prints it (not resolved): launchd runs
+                        `message seat agent`, which execs the packaged wrapper
+    @SESSIONMAIL_HOME@  absolute; the key is @SESSIONMAIL_HOME@/seat-keys/@ADDRESS@/
+    @SOCKET@            absolute, 103 bytes at most (macOS: 104 with its NUL)
+    @LOG_DIR@           absolute, an existing directory for the job's stderr
+
+  THE ADAPTER'S ENV (a documented example, NOT this job's): the process that
+  sends AS the seat (an adapter with its own LaunchAgent) carries these, in
+  its EnvironmentVariables dict:
+
+    <key>TM_AGENT_ADDRESS</key>               <string>@ADDRESS@</string>
+    <key>DESK_SIGNER_SOCK</key>               <string>@SOCKET@</string>
+    <key>DESK_SIGNER_PUB</key>                <string>@SESSIONMAIL_HOME@/seat-keys/@ADDRESS@/seat.pub</string>
+    <key>SESSIONMAIL_REQUIRE_SIGNATURE</key>  <string>1</string>
+    <key>SESSION_REGISTRY</key>               <string>(the registry dir seat-init registered into)</string>
+
+  DESK_SIGNER_PUB names seat.pub, which no private key sits beside, so a dead
+  agent is REFUSED (must-sign) and never signed from the file. The adapter
+  maps DESK_SIGNER_SOCK/PUB onto
+  CLAUDE_SESSION_AGENT_SOCK/PUB in the sender's env.
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>dev.sessionkit.mail.seat-agent.@ADDRESS@</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>@MESSAGE@</string>
+    <string>seat</string>
+    <string>agent</string>
+    <string>@ADDRESS@</string>
+    <string>@SOCKET@</string>
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>SESSIONMAIL_HOME</key>
+    <string>@SESSIONMAIL_HOME@</string>
+    <key>PATH</key>
+    <string>/usr/bin:/bin</string>
+  </dict>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>ThrottleInterval</key>
+  <integer>10</integer>
+  <key>ProcessType</key>
+  <string>Background</string>
+  <key>StandardErrorPath</key>
+  <string>@LOG_DIR@/seat-agent.@ADDRESS@.log</string>
+  <key>StandardOutPath</key>
+  <string>@LOG_DIR@/seat-agent.@ADDRESS@.log</string>
+</dict>
+</plist>

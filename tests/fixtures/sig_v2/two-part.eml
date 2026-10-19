@@ -1,0 +1,42 @@
+Return-Path: <acme+lead@hq.example.net>
+X-Original-To: judy
+Delivered-To: judy@hq.example.net
+Received: by hq.example.net (Postfix, from userid 501)
+	id 0123456789ABC; Tue,  1 Jan 2030 12:00:00 +0000 (UTC)
+From: Acme <acme+lead@hq.example.net>
+To: Judy <judy@hq.example.net>
+Date: Tue, 01 Jan 2030 12:00:00 +0000
+Subject: Sign the whole mail: go?
+Message-ID: <1901000000.3.1@hq.session-mail>
+MIME-Version: 1.0
+Content-Type: multipart/alternative; boundary="=_sesh890_ffeeddccbbaa99887766554433221100"
+Content-Transfer-Encoding: 8bit
+X-Session-From: 0a1b2c3d
+X-Machine: hq
+X-Session-Signature: v=2; a=sshsig; n=session-mail@example.com;
+ h=from:to:cc:subject:date:message-id:in-reply-to:references:supersedes:
+ mime-version:content-type:x-session-from:x-machine;
+ p=xIYNu4JmX29I+6wUeZdSd/6Fk7FjCNeDX8KNWLfqcEg=,
+ fyyVeEfvNY4xwx4fdUVcXuhnHot11bVo1qXXK98EBxk=;
+ b=U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgmn8BxxaYqsxu3NiwTjLVHtshGWTG
+ ns5uRHAWpWHkUbAAAAAYc2Vzc2lvbi1tYWlsQGV4YW1wbGUuY29tAAAAAAAAAAZzaGE1MTIA
+ AABTAAAAC3NzaC1lZDI1NTE5AAAAQCj72yYeqOBuFbwwRqa7b7oHvrDnQEJacd3VT1E/kyyo
+ XHnQPL0Iyy7b9Cn5g8NvfCub9l0yciOjEer/EyKuewI=
+
+--=_sesh890_ffeeddccbbaa99887766554433221100
+Content-Type: text/plain; charset=utf-8
+Content-Transfer-Encoding: 8bit
+
+The decision: **go**.
+
+Signed by the whole mail — every part.
+
+--=_sesh890_ffeeddccbbaa99887766554433221100
+Content-Type: text/html; charset=utf-8
+Content-Transfer-Encoding: 8bit
+
+<!DOCTYPE html>
+<html><head><meta charset="utf-8"><title>t</title></head>
+<body><p>The decision: <strong>go</strong>.</p></body></html>
+
+--=_sesh890_ffeeddccbbaa99887766554433221100--

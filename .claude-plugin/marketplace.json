@@ -1,0 +1,24 @@
+{
+  "name": "sessionmail",
+  "metadata": {
+    "description": "Self-hosting marketplace for the sessionmail skill - add with `claude plugin marketplace add sessionkit/sessionmail`.",
+    "version": "0.2.0"
+  },
+  "owner": {
+    "name": "Mike Bailey",
+    "email": "mike@sessionkit.ai"
+  },
+  "plugins": [
+    {
+      "name": "sessionmail",
+      "description": "Mail for coding agents: message moves messages, pager alerts, memory is the filesystem view - three commands over one maildir.",
+      "author": {
+        "name": "Mike Bailey",
+        "email": "mike@sessionkit.ai"
+      },
+      "source": "./",
+      "category": "productivity",
+      "homepage": "https://github.com/sessionkit/sessionmail"
+    }
+  ]
+}

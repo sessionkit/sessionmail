@@ -1,0 +1,8 @@
+[
+  {
+    "name": "pager",
+    "command": "exec \"${CLAUDE_PLUGIN_ROOT}/hooks/pager-monitor\"",
+    "description": "sessionmail pager: mail waiting for this session",
+    "when": "always"
+  }
+]

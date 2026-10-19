@@ -1,0 +1,40 @@
+From: Carol <carol@example.org>
+To: Dave <dave@example.net>
+Subject: outlook-related
+Date: Thu, 03 Jan 2030 12:00:00 +0000
+Message-ID: <outlook-related@example.org>
+MIME-Version: 1.0
+Content-Type: multipart/related;
+	boundary="_004_DM6PR11related_";
+	type="multipart/alternative"
+
+--_004_DM6PR11related_
+Content-Type: multipart/alternative;
+	boundary="_000_DM6PR11alt_"
+
+--_000_DM6PR11alt_
+Content-Type: text/plain; charset="us-ascii"
+Content-Transfer-Encoding: quoted-printable
+
+See chart.
+
+--_000_DM6PR11alt_
+Content-Type: text/html; charset="us-ascii"
+Content-Transfer-Encoding: quoted-printable
+
+<html><body><img src=3D"cid:image001.png@01DA0000.12345670"></body></html>
+
+--_000_DM6PR11alt_--
+
+--_004_DM6PR11related_
+Content-Type: image/png; name="image001.png"
+Content-Description: image001.png
+Content-Disposition: inline; filename="image001.png"; size=95;
+	creation-date="Thu, 03 Jan 2030 12:00:00 GMT";
+	modification-date="Thu, 03 Jan 2030 12:00:00 GMT"
+Content-ID: <image001.png@01DA0000.12345670>
+Content-Transfer-Encoding: base64
+
+iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==
+
+--_004_DM6PR11related_--

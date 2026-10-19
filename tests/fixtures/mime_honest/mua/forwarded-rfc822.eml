@@ -1,0 +1,23 @@
+From: Carol <carol@example.org>
+To: Dave <dave@example.net>
+Subject: forwarded-rfc822
+Date: Thu, 03 Jan 2030 12:00:00 +0000
+Message-ID: <forwarded-rfc822@example.org>
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="fwdB"
+
+--fwdB
+Content-Type: text/plain; charset=utf-8
+
+FYI below.
+--fwdB
+Content-Type: message/rfc822
+Content-Disposition: attachment; filename="orig.eml"
+
+From: Erin <erin@example.com>
+Subject: orig
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+The original.
+--fwdB--

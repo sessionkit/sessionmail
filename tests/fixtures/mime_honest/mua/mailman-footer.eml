@@ -1,0 +1,32 @@
+From: Carol <carol@example.org>
+To: Dave <dave@example.net>
+Subject: mailman-footer
+Date: Thu, 03 Jan 2030 12:00:00 +0000
+Message-ID: <mailman-footer@example.org>
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="===============1234567890123456789=="
+List-Id: Dev list <dev.lists.example.org>
+
+--===============1234567890123456789==
+Content-Type: text/plain; charset="utf-8"
+MIME-Version: 1.0
+Content-Transfer-Encoding: 8bit
+Content-Disposition: inline
+
+Hi Dave,
+
+The numbers are attached. Café at 10?
+
+-- 
+Carol
+
+--===============1234567890123456789==
+Content-Type: text/plain; charset="us-ascii"
+MIME-Version: 1.0
+Content-Transfer-Encoding: 7bit
+Content-Disposition: inline
+
+_______________________________________________
+dev mailing list
+
+--===============1234567890123456789==--

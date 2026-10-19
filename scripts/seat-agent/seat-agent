@@ -1,0 +1,16 @@
+#!/bin/bash
+# seat-agent's old path: a thin shim.
+#
+# The wrapper moved, verbatim, into the package as src/sessionmail/seat/seat-agent.
+# This execs it with the same arguments, so it runs as this very pid (TERM and
+# launchd's KeepAlive act on it) and its exits (0/1/2) are the wrapper's own. No
+# Python. It stays while the seat runbook names this path.
+
+here=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P) || exit 2
+wrapper="$here/../../src/sessionmail/seat/seat-agent"
+[ -x "$wrapper" ] || {
+  printf 'seat-agent: REFUSED - %s is missing or not executable. Nothing was started.\n' \
+    "$wrapper" >&2
+  exit 2
+}
+exec "$wrapper" "$@"

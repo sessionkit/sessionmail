@@ -1,0 +1,1 @@
+{"rc": 5, "reason": "registry-absent", "result": "good", "schema": 1, "signature": null, "trust": {"agent": null, "leg": null, "line": "TRUST: ERROR reason=registry-absent", "reason": "registry-absent", "verdict": "ERROR"}}

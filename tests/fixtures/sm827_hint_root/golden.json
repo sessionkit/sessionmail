@@ -1,0 +1,90 @@
+{
+ "signed-root": {
+  "cat": {
+   "err": "",
+   "out": "[ROOT]\n  alice's memory\n\n— / = <root@sm827.invalid> · 1 shown, 0 filtered · ≈6 tok\n",
+   "rc": 0
+  },
+  "cat_full": {
+   "err": "",
+   "out": "[ROOT]\n  alice's memory\n\n— / = <root@sm827.invalid> · 1 shown, 0 filtered · ≈6 tok\n",
+   "rc": 0
+  },
+  "index_b": {
+   "err": "",
+   "out": "[ROOT]\n  alice's memory\n\n  └ [NOTES]\n    notes\n\n    └ 1 echo hi\n      echo hi\n\n  └ [BOOT]\n    boot\n\n    └ 1 letter to self\n      echo hi\n\n\n— 5 categories+root shown, 0 filtered · ≈34 tok\n",
+   "rc": 0
+  },
+  "tree_b": {
+   "err": "",
+   "out": "[ROOT]\n  alice's memory\n\n  └ [NOTES]\n    notes\n\n    └ 1 echo hi\n      echo hi\n\n  └ [BOOT]\n    boot\n\n    └ 1 letter to self\n      echo hi\n\n— / = <root@sm827.invalid> · 5 shown, 0 filtered · ≈34 tok\n",
+   "rc": 0
+  }
+ },
+ "unsigned-root": {
+  "cat": {
+   "err": "",
+   "out": "[ROOT]\n  alice's memory\n\n— / = <root@sm827.invalid> · 1 shown, 0 filtered · ≈6 tok\n",
+   "rc": 0
+  },
+  "cat_full": {
+   "err": "",
+   "out": "[ROOT]\n  alice's memory\n\n— / = <root@sm827.invalid> · 1 shown, 0 filtered · ≈6 tok\n",
+   "rc": 0
+  },
+  "index_b": {
+   "err": "",
+   "out": "[ROOT]\n  alice's memory\n\n  └ [NOTES]\n    notes\n\n    └ 1 echo hi\n      echo hi\n\n  └ [BOOT]\n    boot\n\n    └ 1 letter to self\n      echo hi\n\n\n— 5 categories+root shown, 0 filtered · ≈34 tok\n",
+   "rc": 0
+  },
+  "tree_b": {
+   "err": "",
+   "out": "[ROOT]\n  alice's memory\n\n  └ [NOTES]\n    notes\n\n    └ 1 echo hi\n      echo hi\n\n  └ [BOOT]\n    boot\n\n    └ 1 letter to self\n      echo hi\n\n— / = <root@sm827.invalid> · 5 shown, 0 filtered · ≈34 tok\n",
+   "rc": 0
+  }
+ },
+ "unsigned-root-crsub-top": {
+  "cat": {
+   "err": "",
+   "out": "[ROOT]\n— / = <root@sm827.invalid> · 1 shown, 0 filtered · ≈1 tok\n",
+   "rc": 0
+  },
+  "cat_full": {
+   "err": "",
+   "out": "[ROOT]\n— / = <root@sm827.invalid> · 1 shown, 0 filtered · ≈1 tok\n",
+   "rc": 0
+  },
+  "index_b": {
+   "err": "",
+   "out": "[ROOT]\n  └ [NOTES]\n    notes\n\n    └ 1 echo hi\n      echo hi\n\n  └ [BOOT]\n    boot\n\n    └ 1 letter to self\n      echo hi\n\n\n— 5 categories+root shown, 0 filtered · ≈29 tok\n",
+   "rc": 0
+  },
+  "tree_b": {
+   "err": "",
+   "out": "[ROOT]\n  └ [NOTES]\n    notes\n\n    └ 1 echo hi\n      echo hi\n\n  └ [BOOT]\n    boot\n\n    └ 1 letter to self\n      echo hi\n\n— / = <root@sm827.invalid> · 5 shown, 0 filtered · ≈29 tok\n",
+   "rc": 0
+  }
+ },
+ "v1-offshape-root": {
+  "cat": {
+   "err": "",
+   "out": "[ROOT]\n  alice's memory\n\n— / = <root@sm827.invalid> · 1 shown, 0 filtered · ≈6 tok\n",
+   "rc": 0
+  },
+  "cat_full": {
+   "err": "",
+   "out": "[ROOT]\n  alice's memory\n\n— / = <root@sm827.invalid> · 1 shown, 0 filtered · ≈6 tok\n",
+   "rc": 0
+  },
+  "index_b": {
+   "err": "",
+   "out": "[ROOT]\n  alice's memory\n\n  └ [NOTES]\n    notes\n\n    └ 1 echo hi\n      echo hi\n\n  └ [BOOT]\n    boot\n\n    └ 1 letter to self\n      echo hi\n\n\n— 5 categories+root shown, 0 filtered · ≈34 tok\n",
+   "rc": 0
+  },
+  "tree_b": {
+   "err": "",
+   "out": "[ROOT]\n  alice's memory\n\n  └ [NOTES]\n    notes\n\n    └ 1 echo hi\n      echo hi\n\n  └ [BOOT]\n    boot\n\n    └ 1 letter to self\n      echo hi\n\n— / = <root@sm827.invalid> · 5 shown, 0 filtered · ≈34 tok\n",
+   "rc": 0
+  }
+ }
+}

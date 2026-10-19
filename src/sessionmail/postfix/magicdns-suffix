@@ -1,0 +1,172 @@
+#!/usr/bin/env bash
+#
+# magicdns-suffix - print this tailnet's MagicDNS suffix, or fail loudly.
+#
+# THE ONE DEFINITION of the suffix that makes a host's FQDN. Two consumers read it,
+# and neither carries a suffix of its own:
+#
+#   * postfix/vmailbox-gen, which keys every map row in both host forms
+#     (`<name>@<host>` and `<name>@<host>.<suffix>`), and
+#   * sessionmail/_magicdns.py, behind `_voice.host_forms`, the pager's "either
+#     host form" (keeper recognition, the urgent senders, `$me`).
+#
+# The generator is bash and must not need python (on macOS /usr/bin/python3 can
+# be a Command Line Tools stub), so the definition is a shell script both can
+# run.
+#
+# ORDER, first answer wins:
+#
+#   1. MAGICDNS_SUFFIX, when non-empty after trimming. An operator's word
+#      always outranks the runtime. A value that is not a DNS suffix is
+#      REFUSED (exit 1), never "corrected".
+#   2. The runtime: `<tailscale> status --json`, its `MagicDNSSuffix`, from
+#      the first CLI that answers with a non-empty one:
+#        a. `tailscale` on PATH (Homebrew, Linux packages, a user's PATH), then
+#        b. the macOS app bundle's CLI, $MAGICDNS_TAILSCALE_BUNDLE, default
+#           /Applications/Tailscale.app/Contents/MacOS/Tailscale (App Store
+#           and standalone installs, which put nothing on PATH, and a thin
+#           launchd PATH).
+#      Each is given $MAGICDNS_TAILSCALE_TIMEOUT seconds (default 2), then
+#      TERMed and the next is tried. A CLI that fails, times out, or answers
+#      with an empty or malformed suffix is NOT an answer.
+#   3. Neither: exit 1, print NOTHING on stdout, and say on stderr where it
+#      looked and how to fix it. There is no default suffix: a made-up one
+#      writes FQDN rows no mail is addressed to, and the keeper test then
+#      fails closed without a word.
+#
+# Nothing is cached here: each run asks once. The python side memoises a
+# runtime answer in-process (never a failure); the generator runs this once
+# per regen.
+#
+# The answer is normalised the same way on every path: surrounding white
+# space and dots trimmed, folded to lowercase, and then it must be labels of
+# [a-z0-9-] joined by dots.
+#
+# Output: the suffix and a newline on stdout, exit 0. Failure: exit 1.
+# Usage error: exit 2.
+#
+# Test seams (never needed in use): PATH decides 2a, MAGICDNS_TAILSCALE_BUNDLE
+# names 2b's path (empty = no bundle fallback), MAGICDNS_TAILSCALE_TIMEOUT
+# bounds each CLI. `--trace` names, on stderr, which source answered.
+
+set -uo pipefail
+
+BUNDLE_DEFAULT="/Applications/Tailscale.app/Contents/MacOS/Tailscale"
+BUNDLE="${MAGICDNS_TAILSCALE_BUNDLE-$BUNDLE_DEFAULT}"
+TIMEOUT="${MAGICDNS_TAILSCALE_TIMEOUT:-2}"
+TRACE=0
+
+case "${1:-}" in
+  "") ;;
+  --trace) TRACE=1 ;;
+  -h|--help) sed -n '2,/^set -uo pipefail/p' "$0" | sed '$d' | sed 's/^#//; s/^ //'; exit 0 ;;
+  *) printf 'magicdns-suffix: error: unknown argument: %s (try --help)\n' "$1" >&2; exit 2 ;;
+esac
+case "$TIMEOUT" in
+  ''|*[!0-9.]*|.*|*.*.*) printf 'magicdns-suffix: error: MAGICDNS_TAILSCALE_TIMEOUT=%s is not a number of seconds\n' "$TIMEOUT" >&2; exit 2 ;;
+esac
+
+trace() { [ "$TRACE" -eq 1 ] && printf 'magicdns-suffix: %s\n' "$*" >&2; return 0; }
+
+# Trim white space and dots, fold to lowercase. Prints the result (maybe empty).
+normalise() {
+  local s
+  s="$(printf '%s' "$1" | tr 'A-Z' 'a-z')"
+  s="${s#"${s%%[![:space:].]*}"}"     # leading white space and dots
+  s="${s%"${s##*[![:space:].]}"}"     # trailing white space and dots
+  printf '%s' "$s"
+}
+
+# A DNS suffix: one or more [a-z0-9-] labels joined by single dots.
+valid() {
+  printf '%s' "$1" | LC_ALL=C grep -Eqx '[a-z0-9-]+(\.[a-z0-9-]+)*'
+}
+
+# Run `$1 status --json`, bounded by $TIMEOUT seconds; its stdout on ours.
+# The watchdog's stdout is /dev/null, so a command substitution around this
+# does not wait for it, and it is stopped the moment the CLI returns.
+bounded_status() {
+  local bin="$1" pid watchdog rc=0
+  "$bin" status --json 2>/dev/null </dev/null &
+  pid=$!
+  (
+    trap 'kill "$s" 2>/dev/null; exit 0' TERM
+    sleep "$TIMEOUT" & s=$!
+    wait "$s"
+    kill -TERM "$pid" 2>/dev/null
+  ) </dev/null >/dev/null 2>&1 &
+  watchdog=$!
+  wait "$pid" 2>/dev/null || rc=$?
+  kill -TERM "$watchdog" 2>/dev/null
+  wait "$watchdog" 2>/dev/null
+  return "$rc"
+}
+
+# The first `"MagicDNSSuffix": "<value>"` in the JSON on stdin. No jq: the
+# generator works without it today, and so does this.
+json_suffix() {
+  sed -n 's/.*"MagicDNSSuffix"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -n 1
+}
+
+# 1. The operator's word.
+given="$(normalise "${MAGICDNS_SUFFIX:-}")"
+if [ -n "$given" ]; then
+  if valid "$given"; then
+    trace "answered by MAGICDNS_SUFFIX"
+    printf '%s\n' "$given"
+    exit 0
+  fi
+  printf 'magicdns-suffix: error: MAGICDNS_SUFFIX=%s is not a DNS suffix (labels of a-z, 0-9 and -, joined by dots) - fix MAGICDNS_SUFFIX, or unset it to ask tailscale\n' "$MAGICDNS_SUFFIX" >&2
+  exit 1
+fi
+
+# 2. The runtime.
+looked=()
+ask() {  # $1 = how it was found, $2 = the CLI path
+  local how="$1" bin="$2" json rc=0 got
+  json="$(bounded_status "$bin")" || rc=$?
+  if [ "$rc" -ne 0 ]; then
+    if [ "$rc" -eq 143 ]; then
+      looked+=("$how $bin: no answer in ${TIMEOUT}s")
+    else
+      looked+=("$how $bin: exit $rc")
+    fi
+    return 1
+  fi
+  got="$(normalise "$(printf '%s\n' "$json" | json_suffix)")"
+  if [ -z "$got" ]; then
+    looked+=("$how $bin: no MagicDNSSuffix (logged out, or MagicDNS off)")
+    return 1
+  fi
+  if ! valid "$got"; then
+    looked+=("$how $bin: MagicDNSSuffix '$got' is not a DNS suffix")
+    return 1
+  fi
+  trace "answered by $how $bin"
+  printf '%s\n' "$got"
+  return 0
+}
+
+on_path="$(command -v tailscale 2>/dev/null || true)"
+case "$on_path" in
+  /*) ask "PATH" "$on_path" && exit 0 ;;
+  *)  looked+=("PATH: no tailscale") ;;
+esac
+
+if [ -z "$BUNDLE" ]; then
+  looked+=("app bundle: not looked for (MAGICDNS_TAILSCALE_BUNDLE is empty)")
+elif [ "$BUNDLE" = "$on_path" ]; then
+  :   # the same CLI, already asked
+elif [ -x "$BUNDLE" ]; then
+  ask "app bundle" "$BUNDLE" && exit 0
+else
+  looked+=("app bundle $BUNDLE: not installed")
+fi
+
+# 3. Neither: loud, and named.
+{
+  printf 'magicdns-suffix: error: no MagicDNS suffix: MAGICDNS_SUFFIX is unset and no tailscale answered.\n'
+  for l in "${looked[@]}"; do printf '  looked: %s\n' "$l"; done
+  printf 'magicdns-suffix: fix: set MAGICDNS_SUFFIX to this tailnet'"'"'s MagicDNS suffix, or install/start tailscale\n'
+} >&2
+exit 1

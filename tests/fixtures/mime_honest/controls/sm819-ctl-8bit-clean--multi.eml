@@ -1,0 +1,20 @@
+From: alice@sm819.invalid
+To: bob@sm819.invalid
+Subject: SM-819 repro ctl-8bit-clean--multi
+Date: Thu, 03 Jan 2030 10:30:00 +0000
+Message-ID: <ctl-8bit-clean--multi@sm819.repro>
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="=-sm819-b"
+
+--=-sm819-b
+Content-Type: text/plain; charset=utf-8
+Content-Transfer-Encoding: 8bit
+
+Pay Alice 100 dollars.
+Signed text, line two.
+--=-sm819-b
+Content-Type: text/plain; charset=utf-8
+Content-Transfer-Encoding: 8bit
+
+second leaf, clean.
+--=-sm819-b--

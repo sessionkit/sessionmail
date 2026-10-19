@@ -1,0 +1,191 @@
+#!/bin/sh
+# nm-deliver - postfix pipe(8) delivery into notmuch: index at delivery.
+#
+# OPT-IN. A host that points a pipe service here delivers each
+# message with `notmuch insert`, so the message is indexed as it lands and
+# no send waits on a full `notmuch new` scan. The default is still
+# virtual(8); nothing in sessionmail switches a host. Setup, preconditions
+# and rollback: docs/postfix-configuration.md#index-at-delivery-opt-in.
+#
+# Package data, run by path from master.cf; never a console script:
+#
+#   nminsert  unix  -       n       n       -       -       pipe
+#     flags=DORhu user=alice argv=/path/to/sessionmail/postfix/nm-deliver ${recipient}
+#
+# with `<service>_destination_recipient_limit = 1` in main.cf. Extra
+# arguments after the recipient are ignored, so the older
+# `${recipient} ${user} ${domain}` form works too.
+#
+# What it does, in order:
+#   1. reads recipient_delimiter and virtual_mailbox_maps with `postconf -xh`
+#      (-x expands $parameter references, as postfix itself does: a map
+#      written hash:$config_directory/vmailbox must reach postmap expanded);
+#   2. looks the recipient up as virtual(8) does: user+ext@domain, then
+#      user@domain, then @domain, each over every map, with `postmap -q`;
+#   3. takes the box's folder from the map VALUE, never from the address: a
+#      nested box is `agents/<store>/<project>/`, not `agents/<box>/`;
+#   4. runs `notmuch insert --keep --create-folder --folder=<value>` under a
+#      timeout. notmuch's post-insert hook (the post-new hook, linked twice)
+#      then tags the message.
+#
+# Exit map. pipe(8) bounces any status that is not a sysexits 4.x code, and
+# a bare `notmuch insert` exits 1 on a config or database fault, so this
+# wrapper turns every index-side failure into a DEFERRAL (75). The first line
+# of output carries the enhanced status code; pipe(8) puts it in the DSN.
+#
+#   delivered (insert rc 0; --keep keeps an unindexed file)     rc 0
+#   no map entry for the recipient    5.1.1 no mailbox mapping  rc 67  bounce
+#   map value not a safe maildir path 4.3.5                     rc 75  defer
+#   postconf/postmap/HOME/notmuch not usable                    rc 75  defer
+#   insert failed, any non-zero rc    4.3.0 (rc N)              rc 75  defer
+#   insert ran past the timeout       4.4.1 index busy          rc 75  defer
+#
+# A held Xapian write lock makes `notmuch insert` WAIT (0.40, measured),
+# so the timeout bounds that wait. It must exceed the host's worst
+# `notmuch new`, and stay well under postfix's command_time_limit (1000 s by
+# default), because pipe(8) BOUNCES a command that runs past that limit.
+#
+# Environment. pipe(8) passes only export_environment (TZ MAIL_CONFIG LANG by
+# default) and sets PATH=/usr/bin:/bin. So: notmuch, postconf and postmap
+# are found by absolute path; HOME is set from the passwd entry of the uid
+# this runs as, never from the caller; notmuch finds its config at a default
+# path under that HOME (~/.notmuch-config). The NM_DELIVER_* variables below
+# exist for TESTS: pipe(8) never passes them unless an operator adds them to
+# export_environment.
+
+# The first of each list that is executable, or the test override.
+pick() {
+  for p in "$@"; do
+    [ -x "$p" ] && { printf '%s\n' "$p"; return 0; }
+  done
+  return 1
+}
+NOTMUCH=${NM_DELIVER_NOTMUCH:-$(pick /opt/homebrew/bin/notmuch /usr/local/bin/notmuch /usr/bin/notmuch)}
+POSTCONF=${NM_DELIVER_POSTCONF:-$(pick /usr/sbin/postconf /opt/homebrew/sbin/postconf /usr/local/sbin/postconf)}
+POSTMAP=${NM_DELIVER_POSTMAP:-$(pick /usr/sbin/postmap /opt/homebrew/sbin/postmap /usr/local/sbin/postmap)}
+PERL=/usr/bin/perl
+TIMEOUT=${NM_DELIVER_TIMEOUT:-120}
+
+# Every refusal drains the message first, so postfix never sees a broken
+# pipe, then prints ONE status line and exits with the sysexits code.
+refuse() {  # refuse RC "STATUS TEXT"
+  cat >/dev/null 2>&1
+  printf '%s\n' "$2"
+  exit "$1"
+}
+defer() { refuse 75 "$1"; }
+
+rcpt=$(printf '%s' "${1:-}" | tr '[:upper:]' '[:lower:]')
+case $rcpt in
+  ?*@?*) ;;
+  *) defer "4.3.5 nm-deliver: no recipient address in argv (master.cf: argv=... \${recipient})" ;;
+esac
+local_part=${rcpt%@*}
+domain=${rcpt##*@}
+
+[ -n "$POSTCONF" ] && [ -x "$POSTCONF" ] || defer "4.3.0 nm-deliver: postconf not found"
+[ -n "$POSTMAP" ] && [ -x "$POSTMAP" ] || defer "4.3.0 nm-deliver: postmap not found"
+[ -n "$NOTMUCH" ] && [ -x "$NOTMUCH" ] || defer "4.3.0 nm-deliver: notmuch not found"
+[ -x "$PERL" ] || defer "4.3.0 nm-deliver: $PERL not found"
+
+delims=$("$POSTCONF" -xh recipient_delimiter 2>/dev/null) \
+  || defer "4.3.0 nm-deliver: postconf -xh recipient_delimiter failed"
+maps=$("$POSTCONF" -xh virtual_mailbox_maps 2>/dev/null) \
+  || defer "4.3.0 nm-deliver: postconf -xh virtual_mailbox_maps failed"
+maps=$(printf '%s' "$maps" | tr ',' ' ')
+[ -n "$(printf '%s' "$maps" | tr -d ' \t\n')" ] \
+  || defer "4.3.5 nm-deliver: virtual_mailbox_maps is empty"
+
+# user+ext -> user: cut at the first of ANY delimiter character (postfix
+# allows a set, e.g. "+-").
+base=$local_part
+d=$delims
+while [ -n "$d" ]; do
+  c=${d%"${d#?}"}
+  d=${d#?}
+  base=${base%%"$c"*}
+done
+
+errf=$(mktemp "${TMPDIR:-/tmp}/nm-deliver.XXXXXX" 2>/dev/null) \
+  || defer "4.3.0 nm-deliver: mktemp failed"
+trap 'rm -f "$errf"' EXIT
+
+# postmap -q exits 0 on a hit and 1 on a miss, but its fatal errors exit 1
+# too; a fatal line on stderr tells them apart. Warnings are ignored.
+value=
+prev=
+for key in "$rcpt" "$base@$domain" "@$domain"; do
+  [ "$key" = "$prev" ] && continue
+  prev=$key
+  # shellcheck disable=SC2086 # $maps is a word list on purpose
+  value=$("$POSTMAP" -q "$key" $maps 2>"$errf")
+  rc=$?
+  if [ "$rc" -eq 0 ] && [ -n "$value" ]; then
+    break
+  fi
+  value=
+  if [ "$rc" -gt 1 ] || grep -q 'fatal' "$errf" 2>/dev/null; then
+    defer "4.3.0 nm-deliver: postmap -q failed for <$key>: $(tr '\n' ' ' <"$errf" | cut -c1-200)"
+  fi
+done
+[ -n "$value" ] || refuse 67 "5.1.1 <$rcpt>: no mailbox mapping"
+
+# The map value is a maildir relative to the mail root: under agents/, with
+# the trailing / that makes it a maildir for virtual(8). Anything else is an
+# operator fault: defer, so no mail is lost while the map is fixed.
+value=$(printf '%s' "$value" | head -n 1)
+bad="4.3.5 nm-deliver: <$rcpt> maps to '$value', not a safe maildir path"
+case $value in
+  /*|*//*|*/./*|*/../*|./*|../*) defer "$bad" ;;
+  agents/?*/) ;;
+  *) defer "$bad" ;;
+esac
+case $value in *[!A-Za-z0-9._@+=/-]*) defer "$bad" ;; esac
+folder=${value%/}
+
+# shellcheck disable=SC2016 # perl, not sh
+HOME=$("$PERL" -e 'my $h = (getpwuid($<))[7]; print $h if defined $h' 2>/dev/null)
+[ -n "$HOME" ] && [ -d "$HOME" ] || defer "4.3.0 nm-deliver: no home directory for uid $(id -u)"
+export HOME
+cd "$HOME" || defer "4.3.0 nm-deliver: cannot cd to $HOME"
+case $TIMEOUT in ''|*[!0-9]*|0) TIMEOUT=120 ;; esac
+rm -f "$errf"
+trap - EXIT
+
+# Run insert under the timeout. Perl, because the post-new hook already
+# depends on it and sh has no alarm. stdin (the message) passes straight to
+# notmuch; its output goes to an anonymous file read after it exits, so the
+# status line is always FIRST, and no grandchild holding a pipe can stall us.
+# shellcheck disable=SC2016 # single quotes: this is perl, not sh
+exec "$PERL" -e '
+use strict; use warnings; use POSIX ();
+my ($timeout, @cmd) = @ARGV;
+open(my $out, "+>", undef) or do { print "4.3.0 nm-deliver: no temp file: $!\n"; exit 75 };
+my $kid = fork;
+defined $kid or do { print "4.3.0 nm-deliver: fork failed: $!\n"; exit 75 };
+if (!$kid) {
+  setpgrp(0, 0);
+  open(STDOUT, ">&", $out); open(STDERR, ">&", $out);
+  { exec { $cmd[0] } @cmd }
+  print STDERR "cannot exec $cmd[0]: $!\n";
+  POSIX::_exit(127);
+}
+sub reap {
+  my ($secs) = @_;
+  return eval { local $SIG{ALRM} = sub { die "timeout\n" }; alarm $secs;
+                waitpid($kid, 0); alarm 0; 1 } ? 1 : 0;
+}
+unless (reap($timeout)) {
+  kill "TERM", -$kid;
+  reap(5) or do { kill "KILL", -$kid; waitpid($kid, 0) };
+  print "4.4.1 nm-deliver: index busy: notmuch insert ran past ${timeout}s; deferred\n";
+  exit 75;
+}
+my $st = $?;
+seek($out, 0, 0); local $/; my $text = <$out> // "";
+$text =~ s/\s+/ /g; $text =~ s/^ | $//g; $text = substr($text, 0, 300);
+if ($st == 0) { print "$text\n" if length $text; exit 0 }
+my $how = ($st & 127) ? "signal " . ($st & 127) : "rc " . ($st >> 8);
+print "4.3.0 nm-deliver: notmuch insert failed ($how)" . (length $text ? ": $text" : "") . "\n";
+exit 75;
+' "$TIMEOUT" "$NOTMUCH" insert --keep --create-folder "--folder=$folder"

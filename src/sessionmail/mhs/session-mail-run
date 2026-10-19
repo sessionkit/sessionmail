@@ -1,0 +1,692 @@
+#!/usr/bin/env python3
+"""session-mail-run — run the numbered items under an MHS PATH, in order (`memory run /BOOT/WAKE` is the wake).
+
+OFF BY DEFAULT: nothing runs unless SESSIONMAIL_MEMORY_RUN=1; --list
+runs nothing and needs no opt-in. TRUSTED SIGNERS ONLY: an item runs
+only if its signer passes the three-leg `--trust` (the memory spec, "A
+script-mail's subject never executes"): its signing key has a registry cert
+($SESSION_REGISTRY) whose agent is the item's From. Membership alone is not
+enough: it checks a mail against the key that mail carries, so anyone who can
+deliver to the box could sign an item with a fresh key. An item
+that fails --trust is REFUSED, named with its TRUST: line, and NOT run; every
+other item still runs, and the exit is 3. An UNBLESSED signer (legs 1-2, no
+blessing yet) runs, and its header says UNBLESSED (REQUIRE_BLESSING below).
+
+Agent + root come from the environment: one implementation for every agent.
+MAIL-TO-REALIZED: the commands live IN memory as numbered items under
+/BOOT/WAKE. Each item's BODY is its program: the text the signature covers,
+never notmuch's JSON of it. The subject after the number
+only documents it and NEVER executes (the memory spec, "A script-mail's
+subject never executes"): an item whose body is a placeholder (empty,
+whitespace or `x`) has no program. It goes to --trust FIRST, like every mail
+item: an untrusted signer's item is REFUSED (exit 3) whatever its body. Only
+once it passes is the placeholder SKIPPED and named; nothing runs for it,
+every other item still runs, and the exit is unchanged. A trailing
+`# budget=N` on the subject caps that section's tokens (default 600).
+
+Provides nothing itself. For each item, in number order: VERIFY it (MHS 170
+membership: From and To the agent, and the sibling session-mail-verify passes
+against the mail's OWN key — an unverified item is not an edge and is NEVER
+executed), then TRUST it (the same verifier, --trust: whose key it is — an
+untrusted signer is refused, never executed), run it, print it under
+a header carrying the exact command and its cost (tokens and seconds),
+truncate at the budget and say so. Ends with the total: tokens, and the
+run's seconds from the start of the resolve. --json carries
+elapsed_s per section and total_s.
+
+A FORK (MHS 110: two verified items under one number) runs NEITHER copy:
+it is REFUSED, each copy named with its Message-ID and how to resolve it,
+every other item still runs, and the exit is 2. A live item whose
+every Supersedes: comes from a NON-member still runs (MHS 170 unchanged),
+under a WARNING naming each such mail, which half failed, and the fix.
+
+  SESSIONMAIL_MEMORY_RUN=1 memory run PATH [--json] [--only N,...] [--list] [--toml FILE]
+
+  Exit: 0 all ran · 1 usage · 2 a FORK refused · 3 an item's signer refused
+  by --trust (outranks 2; both are printed) · 4 OFF (the opt-in is not 1)
+
+  --list   materialize only: print the script that would run, do not run it
+  --toml   fallback config (~/.<agent>/wake.toml) used ONLY if /BOOT/WAKE is
+           unreachable — the shipwreck path, reported loudly when taken.
+"""
+import importlib.util, json, os, re, shlex, signal, subprocess, sys, time
+
+# Python 3.11 or later (requires-python), checked before anything that needs
+# it. The package starts this script on its own interpreter; a run by hand
+# takes the shebang's python3, PATH's, and on an older one refuses in one line.
+# Plain 3.9 syntax, so 3.9 can parse it; a no-op when the script is loaded in-process.
+if sys.version_info < (3, 11):
+    _verb = "run"
+    print("session-mail-run: needs Python 3.11 or later (this is %s); run it through "
+          "`memory %s`, which uses sessionmail's own Python"
+          % (".".join(map(str, sys.version_info[:3])), _verb), file=sys.stderr)
+    sys.exit(2)
+
+# The package's interpreter for every bundled script this one starts: the
+# bash ones (the shims, the verifier's wrapper) read it, having no
+# sys.executable of their own. SET to this interpreter, never inherited.
+# Only when run as a script, so an importer's environment is left alone.
+if __name__ == "__main__":
+    os.environ["SESSIONMAIL_PYTHON"] = sys.executable
+
+# The ONE opt-in, checked HERE as well as at the click door
+# (`sessionmail._mhs.RUN_GATE_VAR`, the same name): this script is reachable
+# by its path, past that door. Off unless exactly "1". Exit 4 when shut.
+RUN_GATE_VAR = "SESSIONMAIL_MEMORY_RUN"
+RUN_OFF_EXIT = 4
+RUN_OFF = ("memory run: OFF. It executes script-mail as you, so it runs "
+           "only on purpose: an item runs only if its signer passes --trust, "
+           "and running at all is opt-in. Nothing was run. Set " + RUN_GATE_VAR + "=1 "
+           "to run; `memory run PATH --list` shows what would run, and runs nothing.")
+
+
+def run_gate(argv):
+    """Refuse, before anything is read or run, unless the opt-in is set or
+    this is --list (or --help), which runs nothing."""
+    if "--list" in argv or "-h" in argv or "--help" in argv:
+        return
+    if os.environ.get(RUN_GATE_VAR, "") != "1":
+        print(RUN_OFF, file=sys.stderr)
+        sys.exit(RUN_OFF_EXIT)
+
+
+if __name__ == "__main__":
+    run_gate(sys.argv[1:])
+
+HOME = os.path.expanduser("~")
+# Identity from the environment (the same resolution every mail verb uses).
+AGENT = (os.environ.get("CLAUDE_CODE_AGENT") or os.environ.get("SESSION_AGENT") or "").strip()
+if not AGENT:
+    sys.exit("memory run: no agent — set CLAUDE_CODE_AGENT (or SESSION_AGENT)")
+# Seconds each item may run before its WHOLE process group is killed.
+# Overridable so a test can time an item out in 1 s; 20 is the wake's budget.
+ITEM_TIMEOUT = float(os.environ.get("SESSION_MAIL_RUN_TIMEOUT") or 20)
+# One implementation of the reader: the sibling `session thread` script.
+PT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "mhs-thread")
+import shutil
+TOKENS = shutil.which("tokens")   # the skillbox `tokens` command; bytes/4 only if it is missing
+
+def count(text):
+    """Tokens via `tokens -`, when that command is installed;
+    bytes/4 is the fallback and is ~30% LOW on tree output (measured 2666 vs 2081)."""
+    if TOKENS and text:
+        try:
+            r = subprocess.run([TOKENS, "-"], input=text, capture_output=True, text=True, timeout=10)
+            m = re.search(r"tokens:\s*(\d+)", r.stdout)
+            if m: return int(m.group(1))
+        except Exception:
+            pass
+    return len(text) // 4
+
+def load_pt():
+    from importlib.machinery import SourceFileLoader
+    loader = SourceFileLoader("pt", PT)           # no .py suffix on print-thread
+    spec = importlib.util.spec_from_loader("pt", loader)
+    m = importlib.util.module_from_spec(spec); loader.exec_module(m); return m
+
+def kids_of(flat, i, d):
+    """The direct children of flat[i] (depth d), as (depth, message)."""
+    out = []
+    for d2, m2 in flat[i + 1:]:
+        if d2 <= d:
+            break
+        if d2 == d + 1:
+            out.append((d2, m2))
+    return out
+
+# ── A script-mail's subject never executes ───────────────────────────────────
+# The memory spec: "the subject after the number is documentation of one shell
+# line; the body is the program", and for a placeholder body "nothing is
+# executed, because a placeholder body is not a program". The executor used to
+# run the SUBJECT in that case. Now program() is the ONE test, used for every
+# mail item (the live item and the verify-timeout superseder alike), and an
+# item without a program carries `placeholder` and an empty command.
+PLACEHOLDERS = ("", "x")
+PLACEHOLDER_WHY = "no program: the body is a placeholder; the subject is documentation"
+
+
+def program(body):
+    """The item's program: its BODY, or None when the body is a placeholder
+    (empty, whitespace only, or `x`). Never the subject."""
+    return body if body and body.strip() not in PLACEHOLDERS else None
+
+
+def mail_item(num, body, **fields):
+    """One mail item's dict: `command` is program(body), or "" and
+    `placeholder: True` when there is none, so neither --list nor --json can
+    present the subject (`title`) as the script."""
+    prog = program(body)
+    return {"num": num, "command": prog or "", **fields, **({} if prog else {"placeholder": True})}
+
+
+def placeholder_skip(i):
+    """The skip, named: the item, why, and the one-line fix."""
+    return ("SKIPPED: item %s <%s> — %s. Nothing was run. To run it, put the command in the "
+            "body, with a shebang." % (i["num"], i.get("id", ""), PLACEHOLDER_WHY))
+
+
+def section_head(s):
+    """A section's header text: its title, else its first command line. Either
+    may be empty (subject `10 # budget=5`, placeholder body): "" then, never an
+    IndexError on `"".splitlines()[0]`."""
+    return s.get("title") or next(iter(s["command"].splitlines()), "")
+
+
+def items_from_mail(pt, path):
+    """[(num, command, file, verified?)] for the surviving children of PATH (e.g. /BOOT/WAKE)."""
+    r = subprocess.run([sys.executable, PT, "--path", path, "--resolve"],
+                       capture_output=True, text=True)
+    if r.returncode != 0:
+        raise RuntimeError(r.stderr.strip() or r.stdout.strip())
+    label = r.stdout.strip().strip("<>")
+    tid = subprocess.run(["notmuch", "search", "--output=threads", "--limit=1", f"id:{label}"],
+                         capture_output=True, text=True).stdout.strip()
+    raw = subprocess.run(["notmuch", "show", "--format=json", "--body=true", tid],
+                         capture_output=True, text=True).stdout
+    flats = []
+    for thread in json.loads(raw):
+        flat = []
+        for top in thread:
+            pt.flatten(top, 0, flat)
+        flats.append(flat)
+    # Only a MEMBER's Supersedes: counts (MHS 170): an unsigned reply naming a
+    # wake item dropped that step from the wake — never executed in its place
+    # (each item is verified below), but gone.
+    member = pt.Members(AGENT)
+    pairs = pt.member_pairs(flats, member)
+    dead = pairs
+    out = []
+    for flat in flats:
+        for i, (d, m) in enumerate(flat):
+            if m.get("id", "").strip("<>") != label:
+                continue
+            pairs.prefetch([x.get("id", "") for _d2, x in kids_of(flat, i, d)])  # chains, in parallel
+            for j in pt.effective_children(flat, i, dead, pairs):
+                m2 = flat[j][1]
+                s = m2["headers"].get("Subject", "").strip()
+                mm = re.match(r"^(\d+(?:\.\d+)*)\s+(.*)$", s)
+                if not mm: continue          # labels ([CHARTER]) and unnumbered suggestions are not commands
+                num, rest = mm.group(1), mm.group(2)
+                budget = 600
+                bm = re.search(r"#\s*budget=(\d+)\s*$", rest)
+                if bm:
+                    budget = int(bm.group(1)); rest = rest[: bm.start()].rstrip()
+                # The program is the text the signature covers (the file
+                # --trust and membership verify, read by _sig.signed_text), never
+                # notmuch's JSON of it. None: no signed text to run. And the
+                # subject never executes, so there is no fallback to it.
+                body, nobody = pt.signed_body(m2)
+                fn = next((f for f in m2.get("filename", []) if os.path.exists(f)), "")
+                frm = m2["headers"].get("From", "")
+                # The reader's own membership test (MHS 170): From AND To the
+                # agent AND signed. From + signature alone let a signed item
+                # addressed to someone else run.
+                is_member = member(m2)
+                ok = is_member and body is not None
+                # Name the half that failed: "failed verification"
+                # blamed the signature when the slip was From or To.
+                if ok:
+                    why = ""
+                elif member.unknown(m2):
+                    why = "verify timed out"
+                elif not is_member:
+                    why = "is NOT A MEMBER (MHS 170): " + member.why_text(m2)
+                else:
+                    # A member with no signed text has no program: SKIPPED as not
+                    # verified, never its subject run.
+                    why = "has no signed text to run: " + nobody
+                no_text = nobody if is_member and body is None else ""
+                mid2 = m2.get("id", "").strip("<>")
+                item = mail_item(num, body, title=rest, budget=budget, file=fn,
+                                 verified=ok, **{"from": frm}, why=why, id=mid2,
+                                 **({"no_signed_text": no_text} if no_text else {}),
+                                 warn=nonmember_retirers(pairs, member, mid2, num) if ok else [])
+                if body is None:
+                    # No signed text is not a placeholder; it is not verified,
+                    # listed by its reason and never run (nor its subject).
+                    item["command"] = "# (no signed text: %s)" % nobody
+                    item.pop("placeholder", None)
+                out.append(item)
+            # A superseder whose verify timed out retires its item and runs
+            # neither version (MemberPairs.blocked). List it, SKIPPED, with the
+            # reason — a step that silently went back to v1 is what this ends.
+            by = {x.get("id", "").strip("<>"): x for _d, x in flat}
+            todo = [x.get("id", "").strip("<>") for d2, x in kids_of(flat, i, d)]
+            seen = set(todo)
+            while todo:
+                tid_ = todo.pop()
+                for sid in pairs.blocked(tid_):
+                    ms = by[sid]
+                    s2 = ms["headers"].get("Subject", "").strip()
+                    mm = re.match(r"^(\d+(?:\.\d+)*)\s+(.*)$", s2)
+                    if mm and sid not in seen:
+                        body = pt.signed_body(ms)[0]   # listed only: it never runs
+                        rest2 = mm.group(2)
+                        tnum = re.match(r"^(\d+(?:\.\d+)*)", by[tid_]["headers"].get("Subject", "").strip())
+                        # Say "does not run either" only when it is true: a
+                        # non-member target retires nothing, so what it
+                        # names may still run.
+                        why = ("verify timed out; it supersedes item %s, which does not run either"
+                               % (tnum.group(1) if tnum else "?")) if member(by[tid_]) else \
+                              "verify timed out (what it supersedes is not a member, so it retires nothing)"
+                        out.append(mail_item(mm.group(1), body, title=rest2, budget=600,
+                                             file=next((f for f in ms.get("filename", []) if os.path.exists(f)), ""),
+                                             verified=False, **{"from": ms["headers"].get("From", "")},
+                                             why=why))
+                for sid in pairs.raw.get(tid_, []):
+                    if sid in by and sid not in seen:
+                        seen.add(sid)
+                        todo.append(sid)
+            break
+    out = refuse_forks(out, path)
+    out.sort(key=lambda x: [int(p) for p in x["num"].split(".")])
+    return out
+
+def nonmember_retirers(pairs, member, mid, num):
+    """WARNINGS for a live item that someone TRIED to retire: every mail
+    naming it in Supersedes: is a non-member, so none of them counts (MHS
+    170, unchanged) and the item still runs. Said loudly, with which half
+    each one failed and how to fix it: the
+    owner meant to retire it, and silence ran a retired script at wake.
+    Only when NO superseder counts: a member's retires the item (it is not
+    live), and a timed-out one is MemberPairs.blocked, reported elsewhere."""
+    raw = [sid for sid in pairs.raw.get(mid, []) if sid in pairs.by_id]
+    if not raw or pairs.get(mid) or pairs.blocked(mid):
+        return []
+    out = []
+    for sid in raw:
+        ms = pairs.by_id[sid]
+        # By Message-ID only, never its subject: a non-member's words do
+        # not enter the wake (MHS 170).
+        out.append("WARNING: item %s <%s> still runs: <%s> names it in Supersedes:, "
+                   "but is NOT A MEMBER (MHS 170): %s, so its Supersedes does not count."
+                   % (num, mid, sid, member.why_text(ms)))
+    return out
+
+def warn_lines(i):
+    """An item's warnings, then how to fix them; [] when it has none."""
+    if not i.get("warn"):
+        return []
+    return i["warn"] + [
+        "  To retire it: re-send the supersede as a member, UNNUMBERED:",
+        "    message send %s+memory --supersedes '<%s>' -s 'retired' --no-body" % (AGENT, i["id"]),
+        "  To replace it: send the new item as a member with --supersedes '<%s>'." % i["id"]]
+
+def refuse_forks(items, path):
+    """A FORK runs NEITHER copy (MHS 110; the memory spec: `run`
+    SHALL refuse forks). effective_children() returns both survivors of a
+    fork so a reader can flag them; this is where `run` does. A fork is two
+    or more VERIFIED items under one number (distinct mails: that function
+    already de-dups). Each fork becomes ONE refused entry naming every copy;
+    every other item is untouched. Membership is not consulted again: a
+    non-member's Supersedes still retires nothing, which is how a chain with
+    a non-member link leaves two copies alive (seen on kit 0.1.0)."""
+    by_num = {}
+    for it in items:
+        if it["verified"]:
+            by_num.setdefault(it["num"], []).append(it)
+    out = [it for it in items if not it["verified"] or len(by_num[it["num"]]) < 2]
+    for num, copies in by_num.items():
+        if len(copies) < 2:
+            continue
+        out.append({"num": num, "command": "", "title": "FORK x%d — REFUSED, neither copy runs" % len(copies),
+                    "budget": 0, "file": "", "verified": False, "from": "", "fork": copies, "path": path,
+                    "why": "item %s is a FORK (MHS 110) under %s: %d copies survive, so NEITHER runs"
+                           % (num, path, len(copies))})
+    return out
+
+def fork_help(i):
+    """The refusal, said loudly: the item, each copy, and a fix that works.
+    Superseding a copy with a NUMBERED mail makes one more copy and the fork
+    stays (measured); an UNNUMBERED superseder retires it."""
+    lines = ["REFUSED: %s." % i["why"]]
+    for c in i["fork"]:
+        lines.append("  copy <%s>  %s %s" % (c["id"], c["num"], c["title"]))
+        lines.extend("    " + w for w in c.get("warn", []))   # why it is live; the fix is below
+    lines.append("  To resolve: retire the copy you do NOT want with an UNNUMBERED mail:")
+    lines.append("    message send %s+memory --supersedes '<ID>' -s 'retired' --no-body" % AGENT)
+    lines.append("  A numbered superseder (\"%s ...\") is one more copy: the fork stays." % i["num"])
+    lines.append("  A copy you thought retired? Only a member's Supersedes counts (MHS 170):")
+    lines.append("  `memory tree -a %s` shows each NOT A MEMBER link and which half failed." % i["path"])
+    return "\n".join(lines)
+
+def items_from_toml(path):
+    import tomllib
+    with open(path, "rb") as f:
+        cfg = tomllib.load(f)
+    secs = sorted(cfg.get("section", {}).items(), key=lambda kv: kv[1].get("order", 50))
+    return [{"num": str(s.get("order", 50)), "command": s["command"], "budget": int(s.get("budget", 600)),
+             "title": s["command"], "file": "", "verified": True, "from": "toml:" + name,
+             "trust_exempt": "the owner's local file, not mail"} for name, s in secs]
+
+# ── an item runs only if its SIGNER passes --trust ───────────────────────────
+# Membership (MHS 170) asks only whether a mail's signature verifies against
+# the key the mail CARRIES; it never asks whose key that is. The
+# memory spec requires `run` to ask ("A script-mail's subject never executes":
+# a three-leg `--trust`), so every mail item is put to the verifier once more,
+# with --trust, after membership and fork refusal and before it runs. Always
+# the verifier as a subprocess, never the in-process port: that port is
+# pinned to plain mode, and widening it is a trust-model change.
+#
+# THE ONE THRESHOLD. The verifier's --trust contract has three outcomes on
+# purpose (session-mail-verify, "THREE OUTCOMES"): 0 FULL, 4 UNBLESSED (legs 1
+# and 2 verified, no blessing: most signers today), 1 FAIL. False (A):
+# FULL and UNBLESSED run, UNBLESSED named in the header. True (B): only FULL
+# runs; the verifier gets --require-blessing, which turns UNBLESSED into a
+# FAIL, so every unblessed signer is refused. Flipping it is a policy change.
+REQUIRE_BLESSING = False
+TRUST_ARGV = ["--trust", "--quiet"] + (["--require-blessing"] if REQUIRE_BLESSING else [])
+TRUST_RUNS = {0: "FULL"} if REQUIRE_BLESSING else {0: "FULL", 4: "UNBLESSED"}
+# `memory`'s exit for "an item refused" (memory.py's run page); outranks 2.
+TRUST_REFUSED_EXIT = 3
+# The banner when there is no registry. Its first line is the headline; the
+# lines under it say what the registry is, that nothing here makes one, and
+# where the page that says how to build one by hand lives. Every renderer
+# keeps the lines: `--list` comments each one out, the header prints them
+# under its rule, `--json` carries them in trust_banner.
+NO_REGISTRY = "\n".join([
+    "memory run: NO TRUST REGISTRY (set SESSION_REGISTRY, or \"registry\" in "
+    "~/.sessionkit/mail/settings/mail.json): --trust cannot be run, so every "
+    "mail item is REFUSED. Fix the environment, not the mail.",
+    "  Point it at a registry: a git work tree holding a committed allowed_signers file",
+    "  with at least one seeded `<sid>@session namespaces=\"...\" <public key>` line, and a",
+    "  certs/ directory (one <sid>.cert per signer).",
+    "  sessionmail does not create a registry today: `message seat init --registry DIR`",
+    "  only adds a seat to a registry that is already seeded.",
+    "  How to build one by hand: docs/message-seat.md, \"The trust registry\".",
+])
+
+
+def trust_verdict(pt, i):
+    """(runs, verdict) for one mail item under --trust, decided by the
+    verifier's EXIT CODE; the TRUST: line (its last stdout line, even under
+    --quiet) is only how the item is named. Anything the contract does not
+    define as a pass (1 FAIL, 5 ERROR, 2/3/6+, a timeout, no verifier) is a
+    refusal: fail closed."""
+    fn = i.get("file") or ""
+    if pt is None or not fn:
+        return False, "TRUST: ERROR reason=no-mail-file (nothing to put to --trust)"
+    try:
+        r = subprocess.run([*pt.VERIFY, fn, *TRUST_ARGV], capture_output=True, text=True,
+                           stdin=subprocess.DEVNULL, timeout=pt.VERIFY_TIMEOUT)
+    except subprocess.TimeoutExpired:
+        return False, "TRUST: ERROR reason=timeout (verify --trust ran over %gs)" % pt.VERIFY_TIMEOUT
+    except OSError as e:
+        return False, "TRUST: ERROR reason=no-verifier (%s)" % e
+    said = [ln.strip() for ln in (r.stdout or "").splitlines() if ln.startswith("TRUST:")]
+    if r.returncode in TRUST_RUNS:
+        return True, said[-1] if said else "TRUST: " + TRUST_RUNS[r.returncode]
+    if said:
+        return False, said[-1]
+    return False, "TRUST: ERROR reason=rc-%d (no TRUST: line; not a --trust pass)" % r.returncode
+
+
+def apply_trust(pt, items):
+    """Stamp every member's mail item with its --trust verdict: `trust`
+    (the TRUST: line), and `refused: "trust"` when it must not run. Not
+    consulted for a non-member (already skipped), a fork (already refused)
+    or an item that is not mail (the toml shipwreck file, the DEFAULT boot
+    line: `trust_exempt` says which). An item with NO program (a
+    placeholder body) IS asked, first: an untrusted signer's item is
+    REFUSED whatever its body, and only one that passes is SKIPPED as a
+    placeholder (the rule: "SKIPPED with exit 0
+    makes a forged item QUIETER than it was before this fix"). Returns the
+    refused items' numbers."""
+    refused = []
+    for i in items:
+        if not i.get("verified") or i.get("fork") or i.get("trust_exempt"):
+            continue
+        ok, verdict = trust_verdict(pt, i)
+        i["trust"] = verdict
+        if not ok:
+            i["refused"] = "trust"
+            refused.append(i["num"])
+    return refused
+
+
+def no_registry(items):
+    """The ONE banner when the registry is missing, instead of N reasons."""
+    return any(i.get("refused") == "trust" and "reason=registry-absent" in i.get("trust", "")
+               for i in items) or (not os.environ.get("SESSION_REGISTRY") and any(
+               i.get("refused") == "trust" and i.get("trust", "").startswith("TRUST: ERROR")
+               for i in items))
+
+
+def trust_refusal(i):
+    """The refusal, said loudly: the item, its verdict, and how to check it."""
+    return "\n".join([
+        "REFUSED: item %s <%s> is NOT TRUSTED: %s — not run" % (i["num"], i.get("id", ""), i["trust"]),
+        "  Only an item whose signer passes --trust runs: its signing key needs a",
+        "  registry cert whose agent is the item's From%s. Check it:" % (
+            ", and the owner's blessing" if REQUIRE_BLESSING else ""),
+        "    message verify %s --trust" % (i.get("file") or "<the item's mail file>")])
+
+
+def unblessed(i):
+    return i.get("trust", "").startswith("TRUST: UNBLESSED")
+
+def run_item(cmd):
+    """Run one item as `sh -c CMD` in its OWN session (so its own process
+    group), and return (stdout, rc, stderr). On timeout kill the WHOLE group,
+    not just `sh`: `subprocess.run(timeout=)` killed only the shell,
+    and a pipeline's children (`memory tree` -> `mhs-thread` -> `notmuch
+    show`) were re-parented to launchd and ran on beside the next items.
+    A timeout still reads `(failed rc=124) timeout`."""
+    # The item is the user's program, not a bundled script: it gets the
+    # caller's environment without the package's interpreter variable, so a
+    # value set for this run never outlives it in a process of the user's.
+    env = {k: v for k, v in os.environ.items() if k != "SESSIONMAIL_PYTHON"}
+    p = subprocess.Popen(["sh", "-c", cmd], start_new_session=True, stdin=subprocess.DEVNULL,
+                         stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=env)
+    try:
+        out, err = p.communicate(timeout=ITEM_TIMEOUT)
+        return (out or "").rstrip("\n"), p.returncode, (err or "").strip()
+    except subprocess.TimeoutExpired:
+        try:
+            os.killpg(p.pid, signal.SIGKILL)   # the group's id is sh's pid (start_new_session)
+        except ProcessLookupError:
+            pass
+        try:
+            p.communicate(timeout=5)           # reap sh and close the pipes
+        except subprocess.TimeoutExpired:
+            # A descendant that left the group (its own setsid) still holds a
+            # pipe: do not hang the wake on it. sh itself is dead; reap it.
+            for f in (p.stdout, p.stderr):
+                f.close()
+            p.wait()
+        return "", 124, "timeout"
+
+def main():
+    argv = sys.argv[1:]
+    if "-h" in argv or "--help" in argv:
+        sys.exit(__doc__)
+    run_gate(argv)          # again here: an importer that calls main() meets it too
+    as_json = "--json" in argv; list_only = "--list" in argv
+    only = set(argv[argv.index("--only") + 1].split(",")) if "--only" in argv else None
+    toml = argv[argv.index("--toml") + 1] if "--toml" in argv else f"{HOME}/.{AGENT}/wake.toml"
+    paths = [a for a in argv if a.startswith("/")]
+    if len(paths) != 1:
+        sys.exit("memory run: exactly one PATH (e.g. /BOOT/WAKE)\n" + __doc__)
+    path = paths[0]
+    source = path
+    # The run's clock starts BEFORE the resolve: reading /BOOT/WAKE (the
+    # [ROOT] thread, read twice) is part of what a wake costs.
+    t0 = time.monotonic()
+    pt = None
+    try:
+        pt = load_pt()
+        items = items_from_mail(pt, path)
+        if not items:
+            raise RuntimeError(f"{path} has no numbered items")
+    except Exception as e:
+        if os.path.exists(toml):
+            source = f"SHIPWRECK fallback {toml} — {path} unreachable: {e}"
+            items = items_from_toml(toml)
+        else:
+            # No items in memory and no fallback file: run the MHS minimum —
+            # `ls /` + the verified [BOOT] item — and SAY so, so a fresh agent
+            # (a root, no wake items yet) boots on something true rather than
+            # a traceback or a silent empty wake. Mint /BOOT/WAKE items to extend.
+            source = f"DEFAULT (ls / + [BOOT] only) — {path} unreachable: {e}; no {toml}"
+            # The command names this interpreter: `sh -c` would exec mhs-thread
+            # by its shebang, on PATH's python3.
+            items = [{"num": "10", "command": f"{shlex.quote(sys.executable)} {shlex.quote(PT)} --boot",
+                      "title": f"{PT} --boot", "budget": 800,
+                      "file": "", "verified": True, "from": "default",
+                      "trust_exempt": "the MHS default, not mail"}]
+    if only:
+        items = [i for i in items if i["num"] in only]
+    forks = [i["num"] for i in items if i.get("fork")]
+    # After membership and forks, before anything runs (or is listed).
+    untrusted = apply_trust(pt, items)
+    # A member's item with no program, whose signer PASSED --trust, is
+    # skipped, named; the exit is unchanged, as for a non-member's skip:
+    # documentation is not a failure. One --trust refused is REFUSED (exit 3)
+    # above, never a skip: a forged item must not be quieter than a real one.
+    placeholders = [i["num"] for i in items
+                    if i.get("placeholder") and i["verified"] and not i.get("refused")]
+    # An item with no signed text is SKIPPED as
+    # not verified. Say why ONCE, on stderr, whatever the mode; the listing and
+    # the run each name the item as well.
+    nosig = [i for i in items if i.get("no_signed_text")]
+    if nosig:
+        print("memory run: SKIPPED %s: no signed text to run, so not verified ("
+              "the body the signature covers is the program, and a subject never "
+              "executes)" % ", ".join("item %s (%s)" % (i["num"], i["no_signed_text"])
+                                      for i in nosig), file=sys.stderr)
+    banner = NO_REGISTRY if no_registry(items) else ""
+    code = TRUST_REFUSED_EXIT if untrusted else 2 if forks else 0
+    if list_only:
+        print(f"# materialized from {source}")
+        if banner:
+            print("\n".join("# " + ln for ln in banner.splitlines()))
+        for i in items:
+            if i.get("fork"):
+                # Commented out, every line: --list is the script that WOULD
+                # run, and neither copy of a fork would.
+                print(f"# {i['num']}  budget=0   # REFUSED — FORK x{len(i['fork'])}, neither copy would run")
+                print("\n".join("# " + ln for ln in fork_help(i).splitlines()))
+                for c in i["fork"]:
+                    print(f"#   <{c['id']}>:")
+                    print("\n".join("#   | " + ln for ln in c["command"].splitlines()))
+                print()
+                continue
+            if i.get("refused") == "trust":
+                # Commented out, every line, like a fork: it would not run.
+                print(f"# {i['num']}  budget={i['budget']}   # REFUSED — NOT TRUSTED, would not run: {i['trust']}")
+                if i.get("placeholder"):
+                    print(f"#   subject: {i['title']}")   # documentation; no program either
+                else:
+                    print("\n".join("#   | " + ln for ln in i["command"].splitlines()))
+                print()
+                continue
+            if i["verified"] and i.get("placeholder"):
+                # Commented out: nothing would run, and the subject is not a
+                # script, so it is shown only as the documentation it is.
+                print(f"# {i['num']}  budget={i['budget']}   # SKIPPED — {PLACEHOLDER_WHY}, would not run")
+                print(f"#   subject: {i['title']}\n")
+                continue
+            flag = "" if i["verified"] else "   # NOT VERIFIED — would be skipped: %s" % i.get("why", "")
+            if unblessed(i):
+                flag = "   # UNBLESSED, runs: %s" % i["trust"]
+            print(f"# {i['num']}  budget={i['budget']}{flag}")
+            for w in warn_lines(i):
+                print("# " + w)
+            print(f"{i['command']}\n")
+        sys.exit(code)
+    out, total = [], 0
+    for i in items:
+        if i.get("fork"):
+            out.append({**i, "rc": -1, "tokens": 0, "truncated": False, "elapsed_s": 0.0, "refused": "fork",
+                        "fork": [{k: c[k] for k in ("id", "num", "title", "command", "from", "warn")}
+                                 for c in i["fork"]],
+                        "output": fork_help(i)})
+            continue
+        if i.get("refused") == "trust":
+            out.append({**i, "rc": -1, "tokens": 0, "truncated": False, "elapsed_s": 0.0,
+                        "output": trust_refusal(i)})
+            continue
+        if not i["verified"]:
+            out.append({**i, "rc": -1, "tokens": 0, "truncated": False, "elapsed_s": 0.0,
+                        "output": f"SKIPPED: item {i['num']} {i.get('why') or 'failed verification'} — not an edge, not run"})
+            continue
+        if i.get("placeholder"):
+            # No program, so nothing is executed. Never the subject.
+            out.append({**i, "rc": -1, "tokens": 0, "truncated": False, "elapsed_s": 0.0,
+                        "skipped": "placeholder", "output": placeholder_skip(i)})
+            continue
+        t = time.monotonic()
+        text, rc, err = run_item(i["command"])
+        elapsed = time.monotonic() - t        # the item's own run, timeout included
+        if rc != 0 and not text:
+            text = "(failed rc=%d) %s" % (rc, err.splitlines()[-1] if err else "")
+        tok = count(text); trunc = False
+        if tok > i["budget"]:
+            keep = int(len(text) * i["budget"] / tok)       # proportional cut at the measured rate
+            text = text[:keep].rstrip() + "\n… truncated at %d tok (of %d) — re-run the command for all" % (i["budget"], tok)
+            trunc, tok = True, i["budget"]
+        if i.get("warn"):
+            # Ahead of the output, outside the budget so it is never cut:
+            # the item RAN (membership unchanged), and the owner must see why.
+            text = "\n".join(warn_lines(i)) + "\n" + text
+        total += tok
+        out.append({**i, "rc": rc, "tokens": tok, "truncated": trunc, "elapsed_s": round(elapsed, 3), "output": text})
+    total_s = time.monotonic() - t0
+    if as_json:
+        print(json.dumps({"source": source, "sections": out, "total_tokens": total, "total_s": round(total_s, 3),
+                          "refused_forks": forks, "refused_trust": untrusted,
+                          "skipped_placeholder": placeholders,
+                          **({"trust_banner": banner} if banner else {})},
+                         ensure_ascii=False, indent=1))
+        sys.exit(code)
+    if banner:
+        head, *rest = banner.splitlines()
+        print("═══ %s ═══" % head)
+        for ln in rest:
+            print(ln)
+        print()
+    for s in out:
+        print("═══ %s  %s %s  (≈%d tok, %.1f s%s%s%s%s) ═══" % (
+            # `#`, not `$`, before a subject that has no program: it is
+            # documentation, and the header must not show it as a command,
+            # whether the item was skipped or refused by --trust.
+            s["num"], "#" if s.get("placeholder") else "$", section_head(s),
+            s["tokens"], s["elapsed_s"],
+            ", truncated" if s["truncated"] else "", ", UNBLESSED" if unblessed(s) else "",
+            ", REFUSED: NOT TRUSTED" if s.get("refused") == "trust" else "",
+            ", SKIPPED: no program" if s.get("skipped") == "placeholder" else ""))
+        print(s["output"]); print()
+    print("═══ run total ≈%d tok (%s), %.1f s · %d items · materialized from %s ═══"
+          % (total, "tokens" if TOKENS else "bytes/4", total_s, len(out), source))
+    # Not a placeholder skip either, nor an item --trust
+    # refused (an untrusted placeholder lands there): it
+    # did NOT run, so "item N ran" would be false; its own line names it.
+    warned = [s["num"] for s in out
+              if s.get("warn") and not s.get("fork") and not s.get("skipped") and not s.get("refused")]
+    if warned:
+        print("═══ WARNING: item %s ran though a NON-MEMBER tried to retire it (see above) ═══" % ", ".join(warned))
+    # Alone, each refusal is the only one, so "every other item did" holds.
+    # Together it would not: the fork line would claim the refused item ran,
+    # and the trust line the fork copies.
+    # A placeholder skip makes "every other item did" false the same way.
+    rest = ("every item not refused or skipped above ran" if (forks and untrusted) or placeholders
+            else "every other item did")
+    if placeholders:
+        # Loud, once, at the foot: a wake whose command sat in a subject
+        # stopped running it here, and its owner must see why.
+        print("═══ SKIPPED: item %s — no program (placeholder body); a subject never runs, "
+              "so put the command in the body (exit %d) ═══" % (", ".join(placeholders), code))
+    if forks:
+        # Loud, and machine-readable: exit 2 is `memory`'s "ambiguous", as
+        # `cat` exits on an ambiguous path. The other items DID run.
+        print("═══ REFUSED: FORK at item %s — neither copy ran; %s (exit %d) ═══"
+              % (", ".join(forks), rest, code))
+    if untrusted:
+        # Exit 3 outranks a fork's 2: a signer refused by --trust is an
+        # intrusion signal, ambiguity is not. Both are printed above.
+        print("═══ REFUSED: item %s NOT TRUSTED — not run; %s (exit %d) ═══"
+              % (", ".join(untrusted), rest, code))
+    sys.exit(code)
+
+if __name__ == "__main__":
+    main()

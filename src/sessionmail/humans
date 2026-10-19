@@ -1,0 +1,18 @@
+# humans — the session-mail humans registry.
+#
+# One canonical local-part per line. A send with any of these on To, Cc or
+# Bcc OWES A RENDERED HTML PART (markdown is the default body form; humans
+# get both). Matching is exact: case-folded, +tag stripped, NO dash/dot
+# normalisation — `alice.smith` and `alice` are different entries on purpose.
+#
+# ADDING A HUMAN IS EDITING THIS FILE — never a code change, never a
+# reinstall. This shipped copy is the FINAL fallback; a deployment overrides
+# it with $SESSIONMAIL_ROOT/.humans (beside the mail boxes — DOT-PREFIXED so
+# no address can ever spell it and no mailbox can ever collide with it, RFC
+# 5321 §4.1.2), and tests point $SESSIONMAIL_HUMANS at a
+# temp file. (The old SESSION_MAIL_* spellings are read too, for one release.)
+#
+# This shipped copy names NOBODY (no person's name in code). When it
+# is the list in use, the host's operator is a human too: `operator.mailbox`
+# in ~/.sessionkit/tools/settings/session.json. A host with no operator configured
+# has no human here until it adds one, above or in its own .humans.

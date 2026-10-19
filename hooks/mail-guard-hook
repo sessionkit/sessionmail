@@ -1,0 +1,21 @@
+#!/bin/sh
+# mail-guard-hook - the plugin's PreToolUse entry (Bash, and the message and
+# pager MCP tools): run mail-guard/hook.py
+# on the tool call's JSON, and ALLOW whatever goes wrong.
+#
+# The guard speaks only one way: decision JSON on stdout at exit 0 (see
+# mail-guard/README.md). Any other exit is the guard malfunctioning, and a
+# hook must never be the reason a session cannot run - so this file
+# turns every failure into exit 0, silent, and the Bash call goes ahead:
+#
+#   no python3 on PATH     exit 0 (bare `#!/usr/bin/env python3` is 127:
+#                          a hook error on every Bash call of the session)
+#   hook.py missing        exit 0 (`python3 <missing file>` exits 2, and
+#                          exit 2 from a PreToolUse hook BLOCKS the call)
+#   hook.py crashes        exit 0 (hook.py already fails open inside; this
+#                          covers what it cannot, e.g. a SyntaxError)
+#
+# No `exec`: the `|| exit 0` has to run after python3 returns. stdin (the
+# hook's JSON) passes through untouched; so does stdout (the decision).
+command -v python3 >/dev/null 2>&1 || exit 0
+python3 "$(dirname "$0")/mail-guard/hook.py" || exit 0

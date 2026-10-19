@@ -1,0 +1,15 @@
+From: Carol <carol@example.org>
+To: Dave <dave@example.net>
+Subject: javamail-folded
+Date: Thu, 03 Jan 2030 12:00:00 +0000
+Message-ID: <javamail-folded@example.org>
+MIME-Version: 1.0
+Content-Type: multipart/mixed; 
+	boundary="----=_Part_12345_678901234.1907238896000"
+
+------=_Part_12345_678901234.1907238896000
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 7bit
+
+Build passed.
+------=_Part_12345_678901234.1907238896000--

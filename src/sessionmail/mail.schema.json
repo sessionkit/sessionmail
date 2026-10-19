@@ -1,0 +1,146 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "mail.schema.json",
+  "title": "mail",
+  "description": "Settings of the mail tool (message, pager, memory), at any layer: ~/.sessionkit/mail/settings/mail.json (host), seats/<seat>/settings/mail.json (seat), sessions/<sid>/settings/mail.json or mail.d/*.json (session). A layer file holds only the keys it sets. sessiontools openspec/changes/session-settings.",
+  "type": "object",
+  "properties": {
+    "version": {
+      "description": "The file format's version.",
+      "type": "integer",
+      "minimum": 1
+    },
+    "hooks": {
+      "description": "Whether the plugin's Stop, PostToolBatch and UserPromptSubmit hooks speak. Only the boolean true turns them on (pager-settings-file D1).",
+      "type": "boolean"
+    },
+    "monitor": {
+      "description": "Whether the pager monitor (`pager listen --monitor`, run by the plugin for each interactive seat) starts. Missing means on; only the boolean false turns it off for every seat on this host. A seat can turn it off for itself with SESSIONMAIL_MONITOR=off, never back on; SESSIONMAIL_PAGER=off turns it off too. The variable is read by the pager itself, at the monitor's launch, not folded into a layer.",
+      "type": "boolean"
+    },
+    "pager_required": {
+      "description": "Whether this seat's pager is REQUIRED to be listening. When true, the plugin's Stop and PostToolBatch hooks say DEAF (with the reason and the two ways out) when nothing listens for the session - even with \"hooks\": false, where that is the only thing they say. Missing means not required: the check runs and stays silent. A muted seat (`pager mute`) is never nagged. Read at every layer (host, seat, session; the most specific wins); SESSIONMAIL_PAGER_REQUIRED (1/true/on or 0/false/off) wins over every layer, both ways, and SESSIONMAIL_PAGER=off beats it.",
+      "type": "boolean",
+      "x-env": "SESSIONMAIL_PAGER_REQUIRED"
+    },
+    "capture": {
+      "description": "Whether the full text of each injection is captured beside its size row. When true, every string the pager and its hooks put into the agent's context is written to <session-dir>/log/mail/capture/<seq>.txt (dir 0700, files 0600, a .gitignore of *), named by its row's seq in pager.jsonl, until capture/ holds 64 MB for the session. Missing means off: the rows (sizes and Message-IDs, never text) are always written; the text only when this is on. Read at every layer (host, seat, session; the most specific wins); SESSIONMAIL_CAPTURE (on/1/yes/true or off/0/no/false) wins over every layer, both ways.",
+      "type": "boolean",
+      "x-env": "SESSIONMAIL_CAPTURE"
+    },
+    "address": {
+      "description": "The seat address this session listens for, e.g. voicemode+super. Absent: the session's own box only.",
+      "type": "string",
+      "minLength": 1
+    },
+    "subscriptions": {
+      "description": "Boxes whose mail is also delivered here: box name to true. A later layer or drop-in sets one false to remove it and keep the rest. A session's birth reads SESSIONMAIL_SUBSCRIBE (box names, commas or spaces) into its mail.d/50-env.json; the session's verbs write mail.d/70-live.json, which wins.",
+      "type": "object",
+      "additionalProperties": {"type": "boolean"},
+      "x-env": "SESSIONMAIL_SUBSCRIBE"
+    },
+    "registry": {
+      "description": "The seat registry dir (allowed_signers, certs/) that message verify --trust reads; $SESSION_REGISTRY wins. ~ is the account's home. Unset: --trust ends ERROR (5), registry-absent.",
+      "type": "string",
+      "minLength": 1
+    },
+    "root": {
+      "description": "The mail root, the parent of agents/ (default ~/.mail). ~ is the account's home. Read from the template and host layers only. SESSIONMAIL_ROOT, when set and non-empty, wins over every layer; it names the agents root, so its parent is the mail root.",
+      "type": "string",
+      "minLength": 1,
+      "x-env": "SESSIONMAIL_ROOT"
+    },
+    "host": {
+      "description": "This host's short name (default: the short hostname). Read from the template and host layers only. SESSIONMAIL_HOST, when set and non-empty, wins over every layer.",
+      "type": "string",
+      "minLength": 1,
+      "x-env": "SESSIONMAIL_HOST"
+    },
+    "sendmail": {
+      "description": "How mail leaves: \"drop\" (the default) writes into this host's maildirs with no MTA; an absolute path names the MTA (postfix's sendmail, opt-in). Anything else is refused by name and nothing is sent. Read from the template and host layers only. SESSIONMAIL_SENDMAIL, when set and not empty, wins over every layer.",
+      "anyOf": [{"const": "drop"}, {"type": "string", "pattern": "^/"}],
+      "x-env": "SESSIONMAIL_SENDMAIL"
+    },
+    "magicdns_suffix": {
+      "description": "The tailnet's MagicDNS suffix, for a host tailscale cannot ask (default: ask tailscale). Read by every host, whatever its carrier. Read from the template and host layers only. MAGICDNS_SUFFIX, when set and non-empty, wins over every layer.",
+      "type": "string",
+      "minLength": 1,
+      "x-env": "MAGICDNS_SUFFIX"
+    },
+    "notmuch": {
+      "description": "How sessionmail runs notmuch. Read from the template and host layers only.",
+      "type": "object",
+      "properties": {
+        "command": {
+          "description": "The notmuch binary (default: notmuch on PATH). SESSIONMAIL_NOTMUCH, when set and non-empty, wins over every layer.",
+          "type": "string",
+          "minLength": 1,
+          "x-env": "SESSIONMAIL_NOTMUCH"
+        },
+        "timeout": {
+          "description": "Seconds each notmuch call may take (default 10). SESSIONMAIL_NOTMUCH_TIMEOUT, when set and non-empty, wins over every layer.",
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "x-env": "SESSIONMAIL_NOTMUCH_TIMEOUT"
+        },
+        "profile": {
+          "description": "The notmuch profile sessionmail's own calls read in host mode (default sessionkit: $XDG_CONFIG_HOME/notmuch/sessionkit/config). No other notmuch config is ever read. SESSIONMAIL_NOTMUCH_PROFILE, when set and non-empty, wins over every layer.",
+          "type": "string",
+          "minLength": 1,
+          "x-env": "SESSIONMAIL_NOTMUCH_PROFILE"
+        }
+      },
+      "additionalProperties": false
+    },
+    "postfix": {
+      "description": "The settings named for postfix: the map generator (which the drop also runs, in print mode), the relay domain and the origin. Read from the template and host layers only.",
+      "type": "object",
+      "properties": {
+        "generator": {
+          "description": "The map generator, vmailbox-gen (default: PATH, then <root>/.postfix/, then the package's copy). SESSIONMAIL_VMAILBOX_GEN, when set and non-empty, wins over every layer.",
+          "type": "string",
+          "minLength": 1,
+          "x-env": "SESSIONMAIL_VMAILBOX_GEN"
+        },
+        "relay_domain": {
+          "description": "Where a session-shaped address that misses on this host relays (default relay.home). SESSIONMAIL_RELAY_DOMAIN, when set and non-empty, wins over every layer.",
+          "type": "string",
+          "minLength": 1,
+          "x-env": "SESSIONMAIL_RELAY_DOMAIN"
+        },
+        "origin": {
+          "description": "The domain a bare address is qualified with (default: postconf -xh myorigin). SESSIONMAIL_ORIGIN, when set and non-empty, wins over every layer.",
+          "type": "string",
+          "minLength": 1,
+          "x-env": "SESSIONMAIL_ORIGIN"
+        }
+      },
+      "additionalProperties": false
+    },
+    "alert_runner": {
+      "description": "The LOCAL PART of this host's alert runner, e.g. alerts: its urgent mail, From <alert_runner>@<this host> in each host form, is honoured, so the pager's default urgent list is the operator and this runner. Read from the template and host layers only (~/.sessionkit/mail/settings/mail.json under the account's home); a seat or session layer is never read. Unset, or anything but a local part (an @, white space, $ or a glob character), means no runner. A locked-file `set urgent` line replaces the whole default list and this key is not read.",
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9._+-]+$"
+    },
+    "rules": {
+      "description": "Pager rules: name to rule line (the grammar of `pager rule --help`). First match wins, in name order, so names are numbered like items (10, 20); false removes one.",
+      "type": "object",
+      "additionalProperties": {"type": ["string", "boolean"]}
+    },
+    "$schema": {
+      "description": "A layer file may name its schema; the reader ignores it (sessiontools META_KEYS).",
+      "type": "string"
+    },
+    "_about": {
+      "description": "A note for the person reading the file; the reader ignores it.",
+      "type": "string"
+    },
+    "_locked": {
+      "description": "Dotted key paths this layer locks: every layer below it is ignored for them (rules.10 locks one rule).",
+      "type": "array",
+      "items": {"type": "string", "minLength": 1}
+    }
+  },
+  "additionalProperties": false
+}

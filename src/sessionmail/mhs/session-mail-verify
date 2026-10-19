@@ -1,0 +1,976 @@
+#!/usr/bin/env bash
+# session-mail-verify — verify a keyed session's mail signature.
+#
+#   session-mail-verify <mail-file> [--quiet] [--trust] [--require-blessing]
+#
+# Checks the X-Session-Signature header (SSHSIG over the canonical form of
+# from/to/subject/date/message-id + body — parity contract with
+# session-mail-send). The SSHSIG format embeds the signer's full public key,
+# so the message is SELF-ATTRIBUTING: no registry lookup is needed to answer
+# "which session signed this" — the sender's session-ID is derived as
+# uuid = sha256(pubkey_wire_blob)[:16]. (A registry / allowed_signers file
+# answers the separate trust question: WHOSE session that was.)
+#
+# Output: signer key, derived session-ID, crypto + principal verdicts.
+# Exit (plain mode, unchanged): 0 verified · 1 BAD signature · 2 unsigned
+# (no header) · 3 usage / arg parse / unreadable mailfile.
+#
+# --trust runs the full three-leg trust test — the boot-mail
+# ritual every keyed agent otherwise performed by hand (measured 2030-07-28:
+# ~10 tool calls and 4 dead ends per boot, per agent):
+#   1. signature-crypto + principal-binding (the checks above)
+#   2. registry-cert: $SESSION_REGISTRY/certs/<sid>.cert exists — an EXACT
+#      filename lookup keyed on the SIGNATURE-DERIVED sid, never on
+#      X-Session-From (an unauthenticated header must not steer the trust
+#      decision); the cert's session-id AND pubkey must match the SIGNER,
+#      and its `agent:` must name the From's SEAT — anti-spoof: both sides
+#      reduce through the SAME local_part() canonical() signs (lowercased
+#      local part, +extension KEPT, domain dropped), one code path,
+#      so the match compares exactly what leg 1 verified. A cert agent that
+#      carries '@' FAILs: a domain-qualified agent is never matched.
+#   3. blessed-by: <cert>.blessed-by.<principal>.sig VERIFIES over the cert
+#      bytes against the registry's pinned blessing-principal key —
+#      verified, never stat'd.
+#
+# --trust exit contract — THREE OUTCOMES (deliberately NOT binary: most
+# seats are legitimately unblessed while the blessing ceremony is
+# intermittent, so a
+# binary contract would reject honest mail and teach agents to ignore the
+# tool; "the bug is the BINARY, not the threshold"). Absent and invalid are
+# never conflated, in either direction:
+#
+#   0  TRUST: FULL
+#        all three legs verified; blessing present AND verifies.
+#   1  TRUST: FAIL leg=<L> reason=<token>
+#        a leg EVALUATED AND REJECTED. Includes a present-but-INVALID
+#        bless.sig (ALWAYS rc 1, never rc 4 — no path from a forged
+#        blessing to anything but failure) and an unparseable cert
+#        (cert-invalid — attacker-influenceable input never buys softer
+#        treatment than forgery). Tokens: leg 1 unsigned | bad-signature |
+#        bad-principal | unsupported-version | below-floor | part-altered
+#        (the last three v2) | cte-defect (v2: a part's
+#        transfer encoding is not strict, so a reader may decode it to other
+#        bytes than p= covers; v1: a part's transfer encoding is not
+#        7bit, 8bit or binary) | v1-shape (v1: a v1 mail not in the
+#        exact shape the v1 sender wrote; its structure, charset or a bare
+#        CR is not v1's, or, one of the five headers v1 signs is
+#        there more than once) | mime-ambiguous (v2: two MIME readers may
+#        split a part's headers or delimiters differently) | disposition
+#        (v2: a part carries a Content-Disposition, which no
+#        signature covers; v1 refuses the same under v1-shape) |
+#        sig-header-ambiguous | undecodable
+#        (the mail carries more than one X-Session-Signature field,
+#        or a bare CR in its header block, or its value holds a non-ASCII byte or a tag the byte parse
+#        refuses, a REPEATED tag among them, so its version cannot be told;
+#        a v1 mail that is not text in the locale's encoding); leg 2 no-cert | cert-invalid | cert-mismatch |
+#        agent-mismatch; leg 3 bless-invalid | bless-absent (the latter
+#        only under --require-blessing).
+#   4  TRUST: UNBLESSED reason=bless-absent
+#        legs 1–2 verified; blessing ABSENT — the common honest state
+#        today. --require-blessing promotes this to rc 1 (policy belongs
+#        to the caller: when the fleet is blessed, strictness becomes the
+#        default by a one-line change, not a redesign).
+#   5  TRUST: ERROR reason=registry-absent|allowed-signers-absent|verifier-incomplete
+#        (verifier-incomplete: this install's _sig.py is missing. That is
+#        EVERY mail, v1 too: the version is read by _sig's parser)
+#        the test COULD NOT BE RUN — fix the environment, not the mail.
+#        Fail closed; there is no reduced mode. Plain mail-verify IS the
+#        reduced mode, under its honest name.
+#
+# Plain-mode codes 0/1/2/3 are byte-compatible; rc 1 (BAD) also covers a
+# signature header the byte parse cannot read one way (stderr
+# names it) and a v1 mail that does not decode; rc 2 never
+# occurs under --trust (unsigned is a leg-1 FAIL there); 6+ reserved.
+# INVARIANT: every --trust run that parsed its arguments emits EXACTLY ONE
+# "TRUST:" line, as the LAST line of stdout (even under --quiet); rc 3
+# emits none — the absence of a TRUST: line is itself the signal.
+# (Not under --json: there stdout is one JSON object and the line
+# is its trust.line, byte for byte; docs/verify-json-verdict.md.)
+# Registry root: $SESSION_REGISTRY, and nothing else (authoritative — a
+# set-but-missing path is an ERROR). There is NO default path (a home
+# path in code leaks into a stranger's install).
+# `message verify` reads "registry" from ~/.sessionkit/mail/settings/mail.json and
+# passes it here as $SESSION_REGISTRY when the variable is unset; this
+# script stays standalone and reads no config itself. Unset or missing =>
+# TRUST: ERROR rc 5, the stderr saying how to set it, never a stack trace.
+# This is the seam session-provenance's docstring reserves for mail
+# identity; constants (namespace/principal) match session-provenance.
+#
+# The namespace/principal constants below are ENV-OVERRIDABLE with neutral
+# defaults shipped in this file (parameterise, don't un-scrub). The
+# MECHANISM matches session-mail-send's existing SESSION_MAIL_SIG_NS
+# pattern; a different shipped default is a one-line default swap per
+# constant, never a re-port.
+#
+# Signature v2: the header's v= picks the path. v=1 (or no v=) is
+# the code below. v=2 signs the whole mail and is checked by
+# ../_sig.py, loaded BY PATH from this script's own install (the python3
+# below, $SESSIONMAIL_PYTHON or else PATH's, is not assumed to import the
+# package). Any other v= is rc 3 unsupported-version, and
+# never BAD. Every verify prints a covers: line naming what was attested.
+# The wrapper names itself every time, never inheriting the variable.
+#
+# ONE PARSER. The v= is read by _sig's BYTE parse, the one v2
+# verifies with (sig_tags below), for every mail: never by a text parse.
+# A text parse once chose the version (Unicode whitespace stripped, the last
+# v= winning) while v2 read bytes, so a captured v1 mail could carry a header
+# a byte reader takes for v2 with any h=. A header that parse
+# cannot read one way, or a second such field, is refused, rc 1, never
+# guessed. v1's n= and b= come
+# from the same tags. mhs-thread's in-process port lifts sig_tags and
+# mail_text by name (and pins this file): one definition, not a copy.
+#
+# `-I` IS A SECURITY LINE, NOT A TIDY-UP. A plain `python3 -` puts
+# the CALLER's cwd first on sys.path, then $PYTHONPATH, so a subprocess.py
+# planted wherever the caller stands turned a tampered mail GOOD (measured).
+# `-I` drops the cwd, the user site and every PYTHON* variable. Everything
+# imported below is stdlib, and `_sig.py` comes BY PATH. The SESSION_* and
+# SESSIONMAIL_* variables are read through os.environ and still work.
+# tests/test_verify_cwd_isolation.py pins both.
+#
+# WHICH python3: $SESSIONMAIL_PYTHON when it is set (the package sets it to
+# its own interpreter for every script it starts, never inheriting it), else
+# PATH's. A set value that is not executable fails loudly (126/127, "could
+# not be verified" to every caller), never a quiet fall back to PATH's.
+SESSIONMAIL_VERIFY_SELF="${BASH_SOURCE[0]}" exec "${SESSIONMAIL_PYTHON:-python3}" -I - "$@" <<'PYEOF'
+import base64
+import email
+import hashlib
+import io
+import json
+import os
+import struct
+import subprocess
+import sys
+import tempfile
+import textwrap
+
+BEGIN = "-----BEGIN SSH SIGNATURE-----"
+END = "-----END SSH SIGNATURE-----"
+HDRS = ["from", "to", "subject", "date", "message-id"]
+SIGH = "X-Session-Signature"
+
+# Scrub-sensitive namespace/principal constants — env-overridable, with
+# defaults safe to publish.
+# Never inline these at use sites, so a later choice of namespace
+# (or a per-install env override) is a one-line change. SESSION_MAIL_SIG_NS
+# matches the env var session-mail-send already uses for its own SIG_NS —
+# one name, one code path, both scripts follow it together.
+MAIL_NS_DEFAULT = os.environ.get("SESSION_MAIL_SIG_NS", "session-mail@example.com")
+BLESS_NS = os.environ.get("SESSION_BLESS_NS", "session-bless@example.com")  # matches session-provenance
+BLESS_PRINCIPAL = os.environ.get("SESSION_BLESS_PRINCIPAL", "alice@bless")
+# How a registry is configured, said whenever none is found.
+REGISTRY_HOW = 'set SESSION_REGISTRY, or "registry" in ~/.sessionkit/mail/settings/mail.json'
+
+USAGE = (
+    "usage: session-mail-verify <mail-file> [--quiet] [--trust]"
+    " [--require-blessing] [--json]"
+)
+
+argv = sys.argv[1:]
+if "-h" in argv or "--help" in argv:
+    # Named help, not a traceback ('--help' used to fall through
+    # to open('--help') and stack-trace). Exits via the usage bucket (3),
+    # NOT 0: rc 0 is reserved for verified / TRUST: FULL, so no lazy
+    # `if session-mail-verify --trust …` caller can mistake help for trust.
+    print(USAGE)
+    print("  --quiet             suppress per-leg diagnostic lines")
+    print("  --trust             run the three-leg trust test:")
+    print("                      rc 0 TRUST: FULL | 1 FAIL | 4 UNBLESSED | 5 ERROR")
+    print("  --require-blessing  with --trust: promote UNBLESSED (rc 4) to FAIL (rc 1)")
+    print("  --json              stdout is ONE JSON object, the verdict (schema 1);")
+    print("                      the TRUST: line is its trust.line, per-leg lines go")
+    print("                      to stderr (docs/verify-json-verdict.md)")
+    sys.exit(3)
+
+FLAGS = ("--quiet", "--trust", "--require-blessing", "--json")
+args = [a for a in argv if a not in FLAGS]
+quiet = "--quiet" in argv
+trust = "--trust" in argv
+require_blessing = "--require-blessing" in argv
+json_mode = "--json" in argv   # stdout is ONE object, the verdict (emit())
+if len(args) != 1 or args[0].startswith("-"):
+    print(USAGE, file=sys.stderr)
+    sys.exit(3)
+if require_blessing and not trust:
+    print("session-mail-verify: --require-blessing requires --trust",
+          file=sys.stderr)
+    print(USAGE, file=sys.stderr)
+    sys.exit(3)
+
+# What --json reports, recorded as the run goes and written ONCE, by
+# emit(). result/reason: what leg 1 found, in plain mode's words (leg1()).
+# sig: the verified signature, set only on the leg-1-good path. line: the
+# TRUST: text verdict() was handed. agent: set once leg 2 passed.
+J = {"result": None, "reason": None, "sig": None, "line": None, "agent": None}
+
+def leg1(result, reason=None):
+    J["result"], J["reason"] = result, reason
+
+def out(line):
+    # --json: stdout is the object alone, so a per-leg line goes to stderr;
+    # --quiet still drops it.
+    if not quiet:
+        print(line, file=sys.stderr if json_mode else sys.stdout)
+
+def verdict(line, rc):
+    # The ONLY writer of a "TRUST:" line. Printed even under --quiet — the
+    # verdict is the machine-readable half of the contract: exactly one
+    # TRUST: line, the last line of stdout, for every --trust run that
+    # parsed its arguments (rc 3 emits none). Under --json the line is not
+    # printed: emit() carries it, byte for byte, as trust.line.
+    J["line"] = line
+    if not json_mode:
+        print(line)
+    sys.exit(rc)
+
+def trust_fail(leg, reason):
+    verdict(f"TRUST: FAIL leg={leg} reason={reason}", 1)
+
+def sid_from_blob(blob: bytes) -> str:
+    h = hashlib.sha256(blob).digest()[:16].hex()
+    return f"{h[0:8]}-{h[8:12]}-{h[12:16]}-{h[16:20]}-{h[20:32]}"
+
+def parse_sshsig(armor: str):
+    lines = [l.strip() for l in armor.strip().splitlines() if l.strip()]
+    if lines[0] != BEGIN or lines[-1] != END:
+        raise ValueError("not an SSHSIG armor")
+    raw = base64.b64decode("".join(lines[1:-1]))
+    if raw[:6] != b"SSHSIG":
+        raise ValueError("bad SSHSIG magic")
+    off = 10  # magic(6) + version uint32
+
+    def take():
+        nonlocal off
+        (n,) = struct.unpack(">I", raw[off : off + 4])
+        off += 4
+        v = raw[off : off + n]
+        off += n
+        return v
+
+    pubblob = take()
+    namespace = take().decode()
+    return pubblob, namespace
+
+def keytype(blob: bytes) -> str:
+    (n,) = struct.unpack(">I", blob[:4])
+    return blob[4 : 4 + n].decode()
+
+def local_part(v):
+    # Transit-invariant address reduction: postfix qualifies bare From/To in transit (alice -> alice@<fqdn>)
+    # but never rewrites the local-part, so addresses reduce to their
+    # lowercased local-part — matching session-mail-send's canon_addr(),
+    # which signs the same reduction. v2: take the innermost <...> content
+    # when an angle-addr is present (else the whole field) BEFORE splitting
+    # on '@', so a name-addr form (`Foreman <foreman.web-12@host>`) reduces
+    # to the local-part instead of display-name garbage. This side is
+    # BEST-EFFORT at that step (unlike send's strict reject of G6 RFC
+    # exotica): verify must attempt whatever the transport actually
+    # delivered, so a malformed residual just flows through rather than
+    # aborting. Byte-identical on the forms both sides accept is what makes
+    # a postfix-delivered message verify the same as a filedropped one.
+    #
+    # ONE CODE PATH: canonical() — what leg 1 signs and
+    # verifies — and the leg-2 anti-spoof agent-match BOTH call this
+    # helper, on BOTH sides of the match (the cert agent and the From), so
+    # the anti-spoof compares exactly the reduction leg 1 verified and the
+    # two cannot drift apart. The +extension is KEPT: a plus-grammar seat's
+    # extension is its identity (proj+t-1 is one seat, proj+t-2 another,
+    # proj neither), never mere routing (until then a strip_tag
+    # flag dropped it from the From side only).
+    v = " ".join(str(v or "").split())
+    i = v.rfind("<")
+    j = v.find(">", i + 1) if i != -1 else -1
+    if i != -1 and j != -1:
+        v = " ".join(v[i + 1 : j].split())
+    v = v.split("@", 1)[0].lower()
+    return v
+
+def canonical(msg) -> bytes:
+    # Address reduction rationale lives on local_part() (shared with the
+    # leg-2 anti-spoof — one code path, N1).
+    parts = []
+    for h in HDRS:
+        v = msg.get(h, "") or ""
+        v = " ".join(str(v).split())
+        if h in ("from", "to"):
+            v = local_part(v)
+        parts.append(f"{h}: {v}\n")
+    body = msg.get_payload()
+    if isinstance(body, list):
+        # NARROW multipart unwrap, and deliberately nothing wider.
+        # A human on To/Cc/Bcc now gets multipart/alternative (the markdown as
+        # the text part, a rendered HTML part beside it), and THE SEND SIDE
+        # STILL SIGNS THE MARKDOWN: session-mail-send builds its canon from
+        # $BODY *before* assembly, so a single-part and a multipart send of the
+        # same body sign the same canonical string by construction. Verify
+        # therefore only has to find that markdown again — hence an unwrap,
+        # not a v1->v2 canonicalization bump (which :740-757 warns is a
+        # two-sided drag), and hence old single-part mail keeps verifying: the
+        # path below it is untouched.
+        # NARROW ON PURPOSE: iff multipart/alternative AND the first part is
+        # text/plain. This is not general multipart verification; every other
+        # shape still refuses, so v1's guarantees stay checkable.
+        # RAW get_payload(), NO decode=True. With CTE 8bit the raw string IS
+        # the markdown, and staying undecoded matches the single-part path
+        # above EXACTLY. decode=True would silently diverge the two the day
+        # any other CTE appears — a signature break with no visible cause.
+        # The HTML part goes unsigned on purpose: derived and reproducible
+        # from the signed markdown, so a renderer upgrade is never a
+        # signature break.
+        # EDITOR'S NOTE: keep this function free of BLANK LINES.
+        # test_session_mail_canon.sh extracts it live with
+        # `sed -n '/^def canonical(msg)/,/^$/p'` — a blank line here silently
+        # truncates the extracted reducer and that test stops testing.
+        sub = body[0] if body else None
+        if (
+            msg.get_content_type() == "multipart/alternative"
+            and sub is not None
+            and sub.get_content_type() == "text/plain"
+        ):
+            body = sub.get_payload()
+        if isinstance(body, list):
+            # Still a list => the unwrap did not apply. Keep rc 3 (the contract
+            # is unchanged) but say what this IS: a canonicalization LIMIT of
+            # this tool, not a broken file. The old wording ("multipart not
+            # supported") pointed readers at damage in a perfectly well-formed
+            # message, because rc 3 is documented as *usage / unreadable
+            # mailfile* — AC7's own observation.
+            print(
+                f"{msg.get_content_type()}: canonicalization v1 unwraps only "
+                "multipart/alternative with a text/plain first part — the "
+                "message is well-formed; the limit is this tool's",
+                file=sys.stderr,
+            )
+            sys.exit(3)
+    # Mirror EXACTLY what the signer signs. session-mail-send builds
+    # its canonical with bash `$(...)`, which strips ALL trailing newlines,
+    # then `printf '%s\n'` appends exactly one. So whatever the body, the
+    # signed text is rstrip("\n") + "\n" of the whole thing. An empty body
+    # therefore signs as "...message-id: X\n" — no blank-line separator at all.
+    # Before this fix every empty-body message (every MHS label mail:
+    # [ROOT], [BOOT], [CHARTER]) verified BAD on both legs. Found on the
+    # first real run of the read guard MHS 170 rules.
+    #
+    # CITATION REPAIR. This comment used to end "...while the
+    # wire (`echo "$BODY"`) still carries a bare \n". That was true when it was
+    # written and is FALSE NOW: the sender emits the body with `printf '%s'`
+    # (session-mail-send's single-part branch), which appends nothing, so the
+    # wire carries exactly the body's own bytes and an empty body puts NOTHING
+    # after the header blank line.
+    #
+    # THE CODE BELOW IS UNCHANGED AND STILL CORRECT — only the prose lied, and
+    # that is the more dangerous half: a stale comment describing a BYTE-LEVEL
+    # WIRE PROPERTY reads like settled knowledge, so the next person to reason
+    # about canonicalization takes it as fact and never re-measures it. The
+    # rstrip+1 on BOTH sides is what makes the two agree whether or not the
+    # wire carries a final newline — which is why 674 could change the wire
+    # without touching this function.
+    #
+    # WHY THE EMPTY-BODY BRANCH STILL EARNS ITS KEEP even though an empty body
+    # can no longer be MINTED (measured: `--body-file` on a 0-byte
+    # file and a bodyless invocation BOTH refuse with rc=2, the sender's
+    # loud-empty-refusal): messages minted BEFORE that refusal are on disk
+    # forever and must keep verifying. Old mail is the reason, not new mail.
+    text = "".join(parts) + "\n" + body.replace("\r\n", "\n")
+    return (text.rstrip("\n") + "\n").encode()
+
+def registry_root():
+    # $SESSION_REGISTRY is the one source: when SET it is authoritative, and
+    # a set-but-missing path is an ERROR (a fallback would mask
+    # misconfiguration exactly at boot, the moment of least context). There
+    # is no default path to fall back to.
+    envr = os.environ.get("SESSION_REGISTRY")
+    if not envr:
+        print(f"registry not configured: {REGISTRY_HOW}", file=sys.stderr)
+        verdict("TRUST: ERROR reason=registry-absent", 5)
+    if os.path.isdir(envr):
+        return envr
+    print(f"registry not found ($SESSION_REGISTRY): {envr} — {REGISTRY_HOW}",
+          file=sys.stderr)
+    verdict("TRUST: ERROR reason=registry-absent", 5)
+
+def run_trust(sid, keyline, msg):
+    # ---- leg 2: registry-cert — EXACT lookup by the SIGNATURE-DERIVED sid.
+    # The cert filename IS sha256(signing key)[:16]: registering a cert
+    # under a victim's sid without the victim's key needs a sha256
+    # preimage, and presenting a sid you don't hold the key for already
+    # failed leg 1. X-Session-From is never consulted here.
+    reg = registry_root()
+    cert_path = os.path.join(reg, "certs", f"{sid}.cert")
+    if not os.path.isfile(cert_path):
+        out(f"registry-cert     : ❌ no cert for session {sid}")
+        trust_fail("2-registry", "no-cert")
+    try:
+        cert_bytes = open(cert_path, "rb").read()
+        cert_lines = cert_bytes.decode().splitlines()  # strict decode:
+        # garbage bytes are cert-invalid, not a traceback
+        if not cert_lines or cert_lines[0].strip() != "session-birth-v1":
+            raise ValueError("not a session-birth-v1 cert")
+        fields = {}
+        for line in cert_lines[1:]:
+            if not line.strip():
+                continue
+            k, sep, v = line.partition(":")
+            if not sep:
+                raise ValueError(f"unparseable cert line {line!r}")
+            fields[k.strip()] = v.strip()
+        for req in ("session-id", "pubkey", "agent"):
+            if not fields.get(req):
+                raise ValueError(f"cert missing field {req!r}")
+    except Exception as e:
+        # FAIL CLOSED, never ERROR: the cert is attacker-influenceable
+        # input — mangling it must not buy softer treatment than forging
+        # it.
+        out(f"registry-cert     : ❌ cert unparseable: {e}")
+        trust_fail("2-registry", "cert-invalid")
+    if fields["session-id"] != sid or fields["pubkey"] != keyline:
+        out("registry-cert     : ❌ cert session-id/pubkey do not match the "
+            "SIGNING key (tampered or wrong cert)")
+        trust_fail("2-registry", "cert-mismatch")
+    # Anti-spoof: the SEAT on both sides. The cert agent and the
+    # From reduce through the SAME local_part() leg 1 verified (N1 — one
+    # code path): lowercased local part, +extension KEPT, domain DROPPED
+    # (whether the domain is compared is a separate question, not this one).
+    # The sender's twin is _sender.canon_addr(); tests pin the two equal.
+    # An EMPTY reduction ('<>', '@host', no From) never matches: two
+    # nothings are not one seat — fail closed.
+    sender = local_part(msg.get("from", ""))
+    agent = local_part(fields["agent"])
+    if not agent or agent != sender:
+        out(f"registry-cert     : ❌ cert agent {agent!r} != From "
+            f"local-part {sender!r} (spoof?)")
+        trust_fail("2-registry", "agent-mismatch")
+    # NO LOOSENING (pending the domain question): a cert agent that carries
+    # '@' names ONE host's address. Dropping its domain would let it pass for
+    # that local part From ANY host, so a domain-qualified cert agent FAILS,
+    # as it always did. The reduction above is unchanged; this is a
+    # refusal beside it. The sender (canon_addr) drops the domain and does
+    # not flag this: the receiver is the stricter side, and the tests pin
+    # the divergence. Whether a domain is ever compared is decided elsewhere.
+    if "@" in fields["agent"]:
+        out(f"registry-cert     : ❌ cert agent {fields['agent']!r} is "
+            f"domain-qualified, never matched to From local-part "
+            f"{sender!r}")
+        trust_fail("2-registry", "agent-mismatch")
+    out(f"registry-cert     : ✅ ok  {sid[:8]} → agent: {agent}")
+    J["agent"] = agent
+
+    # ---- leg 3: bless — tri-state: verified / absent / invalid.
+    bless = f"{cert_path}.blessed-by.{BLESS_PRINCIPAL}.sig"
+    signers = os.path.join(reg, "allowed_signers")
+    if not os.path.isfile(bless):
+        # ABSENT is not INVALID. Lazy requirement: with no signature to
+        # verify, allowed_signers isn't needed — legs 1–2 are
+        # self-contained, so UNBLESSED is fully determined even when
+        # allowed_signers is missing.
+        out("bless-sig         : ⚠️  absent — unblessed (a normal state "
+            "today; the blessing ceremony is intermittent)")
+        if require_blessing:
+            # Promotion 4→1: same reason token so logs correlate across
+            # policy; the verdict word carries the policy.
+            trust_fail("3-bless", "bless-absent")
+        verdict("TRUST: UNBLESSED reason=bless-absent", 4)
+    if not os.path.isfile(signers):
+        # A PRESENT bless.sig with no trust anchor: the test could not be
+        # run — not bless-invalid (it didn't fail), not UNBLESSED (it
+        # isn't absent).
+        print(f"allowed_signers not found: {signers} — cannot verify a "
+              "present bless.sig", file=sys.stderr)
+        verdict("TRUST: ERROR reason=allowed-signers-absent", 5)
+    pb = subprocess.run(
+        ["ssh-keygen", "-Y", "verify", "-f", signers, "-I", BLESS_PRINCIPAL,
+         "-n", BLESS_NS, "-s", bless],
+        input=cert_bytes, capture_output=True,
+    )
+    # ssh-keygen -Y verify exits 255 on failure, NOT 1 — the only pass is
+    # rc == 0 (proven live 2030-07-28: forged sig => "incorrect
+    # signature", rc 255). Testing rc == 1 would pass forgeries.
+    if pb.returncode != 0:
+        out("bless-sig         : ❌ PRESENT but does NOT verify over the "
+            "cert bytes — forgery-shaped (the stat-vs-verify distinction)")
+        trust_fail("3-bless", "bless-invalid")
+    out(f"bless-sig         : ✅ {BLESS_PRINCIPAL} verifies over cert bytes")
+    verdict("TRUST: FULL", 0)
+
+# ── Signature v2. Nothing above this line is changed; the
+# v1 path below is untouched except for its covers: line. ──────────────────
+V1_COVERS = ("covers            : v1 from:to:subject:date:message-id "
+             "(address local parts only) + the first text part")
+
+def unsupported(text):
+    # rc 3, never BAD: a newer sender is not a forger. Under
+    # --trust it is a leg-1 FAIL, rc 1, so --trust never exits 3 for it.
+    leg1("unverified", "unsupported-version")
+    print(f"session-mail-verify: {text}", file=sys.stderr)
+    if trust:
+        trust_fail("1-signature", "unsupported-version")
+    sys.exit(3)
+
+def sig_tags(S, raw_b):
+    """(tags, None) from THE X-Session-Signature field, read by _sig's
+    byte parse (S.signature_value, S.parse_header): the parse v2 verifies
+    with, for v1 too. (None, None): unsigned, no field or an empty
+    one. (None, why): the mail carries MORE THAN ONE such field (a reader of
+    another field than the first would see another signature), or the
+    value holds a non-ASCII byte, or a
+    segment the parse refuses (a tag twice, so v= twice, agreeing or not;
+    no '='): a header whose version cannot be told one way. Also a BARE CR
+    in the header block: _sig splits fields on LF only, but Python's email
+    parser (any policy) and universal newlines end a line there, so a field
+    hidden behind one is a second X-Session-Signature to them, and their
+    FIRST. Honest send refuses a CR in any header value.
+    Pure: mhs-thread lifts it."""
+    if b"\r" in S.header_block(raw_b):   # after CRLF -> LF: only a bare CR is left
+        return None, "the header block holds a bare CR (a line end to other parsers)"
+    count = sum(1 for name, _ in S.fields(raw_b) if name == "x-session-signature")
+    if count > 1:
+        return None, f"the mail carries {count} X-Session-Signature fields"
+    sv = S.signature_value(raw_b)
+    if not sv:
+        return None, None
+    if not sv.isascii():
+        return None, "the X-Session-Signature value holds a non-ASCII byte"
+    try:
+        return S.parse_header(sv), None
+    except S.Malformed as e:
+        return None, str(e)
+
+def mail_text(raw_b, errors="strict"):
+    """The mail as text, exactly as open(path).read() gave it: the locale's
+    encoding, universal newlines. A non-decoding byte raises (a ValueError)
+    under errors="strict". Pure: mhs-thread lifts it."""
+    return io.TextIOWrapper(io.BytesIO(raw_b), errors=errors).read()
+
+def v1_refusal(S, raw_b):
+    """(reason, why) when a v1 mail is not in the exact shape the v1 sender
+    wrote, else None. v1 signs five headers and one raw body string,
+    so a relay with no key could add a transfer encoding, re-wrap or append a
+    part, re-label the charset or turn LF into CR, and readers (notmuch,
+    memory run's body_text) showed other text while v1 said GOOD. reason is
+    cte-defect (a part's CTE is not one 7bit/8bit/binary token: the meaning
+    v2 gives it) or v1-shape (structure, charset, a bare CR, a parse
+    defect); cte-defect wins when both apply. _sig.v1_defects decides: one
+    function, so 3.9 and 3.13 agree. Fail closed: a check that cannot run is
+    v1-shape. Pure: mhs-thread lifts it."""
+    try:
+        found = S.v1_defects(raw_b)
+    except Exception as e:
+        return "v1-shape", f"its MIME shape cannot be checked ({type(e).__name__})"
+    if not found:
+        return None
+    reason = "cte-defect" if any(r == "cte-defect" for r, _, _ in found) else "v1-shape"
+    return reason, "; ".join(f"{w}: {why}" for r, w, why in found if r == reason)
+
+def ambiguous(why):
+    # Refused, never guessed. BAD (rc 1), not the rc-3 parse bucket:
+    # a header rewritten in transit buys nothing softer than a forgery.
+    leg1("bad", "sig-header-ambiguous")
+    out(f"signature-header  : ❌ AMBIGUOUS: {why}")
+    print(f"session-mail-verify: BAD: the signature header cannot be read one way: {why}",
+          file=sys.stderr)
+    if trust:
+        trust_fail("1-signature", "sig-header-ambiguous")
+    sys.exit(1)
+
+def load_sig():
+    # BY PATH, from this script's own install: never sys.path,
+    # so a different installed sessionmail cannot be picked up and the
+    # package's __init__ never runs. A missing or broken _sig.py is a broken
+    # install: rc 3, and under --trust ERROR verifier-incomplete (rc 5).
+    import importlib.util
+    me = os.environ.get("SESSIONMAIL_VERIFY_SELF", "")
+    path = os.path.realpath(os.path.join(
+        os.path.dirname(os.path.realpath(me)), "..", "_sig.py")) if me else ""
+    why = "is missing (broken install)"
+    if path and os.path.isfile(path):
+        try:
+            spec = importlib.util.spec_from_file_location("sessionmail_sig_v2", path)
+            mod = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(mod)
+            return mod
+        except Exception as e:
+            why = f"could not be loaded ({type(e).__name__}: {e})"
+    leg1("unverified", "verifier-incomplete")
+    print(f"session-mail-verify: the verifier's _sig.py {why}"
+          f"{': ' + path if path else ''}", file=sys.stderr)
+    if trust:
+        verdict("TRUST: ERROR reason=verifier-incomplete", 5)
+    sys.exit(3)
+
+def parse_failed(why):
+    # As v1 does on a parse failure: plain rc 3; --trust fails closed.
+    leg1("unverified", "signature-unparseable")
+    print(f"signature parse failed: {why}", file=sys.stderr)
+    if trust:
+        trust_fail("1-signature", "bad-signature")
+    sys.exit(3)
+
+def read_back(text, names):
+    """--json: the covered values READ BACK out of `text`, the signed
+    header lines (one `name: value` line per value, in `names` order), never
+    recomputed: the JSON cannot list a byte that was not signed. A name's
+    lines are the run that starts `name: `; a field name holds no ':' or
+    space, so another name's line never does. The pairs are re-joined and
+    must give `text` byte for byte, or None: a null covered covers nothing."""
+    lines = text.split(b"\n")
+    pairs, i = [], 0
+    if lines.pop() == b"":
+        for name in names:
+            pre = name.encode("ascii") + b": "
+            vals = []
+            while i < len(lines) and lines[i].startswith(pre):
+                vals.append(lines[i][len(pre):])
+                i += 1
+            if not vals:
+                break
+            pairs.append((name, vals))
+    again = b"".join(n.encode("ascii") + b": " + v + b"\n" for n, vs in pairs for v in vs)
+    if len(pairs) != len(names) or i != len(lines) or again != text:
+        print("session-mail-verify: --json: the covered values do not read back "
+              "from the signed text; covered is null", file=sys.stderr)
+        return None
+    entries = []
+    for name, vals in pairs:
+        try:
+            entries.append({"name": name, "values": [v.decode("utf-8") for v in vals]})
+        except UnicodeDecodeError:
+            # never a lossy string: no "values" key, so a reader of it fails closed
+            entries.append({"name": name, "values_b64":
+                            [base64.b64encode(v).decode("ascii") for v in vals]})
+    return entries
+
+def emit(rc):
+    """--json: the ONE writer of the object, called once, as the run
+    exits (the bottom of the file), so it holds exactly what the run decided."""
+    tr = None
+    if trust:
+        # No TRUST: line (rc 3 after the read): every member null, the object
+        # form of "no verdict".
+        tr = dict.fromkeys(("verdict", "leg", "reason", "line", "agent"))
+        if J["line"] is not None:
+            words = J["line"].split()          # TRUST: <VERDICT> [leg=L] [reason=R]
+            tr["line"], tr["agent"] = J["line"], J["agent"]
+            # A line this parse cannot read (a bare word after the verdict)
+            # keeps the object and gates nothing: verdict null, so the
+            # success rule below nulls signature (fail closed WITH the object).
+            if len(words) >= 2 and all("=" in w for w in words[2:]):
+                kv = dict(w.split("=", 1) for w in words[2:])
+                tr.update(verdict=words[1], leg=kv.get("leg"), reason=kv.get("reason"))
+    # The success rule, checked twice: leg 1 good AND the exit is a success
+    # (0, or 4 under --trust, with the verdict that exit means).
+    good = (J["result"] == "good" and J["sig"] is not None
+            and (rc == 0 or (trust and rc == 4))
+            and (not trust or tr["verdict"] in ("FULL", "UNBLESSED")))
+    obj = {"schema": 1, "rc": rc, "result": J["result"] or "unverified",
+           "reason": tr["reason"] if tr and tr["line"] is not None else J["reason"],
+           "signature": J["sig"] if good else None, "trust": tr}
+    sys.stdout.write(json.dumps(obj, sort_keys=True, ensure_ascii=True) + "\n")
+    sys.stdout.flush()
+
+def verify_v2(S, raw_b, tags, msg):
+    # raw_b: the BYTES, read once by the main flow; tags: its ONE
+    # byte parse of the header (sig_tags), never parsed a second time.
+    # 1. parse
+    try:
+        if "a" in tags and tags["a"] != S.ALG:
+            unsupported(f"unsupported signature algorithm a={tags['a']} "
+                        f"(this verifier reads a={S.ALG})")
+        ns, h, p, b = S.parse_v2(tags)
+    except S.Malformed as e:
+        parse_failed(e)
+    try:
+        armor = (BEGIN + "\n" + "\n".join(textwrap.wrap(b, 70)) + "\n" + END + "\n")
+        blob, _ = parse_sshsig(armor)
+    except Exception as e:
+        parse_failed(e)
+    # 2. the floor, BEFORE the crypto: a downgrade signal, not a broken key
+    missing = S.below_floor(raw_b, h)
+    if missing:
+        leg1("bad", "below-floor")
+        out(f"covers            : ❌ BELOW FLOOR: h= lacks {', '.join(missing)}")
+        print("session-mail-verify: BAD: the v2 h= is below the floor; it lacks "
+              + ", ".join(missing), file=sys.stderr)
+        if trust:
+            trust_fail("1-signature", "below-floor")
+        sys.exit(1)
+    # 3. the crypto: the same two ssh-keygen calls as v1, over _sig's text.
+    # ORIGIN only when a still-bare address is present (a captured wire,
+    # never delivered mail: postfix qualified it).
+    sid = sid_from_blob(blob)
+    keyline = f"{keytype(blob)} {base64.b64encode(blob).decode()}"
+    origin = S.origin_of() if S.has_bare_address(raw_b, h) else ""
+    data = S.canonical(raw_b, ns, h, p, origin)
+    got, types = S.digests(raw_b), S.leaf_types(raw_b)
+    tmp = []
+    try:
+        with tempfile.NamedTemporaryFile("w", suffix=".sig", delete=False) as f:
+            f.write(armor)
+            tmp.append(f.name)
+        with tempfile.NamedTemporaryFile("w", suffix=".allowed", delete=False) as f:
+            f.write(f"{sid}@session {keyline}\n")
+            tmp.append(f.name)
+        p1 = subprocess.run(
+            ["ssh-keygen", "-Y", "check-novalidate", "-n", ns, "-s", tmp[0]],
+            input=data, capture_output=True,
+        )
+        p2 = subprocess.run(
+            ["ssh-keygen", "-Y", "verify", "-f", tmp[1], "-I", f"{sid}@session",
+             "-n", ns, "-s", tmp[0]],
+            input=data, capture_output=True,
+        )
+    finally:
+        for t in tmp:
+            try:
+                os.unlink(t)
+            except OSError:
+                pass
+    ok = p1.returncode == 0 and p2.returncode == 0
+    out(f"signature-crypto  : {'✅ good' if p1.returncode == 0 else '❌ BAD'}")
+    out(f"principal-binding : {'✅ good' if p2.returncode == 0 else '❌ BAD'}")
+    out(f"signer-key        : {keyline}")
+    out(f"sender-session-id : {sid}")
+    shown = f": {', '.join(types)}" if len(types) == len(p) else ""
+    out(f"covers            : v2 h={':'.join(h)} ({len(h)} headers) "
+        f"+ {len(p)} part{'s' if len(p) != 1 else ''}{shown}")
+    if not ok:
+        leg1("bad", "bad-signature" if p1.returncode != 0 else "bad-principal")
+        out("parts             : not checked (the signature does not verify)")
+        sys.stderr.write(p1.stderr.decode() + p2.stderr.decode())
+        if trust:
+            trust_fail("1-signature",
+                       "bad-signature" if p1.returncode != 0 else "bad-principal")
+        sys.exit(1)
+    # 4. the parts: the signature is good, so p= is what the sender meant;
+    # each leaf is named, so the verdict says WHICH part changed.
+    # P= covers DECODED bytes and the CTE is unsigned, so a part whose
+    # transfer encoding is not strict may decode one way here and another in a
+    # reader (GMime). It is refused, BAD rc 1, before the digests are judged, so
+    # the verdict does not depend on which python3 decoded it.
+    # P= signs each leaf's type as THIS parser reads it, and no h= covers
+    # a part's own header block. A part with two Content-Type fields, a bare CR
+    # that moves what this parser reads, or a header block this parser ends at a
+    # line it cannot read, splits one way here and another in GMime. It is
+    # refused first, BAD rc 1: when the structure can be read two
+    # ways, so can each part's encoding, so the structural reason is the true one.
+    split = {}
+    try:
+        for where, why in S.mime_defects(raw_b):
+            split[where] = split[where] + "; " + why if where in split else why
+    except Exception as e:   # fail closed: never a traceback
+        split = {"the mail": f"its MIME structure cannot be checked ({type(e).__name__})"}
+    try:
+        loose = dict(S.cte_defects(raw_b))
+    except Exception as e:   # fail closed: never a traceback
+        loose = {"the mail": f"its transfer encodings cannot be checked ({type(e).__name__})"}
+    altered = []
+    for i in range(min(len(got), len(p))):
+        label = f"part {i + 1}"
+        if label in split:
+            out(f"{label:<18}: ❌ MIME-AMBIGUOUS {types[i]}")
+        elif label in loose:
+            out(f"{label:<18}: ❌ CTE-DEFECT {types[i]}")
+        elif got[i] == p[i]:
+            out(f"{label:<18}: ✅ {types[i]}")
+        else:
+            out(f"{label:<18}: ❌ ALTERED {types[i]}")
+            altered.append(f"part {i + 1} ({types[i]})")
+    shown_parts = {f"part {i + 1}" for i in range(min(len(got), len(p)))}
+    for where in split:
+        if where not in shown_parts:
+            out(f"{where:<18}: ❌ MIME-AMBIGUOUS")
+    for where in loose:
+        if not where.startswith("part ") and where not in split:
+            out(f"{where:<18}: ❌ CTE-DEFECT")
+    if len(got) != len(p):
+        out(f"parts             : ❌ {len(got)} parts, the signature covers {len(p)}")
+        altered.append(f"{len(got)} parts where {len(p)} were signed")
+    if split:
+        leg1("bad", "mime-ambiguous")
+        print("session-mail-verify: BAD: a MIME structure readers may split differently: "
+              + "; ".join(f"{w}: {why}" for w, why in split.items()), file=sys.stderr)
+        if trust:
+            trust_fail("1-signature", "mime-ambiguous")
+        sys.exit(1)
+    if loose:
+        leg1("bad", "cte-defect")
+        print("session-mail-verify: BAD: a transfer encoding readers may decode differently: "
+              + "; ".join(f"{w}: {why}" for w, why in loose.items()), file=sys.stderr)
+        if trust:
+            trust_fail("1-signature", "cte-defect")
+        sys.exit(1)
+    if altered:
+        leg1("bad", "part-altered")
+        print("session-mail-verify: BAD: altered after signing: " + "; ".join(altered),
+              file=sys.stderr)
+        if trust:
+            trust_fail("1-signature", "part-altered")
+        sys.exit(1)
+    # No signature covers a Content-Disposition (not in h=, not in a
+    # leaf's canon), and a reader that obeys one hides a signed part with no key:
+    # `attachment` on the text leaf empties every get_body reader under GOOD.
+    # The sender writes none, so any is refused, BAD rc 1, after the digests.
+    try:
+        dispo = dict(S.dispo_defects(raw_b))
+    except Exception as e:   # fail closed: never a traceback
+        dispo = {"the mail": f"its dispositions cannot be checked ({type(e).__name__})"}
+    if dispo:
+        for where in dispo:
+            out(f"{where:<18}: ❌ DISPOSITION")
+        leg1("bad", "disposition")
+        print("session-mail-verify: BAD: a Content-Disposition no signature covers: "
+              + "; ".join(f"{w}: {why}" for w, why in dispo.items()), file=sys.stderr)
+        if trust:
+            trust_fail("1-signature", "disposition")
+        sys.exit(1)
+    # 5. all good: --trust goes on to legs 2-3 unchanged
+    leg1("good")
+    if json_mode:
+        head, nl, rest = data.partition(b"\n")
+        J["sig"] = {
+            "version": "2", "h": list(h),
+            "covered": read_back(rest, h) if head.startswith(b"x-session-signature: ") and nl else None,
+            "parts": [{"index": i + 1, "type": types[i], "digest": d} for i, d in enumerate(p)],
+            "signer": {"session_id": sid, "key": keyline}}
+    if trust:
+        run_trust(sid, keyline, msg)
+    sys.exit(0)
+
+try:
+    raw_b = open(args[0], "rb").read()   # BYTES, once
+except OSError as e:
+    # Named error, not a traceback (a raw ENOENT traceback was found live
+    # in an acceptance run): an unreadable mailfile is the
+    # usage/parse bucket — rc 3, no TRUST: line.
+    print(f"session-mail-verify: cannot read mail file: {e}", file=sys.stderr)
+    sys.exit(3)
+def main():
+    # ONE parser: the header is read by _sig's byte parse, the one v2
+    # verifies with, for EVERY mail, so _sig.py is needed for v1 too (a missing
+    # one is a broken install: rc 3, --trust ERROR verifier-incomplete).
+    S = load_sig()
+    tags, why = sig_tags(S, raw_b)
+    if why is not None:
+        ambiguous(why)
+    if tags is None:
+        leg1("unsigned", "unsigned")
+        out(f"unsigned          : no {SIGH} header")
+        if trust:
+            # Under --trust an unverifiable mail is a REJECTION (plain mode
+            # keeps rc 2 for this; rc 2 never occurs under --trust).
+            trust_fail("1-signature", "unsigned")
+        sys.exit(2)
+
+    sig_version = tags.get("v", "1")
+    if sig_version == "2":
+        # v2 verifies BYTES: a byte the locale cannot decode must not turn it
+        # red, so its text (leg 2's From) keeps such a byte as a surrogate.
+        verify_v2(S, raw_b, tags, email.message_from_string(mail_text(raw_b, "surrogateescape")))
+    elif sig_version != "1":
+        unsupported(f"unsupported signature version v={sig_version} "
+                    "(this verifier reads v=1 and v=2)")
+    # v1 signs TEXT (canonical(msg)): a mail that does not decode is refused,
+    # rc 1, never a traceback (which exited 1 with no TRUST: line).
+    try:
+        msg = email.message_from_string(mail_text(raw_b))
+    except ValueError as e:
+        leg1("bad", "undecodable")
+        out(f"signature-crypto  : ❌ NOT CHECKED: the mail is not text ({e})")
+        print(f"session-mail-verify: BAD: a v1 mail must decode as text: {e}", file=sys.stderr)
+        if trust:
+            trust_fail("1-signature", "undecodable")
+        sys.exit(1)
+    ns = tags.get("n", MAIL_NS_DEFAULT)
+    try:
+        armor = (BEGIN + "\n"
+                 + "\n".join(textwrap.wrap(tags["b"], 70))
+                 + "\n" + END + "\n")
+        blob, sig_ns = parse_sshsig(armor)
+    except Exception as e:
+        leg1("unverified", "signature-unparseable")
+        print(f"signature parse failed: {e}", file=sys.stderr)
+        if trust:
+            # Fail closed under --trust: a signature header that cannot be
+            # parsed is attacker-influenceable input (same principle as
+            # cert-invalid) — it must not exit through the no-verdict rc-3
+            # path. Plain mode keeps its rc 3 here, unchanged.
+            trust_fail("1-signature", "bad-signature")
+        sys.exit(3)
+    sid = sid_from_blob(blob)
+    keyline = f"{keytype(blob)} {base64.b64encode(blob).decode()}"
+    # canonical()'s one exit is the v1 limit (rc 3, no TRUST: line), so it is
+    # recorded here, before the call, and not inside canonical().
+    leg1("unverified", "canonicalization-limit")
+    data = canonical(msg)
+    leg1(None)
+
+    with tempfile.NamedTemporaryFile("w", suffix=".sig", delete=False) as f:
+        f.write(armor)
+        sigfile = f.name
+    with tempfile.NamedTemporaryFile("w", suffix=".allowed", delete=False) as f:
+        f.write(f"{sid}@session {keyline}\n")
+        allowed = f.name
+
+    # 1. cryptographic validity against the embedded key (no trust store needed)
+    p1 = subprocess.run(
+        ["ssh-keygen", "-Y", "check-novalidate", "-n", ns, "-s", sigfile],
+        input=data, capture_output=True,
+    )
+    # 2. principal binding: <derived-sid>@session must map to the embedded key
+    p2 = subprocess.run(
+        ["ssh-keygen", "-Y", "verify", "-f", allowed, "-I", f"{sid}@session",
+         "-n", ns, "-s", sigfile],
+        input=data, capture_output=True,
+    )
+
+    ok = p1.returncode == 0 and p2.returncode == 0
+    out(f"signature-crypto  : {'✅ good' if p1.returncode == 0 else '❌ BAD'}")
+    out(f"principal-binding : {'✅ good' if p2.returncode == 0 else '❌ BAD'}")
+    out(f"signer-key        : {keyline}")
+    out(f"sender-session-id : {sid}")
+    out(V1_COVERS)
+    if not ok:
+        leg1("bad", "bad-signature" if p1.returncode != 0 else "bad-principal")
+        sys.stderr.write(p1.stderr.decode() + p2.stderr.decode())
+        if trust:
+            trust_fail("1-signature",
+                       "bad-signature" if p1.returncode != 0 else "bad-principal")
+        sys.exit(1)
+    # The crypto is good, so the five headers and the body string are
+    # the sender's. Nothing else is signed, so the mail must also be in the v1
+    # sender's exact shape, or a reader may show text the signature never saw.
+    refused = v1_refusal(S, raw_b)
+    if refused is not None:
+        reason, why = refused
+        leg1("bad", reason)
+        out(f"v1-shape          : ❌ {reason.upper()}: {why}")
+        print(f"session-mail-verify: BAD: not the shape a v1 signature was made in: {why}",
+              file=sys.stderr)
+        if trust:
+            trust_fail("1-signature", reason)
+        sys.exit(1)
+    leg1("good")
+    if json_mode:
+        # v1 signs the five HDRS, never the header's h=: the
+        # first five lines of data, then the body (the first text part).
+        five = data.split(b"\n", len(HDRS))
+        J["sig"] = {
+            "version": "1", "h": list(HDRS),
+            "covered": (read_back(b"".join(x + b"\n" for x in five[:-1]), HDRS)
+                        if len(five) == len(HDRS) + 1 else None),
+            "parts": [{"index": 1, "type": "text/plain", "digest": None}],
+            "signer": {"session_id": sid, "key": keyline}}
+    if trust:
+        run_trust(sid, keyline, msg)
+    sys.exit(0)
+
+# --json: one object on every run that READ the mail (the usage and
+# unreadable-file exits above print none), written as the run exits, whatever
+# the exit site, canonical()'s included. A traceback prints none: no verdict.
+try:
+    main()
+except SystemExit as e:
+    if json_mode:
+        emit(e.code)
+    raise
+PYEOF

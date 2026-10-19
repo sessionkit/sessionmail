@@ -1,0 +1,1222 @@
+#!/usr/bin/env bash
+#
+# vmailbox-gen — regenerate postfix's enumerated agent virtual_mailbox map from the
+# ~/.mail agent tree.
+#
+# WHY THIS EXISTS: `virtual_mailbox_maps` is a PATH-RESULT map, and postfix opens
+# such maps with regexp substitution DISABLED (DICT_FLAG_NO_REGSUB) in EVERY
+# version — so the original `agents/$1/` regexp catch-all was skipped at load and
+# killed all agent delivery (measured). The mapping must instead
+# be an ENUMERATED map. Rather than hand-maintain it, we DERIVE it from the tree:
+# the maildir tree (`~/.mail/agents/*/`) stays the single source of truth, and this
+# script rebuilds the map from it. Drift is one regeneration away from gone.
+#
+# WHERE THE MAP LIVES (system space): the maps
+# are written to `/usr/local/etc/postfix-agents/{vmailbox,valias}` — NOT under
+# ~/.mail — and main.cf reads them as `hash:/usr/local/etc/postfix-agents/vmailbox`
+# and `hash:/usr/local/etc/postfix-agents/valias`. virtual(8)
+# runs as `_postfix` (uid 27) and CANNOT traverse the 0750 $HOME, so a
+# user-home map is unopenable by the consumer. The
+# map dir is `<you>:_postfix 2750` (setgid), made ONCE, with sudo, by the setup in
+# docs/postfix-configuration.md. This generator runs as the owner and writes files there with
+# NO root in the regen loop — the daemon reads them via its primary group _postfix
+# (gid 27). Files are clamped to 0640 (owner rw, group r): the daemon reads via
+# group, the world does not need it. INVARIANT: postfix READS only from
+# system space; it WRITES to user space only via uid-mapped delivery.
+#
+# It only ever steers delivery WITHIN virtual_mailbox_base (the user's own tree;
+# a static uid), and names are sanitized (rejects `..`/`/`), so it is safe under
+# the family-trust model.
+#
+# For each `~/.mail/agents/<name>/` box it emits TWO keys (both domain forms) so a
+# short `<name>@<host>` and a fully-qualified `<name>@<fqdn>` both resolve:
+#
+#     <name>@<host>   agents/<name>/
+#     <name>@<fqdn>   agents/<name>/
+#
+# <name> is folded to lowercase and sanitized to [a-z0-9_.-] so it
+# matches postfix's own lowercase key folding. Trailing "/" = Maildir. Output is
+# sorted + de-duplicated => DETERMINISTIC: two runs over the same tree produce a
+# byte-identical map.
+#
+# NESTED LAYOUT (nested-v1). A directory carrying the marker file
+# `.tm-store` is a STORE DIRECTORY: a PATH COMPONENT the store's PROJECT boxes live
+# under, and NEVER a box itself. For such a directory the two passes are:
+#
+#   level 1  SKIP it — emit NO `<store>@<host>` pair at all. `<store>@host` stays
+#            UNROUTED on purpose: store-tier semantics are not designed yet, and
+#            a store dir holds no new/cur/tmp, so a map pair pointing at it would be
+#            a poisoned entry (delivery into a non-maildir).
+#   level 2  emit its CHILD directories as boxes, one directory deeper:
+#
+#                <project>@<host>   agents/<store>/<project>/
+#                <project>@<fqdn>   agents/<store>/<project>/
+#
+# Everything WITHOUT the marker is untouched — a legacy flat box emits exactly the
+# pairs it emits today, byte for byte (that equivalence is pinned by the fixture
+# test shipped with this patch). Marker over inference: a flat box that happens to
+# contain a subdirectory is never re-read as a store.
+#
+# The marker is PROVISIONAL — it fences the project tier; it
+# asserts nothing about a store BOX.
+#
+#   vmailbox-gen [--host NAME] [--root DIR] [--out FILE] [--print] [--no-postmap]
+#                [--print-valias] [--no-valias] [--valias-only] [--valias-static FILE]
+#                [--no-fqdn] [--capabilities] [-h]
+#
+#     --host NAME    short hostname for the keys (default: `hostname -s`).
+#     --root DIR     the ~/.mail root, the SOURCE tree (default: $MAIL_ROOT or ~/.mail).
+#     --out FILE     TARGET map path — decoupled from --root so the generator is
+#                    path-agnostic (default: the PINNED system path
+#                    /usr/local/etc/postfix-agents/vmailbox). Tests/proofs pass
+#                    --out to write into an unprivileged temp dir. The .db is built
+#                    alongside it (FILE.db).
+#     --print        write the map text to STDOUT only — touch NO files, run NO
+#                    postmap (for proofs/tests and diffing on an unprivileged box).
+#     --no-postmap   write the map file but skip the postmap .db build.
+#     --capabilities print the behaviour tokens this generator implements, one per
+#                    line, and exit 0. Touches NOTHING. `nested-v1` is listed only
+#                    by a generator that actually implements the two passes above —
+#                    it ships in the SAME patch as the behaviour, so a consumer that
+#                    gates on the token cannot be told yes by a generator that would
+#                    then route a nested box nowhere (detection by construction, not
+#                    version-grepping). An UNPATCHED generator answers this argument
+#                    the way it answers any unknown one: exit 2, `unknown argument`.
+#     --print-valias write the ALIAS map text (below) to STDOUT only — touch NO
+#                    files, run NO postmap. Exit 3 if it had to refuse.
+#     --no-valias    regenerate the mailbox map only; leave valias untouched.
+#     --valias-only  regenerate the ALIAS map only (same lock, same atomic write);
+#                    vmailbox is not touched. What `pager listen` runs on every
+#                    listen (its own regen fast-path skips this generator once
+#                    the box is routable, and the alias lines must follow the
+#                    live session list, not the box list). Was `session mail
+#                    arm`'s until that verb was retired 2030-09-14.
+#     --valias-static FILE  the hand-kept standing-alias file folded into valias
+#                    (default: $MAIL_ROOT/.postfix/valias.static; absent = none).
+#     --subscription-box STORED  print the box a subscription file named STORED
+#                    reads back as (`--` -> `/`), no newline, and exit 0; exit 3
+#                    and print nothing on stdout when the name is not a stored
+#                    box. Touches NOTHING - the codec, runnable on its own.
+#     --plus-rows ADDRESS SID  print the alias pairs plus_rows emits for ONE
+#                    declared address, one `key<TAB>destination` per line, and
+#                    exit; exit 3 and print NOTHING when it refuses. Touches
+#                    NOTHING - it is the guard, runnable on its own.
+#     --no-fqdn      PRINT MODES ONLY (--print, --print-valias, --plus-rows):
+#                    emit the short `<name>@<host>` rows and NO `@<fqdn>` row,
+#                    and never ask for the suffix (no magicdns-suffix run, no
+#                    tailscale). The output is exactly the full output minus
+#                    every line keyed `@<fqdn>`; a static key written in any
+#                    `@<host>.<domain>` form is keyed by its short form only.
+#                    It is what the mail drop runs (`_drop.prepare`), which
+#                    qualifies every address on this host to the short host and
+#                    so never reads an `@<fqdn>` row. A WRITING run given it
+#                    exits 2 and writes nothing: a postfix map with no FQDN
+#                    rows bounces mail addressed `x@<host>.<tailnet>`. Listed
+#                    by --capabilities as `no-fqdn-v1`.
+#     -h|--help      this help.
+#
+# THE FQDN SUFFIX. The `<fqdn>` of every row is `<host>.<suffix>`, and the
+# suffix comes from `magicdns-suffix`, shipped beside this script and shared with the
+# pager: MAGICDNS_SUFFIX when set, else `tailscale status --json`'s MagicDNSSuffix
+# (tailscale on PATH, then the macOS app bundle's CLI, each briefly bounded). There
+# is NO default. With neither, the generator writes NOTHING and exits 4, its stderr
+# naming the fix: set MAGICDNS_SUFFIX, or install/start tailscale. Only
+# --no-fqdn (print modes only, above) and --subscription-box go without it.
+#
+# THE LIVE-TREE GUARD. A WRITING run (not --print, --print-valias,
+# --plus-rows, --subscription-box or --capabilities) whose --root is not the tree
+# postfix serves (`postconf -xh virtual_mailbox_base`) is REFUSED when it would write
+# the pinned default target (by default, or by an --out naming its dir) or an --out
+# dir postfix reads maps from: it writes NOTHING, prints one line naming the root and
+# the map dir, and exits 5. With no postconf answer it refuses any run aimed at the
+# pinned dir whatever the root (fail closed).
+# $SESSIONMAIL_POSTCONF, when set, is the only postconf it asks.
+#
+# THE ALIAS MAP — valias.
+# Beside vmailbox this generator ALSO writes `valias`, the
+# virtual_alias_maps hash that makes a SEAT's mail land in every LIVE SESSION's box
+# as well (the doorbell: R14 — a session listens only to its session box; R15 — a
+# seat copy is tellable from a DM by headers alone). It is wired by ONE root line
+# (`hash:<map dir>/valias` in virtual_alias_maps, A06) and nothing else.
+#
+#   * GENERATED, never hand-written for a live session: for every LIVE session
+#     WHOSE BOX EXISTS under agents/ (a session that never armed has no box, and
+#     an alias into a non-box would bounce the whole copy). LIVE is read from
+#     Claude Code's own per-session sidecars, `$SESSION_SIDECAR_DIR` else
+#     `~/.claude/sessions/<pid>.json` (pid, sessionId, agent, procStart), under
+#     the one rule `session list` used: the pid is running AND its start time
+#     is the sidecar's procStart within 2 s (a reused pid is not the session).
+#     The seat is the sidecar's `agent`; a session without one gets no line.
+#     This once ran `session list --json`, which reads the same
+#     files; the session package is being retired,
+#     and the doorbell must not die with it:
+#
+#         <seat>@<host>   <seat>@<host>, <sid>@<host>
+#         <seat>@<fqdn>   <seat>@<fqdn>, <sid>@<fqdn>
+#
+#     BOTH key forms, always: the seat arrives fully qualified, and a one-key map
+#     is a silent no-op (measured). Two live sessions of one seat MERGE into
+#     one line: `alice@alpha  alice@alpha, <sid1>@alpha, <sid2>@alpha`. The
+#     seat itself is always the first destination — this is a
+#     COPY, never a move (Q2). `<seat>+memory@…` gets an IDENTITY line so the
+#     owner's memory writes are NOT copied into session inboxes (postfix matches
+#     user+ext before user; measured — without it every
+#     +memory mail piled up unread in the session box as <sid>+memory).
+#   * A SEAT ROW ONLY FOR A SEAT WORD THAT IS ITSELF A BOX. The row is
+#     minted only when `agents/<seat>/new` is a directory, where <seat> is the
+#     word as keyed (lowercased, stripped to [a-z0-9_.-]) and has passed the same
+#     traversal guard as the sid. Why: the seat is the row's FIRST destination,
+#     so it must be deliverable. A taskmaster role seat's `agent` is the bare role
+#     word, one word shared by every live session holding that role, and it has
+#     no box. Its row both BOUNCED the self-copy 5.1.1 and FANNED OUT to every
+#     live seat of that role (measured: a reply to one such bare role word
+#     `@alpha` reached three unrelated seats of that role and not the one it
+#     was meant for). A persona (`alice`,
+#     `bob`) owns `agents/<name>/` and keeps its row. Withheld sessions are
+#     COUNTED, and every withheld word is NAMED with its session count on stderr
+#     on every run, so a persona whose box went missing shows up as a new word
+#     in that list rather than going silently deaf. The `+memory` identity row
+#     goes with the seat row. Plus rows, subscriptions and static lines are not
+#     affected. This checks deliverability, not persona-hood: a seat word that
+#     names a SHARED flat box would still copy it (the shared-box trap; unchanged).
+#   * DROPPED ON THE NEXT REGENERATE, not on death: a dead session is simply not
+#     live, so its line is not written. No death hook, no reaper, no
+#     extra state (it need not be immediate). The BOX is a
+#     different question — retired only when dead AND empty (A04) — and this
+#     generator never touches boxes. Alias-on-stop is a second, later item.
+#   * A PLUS ADDRESS'S OWN ROW (changes/task-address-doorbell:
+#     the generator writes the row, the pager declares the address). For every
+#     live session WITH A BOX whose layer, `~/.session/sessions/<sid>/settings/
+#     mail.json` (+ `mail.d/`), has an `address` key naming `<base>+<ext>`
+#     (written by `pager listen` from EMAIL; task 3.3b moved it from the old
+#     `$SESSIONMAIL_HOME/sessions/<sid>/address`, now counted, never read):
+#
+#         <base>+<ext>@<host>   <base>@<host>, <sid>@<host>
+#         <base>+<ext>@<fqdn>   <base>@<fqdn>, <sid>@<fqdn>
+#
+#     ONE function, plus_rows, emits these and nothing else: never a key on the
+#     bare <base> (the fan-out trap), and an address that is not
+#     `<base>+<ext>` is REFUSED, emits nothing, and is counted on stderr. The
+#     file of a session that is not live is never read, so a stale one does
+#     nothing. Sessions of one plus address MERGE by key union. A layer that
+#     cannot be read writes no row and is named on stderr.
+#     sessionmail knows RFC 5233 and no project, task or role grammar.
+#   * A SUBSCRIPTION'S ROW (changes/message-subscriptions D1/D2). Each `true`
+#     key of the `subscriptions` map of a seat's or a live session's layer
+#     (`~/.session/{seats/<seat>,sessions/<sid>}/settings/mail.json`, tasks 3.2
+#     and 3.3b), and each file in an AGENT's `$SESSIONMAIL_HOME/seats/<agent>/
+#     subscriptions/`, is named for a box, `/` stored as `--` in a file name:
+#
+#         <box>@<host>   <box>@<host>, <seat-or-sid>@<host>     (both host forms)
+#
+#     A plus box is an EXACT key, so it CLAIMS its tag from the bare box's
+#     subscribers; a bare box brings its +memory identity row. A
+#     file whose body has a `query:` line (an old saved query), a bad name, a
+#     `<store>/<project>` with no such store, or a box with no mailbox map row
+#     (for it or its base) is skipped and counted on stderr, never written.
+#     See SUBSCRIPTIONS below.
+#   * PLUS A FIXED, HAND-KEPT FILE (`valias.static`, format documented in the file
+#     itself) folded in BY KEY UNION, never by concatenation: postmap DROPS a
+#     duplicate key with a warning, so `alice@alpha bob@alpha` in the static
+#     file and the generated `alice@alpha alice@alpha, <sid>@alpha` become ONE
+#     line with three destinations. A static key written in one host form is
+#     keyed in both (the one-key no-op again). The
+#     regenerate rule never drops a static line; only a human does.
+#   * REFUSES rather than writes an EMPTY-ISH map when it cannot trust the list:
+#     no `jq` on PATH, no sidecar directory, `ps` failing, or — when run inside
+#     a session (CLAUDE_CODE_SESSION_ID) — a list that does not contain the very
+#     session running it. A refusal leaves the previous valias in
+#     force, says so on stderr, writes a breadcrumb to $MAIL_ROOT/.state/
+#     regen-failures.log (the arm hook only surfaces generator stderr when the
+#     SEAT box is unroutable, so stderr alone would be read by nobody), and exits
+#     3 AFTER vmailbox has been written normally. Under `--print-valias` the
+#     same refusal is the stderr line and exit 3 ONLY: no breadcrumb, no
+#     `.state` dir, no file at all, as that flag's contract above promises
+#     (its caller reads stderr itself). Writing an empty valias would
+#     silently switch every seat->session copy off, which is the "looks wired,
+#     does nothing" fault this map exists to prevent.
+#   * Same lock, same temp+mv, same postmap, same 0640 as vmailbox. `--print`
+#     output is UNCHANGED byte for byte (the regen fixture test pins it).
+#
+# Invoked at exactly the two creation points: seeded at
+# setup (all existing boxes; docs/postfix-configuration.md), maintained at each box
+# birth (the caller makes the box, then runs this — provisioning = mkdir + map entry).
+
+set -euo pipefail
+
+# The tailnet suffix of every FQDN row is NOT defaulted here. It comes
+# from the one definition, `magicdns-suffix` beside this script: MAGICDNS_SUFFIX,
+# else `tailscale status --json` (PATH, then the macOS app bundle), else a loud
+# failure BEFORE anything is written. It is asked below, after the arguments.
+#
+# This script is run through a SYMLINK (~/.mail/.postfix/vmailbox-gen) and via
+# PATH, so its own directory is found by following the links, portably (macOS
+# readlink has no -f).
+_self="${BASH_SOURCE[0]}"
+while [ -L "$_self" ]; do
+  _link="$(readlink "$_self")"
+  case "$_link" in /*) _self="$_link" ;; *) _self="$(dirname "$_self")/$_link" ;; esac
+done
+GEN_DIR="$(cd "$(dirname "$_self")" && pwd -P)"
+SUFFIX_HELPER="$GEN_DIR/magicdns-suffix"
+unset _self _link
+MAIL_ROOT="${MAIL_ROOT:-$HOME/.mail}"
+# A session's OLD files (`sessions/<sid>/address`, `subscriptions/`): counted as
+# never converted (3.3b), never read. Seats' old folders and agents' folders too.
+SESSIONMAIL_HOME="${SESSIONMAIL_HOME:-$HOME/.sessionmail}"
+# Claude Code's per-session sidecars (<pid>.json) - where LIVE comes from. The
+# same override name `session list` and sessiontools read.
+SIDECAR_DIR="${SESSION_SIDECAR_DIR:-$HOME/.claude/sessions}"
+# The STORE DIRECTORY marker (nested-v1). Its name is shared with
+# `taskmaster.core.mailbox.STORE_MARKER`, which is what WRITES it; this generator
+# only ever READS it. Marker over inference — see the nested-layout note above.
+STORE_MARKER=".tm-store"
+# PINNED default target (system space). A box
+# birth calls this generator with NO --out, so this default
+# is what a live provision writes to; --out overrides it for unprivileged tests.
+# Moved OUT of /etc/postfix, which is a TCC-protected path on macOS.
+# Writes there are evaluated against the *responsible app* at the head of the process
+# tree — Terminal.app for every agent — and stall in the consent machinery instead of
+# denying cleanly. The syscall hangs with no lock holder, which is why it looked for
+# sixteen hours like a kernel wedge. A reboot does not fix it (consent is not kernel
+# state) and granting Terminal admin rights does not fix it either (measured: writes
+# still hung at 15s afterwards). Only leaving the protected path fixes it.
+#
+# The old location kept SERVING existing agents while silently never UPDATING, so a
+# freshly-created agent was armed and unreachable and nobody found out until someone
+# mailed it and got no reply. That cost three unreachable seats before the move.
+DEFAULT_MAP="/usr/local/etc/postfix-agents/vmailbox"
+HOST=""
+OUT=""
+PRINT=0
+DO_POSTMAP=1
+DO_VALIAS=1
+PRINT_VALIAS=0
+VALIAS_ONLY=0
+VALIAS_STATIC=""
+NO_FQDN=0
+FQDN=""
+PLUS_ROWS_ARGS=()
+SUB_BOX_ARGS=()
+
+die() { printf 'vmailbox-gen: error: %s\n' "$*" >&2; exit 2; }
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --host)       HOST="${2:-}"; shift 2 ;;
+    --root)       MAIL_ROOT="${2:-}"; shift 2 ;;
+    --out)        OUT="${2:-}"; shift 2 ;;
+    --print)      PRINT=1; shift ;;
+    --no-postmap) DO_POSTMAP=0; shift ;;
+    --print-valias) PRINT_VALIAS=1; shift ;;
+    --no-valias)  DO_VALIAS=0; shift ;;
+    --valias-only) VALIAS_ONLY=1; shift ;;
+    --valias-static) VALIAS_STATIC="${2:-}"; shift 2 ;;
+    --no-fqdn)    NO_FQDN=1; shift ;;
+    --plus-rows)  [ $# -ge 3 ] || die "--plus-rows needs ADDRESS SID"; PLUS_ROWS_ARGS=("$2" "$3"); shift 3 ;;
+    --subscription-box) [ $# -ge 2 ] || die "--subscription-box needs STORED"; SUB_BOX_ARGS=("$2"); shift 2 ;;
+    --capabilities) printf 'nested-v1\nvalias-v1\nstore-box-v1\nplus-v1\nno-fqdn-v1\n'; exit 0 ;;
+    -h|--help)    sed -n '2,/^set -euo pipefail/p' "$0" | sed '$d' | sed 's/^#//; s/^ //'; exit 0 ;;
+    *)            die "unknown argument: $1 (try --help)" ;;
+  esac
+done
+
+[ "$VALIAS_ONLY" -eq 1 ] && [ "$DO_VALIAS" -eq 0 ] && die "--valias-only with --no-valias would generate nothing"
+# --no-fqdn is for the PRINT modes only. A writing run that drops
+# every FQDN row would publish a postfix map that bounces mail addressed
+# `x@<host>.<tailnet>`, so it is refused here, before anything is asked or
+# written. A writing run WITHOUT the flag is unchanged: no suffix -> exit 4.
+if [ "$NO_FQDN" -eq 1 ] && [ "$PRINT" -eq 0 ] && [ "$PRINT_VALIAS" -eq 0 ] \
+   && [ "${#PLUS_ROWS_ARGS[@]}" -eq 0 ] && [ "${#SUB_BOX_ARGS[@]}" -eq 0 ]; then
+  die "--no-fqdn is for --print, --print-valias and --plus-rows only - nothing written; a postfix map with no FQDN rows bounces mail addressed to <name>@<host>.<tailnet>"
+fi
+[ -n "$HOST" ] || HOST="$(hostname -s)"
+# The suffix, before ANY file is touched: with no answer the generator writes
+# nothing at all (not vmailbox, not valias) and exits 4, the helper's stderr
+# naming the fix. Only the --subscription-box codec, which keys no row, and a
+# --no-fqdn print run, which emits no FQDN row (FQDN stays empty), go without it.
+if [ "${#SUB_BOX_ARGS[@]}" -eq 0 ] && [ "$NO_FQDN" -eq 0 ]; then
+  [ -x "$SUFFIX_HELPER" ] || {
+    printf 'vmailbox-gen: error: %s is missing or not executable - nothing written; it ships beside this script: reinstall sessionmail\n' "$SUFFIX_HELPER" >&2
+    exit 4
+  }
+  MAGICDNS_SUFFIX="$("$SUFFIX_HELPER")" || {
+    printf 'vmailbox-gen: error: no MagicDNS suffix - nothing written; set MAGICDNS_SUFFIX, or install/start tailscale\n' >&2
+    exit 4
+  }
+  FQDN="$HOST.$MAGICDNS_SUFFIX"
+fi
+AGENTS_DIR="$MAIL_ROOT/agents"
+# TARGET is path-agnostic: --out decouples it from the source tree. The default is
+# the PINNED system path; --out is for unprivileged tests/proofs.
+VMAILBOX="${OUT:-$DEFAULT_MAP}"
+STATE_DIR="$(dirname "$VMAILBOX")"
+# The alias map lives BESIDE the mailbox map, whatever --out said: one map dir, one
+# root line names it (A06), and a test that redirects one redirects both.
+VALIAS="$STATE_DIR/valias"
+[ -n "$VALIAS_STATIC" ] || VALIAS_STATIC="$MAIL_ROOT/.postfix/valias.static"
+
+# Fold to lowercase and keep ONLY [a-z0-9_.-] — matches postfix key folding and the
+# §5.7 sanitization rule. An entry that sanitizes to empty (or is a hidden dir) is
+# skipped rather than emitted as a bogus key.
+#
+# ONE PROCESS, NOT FOUR PER BOX (measured): the
+# previous generate() forked `basename` and a two-`tr` `sanitize` for every
+# directory — ~4 ms x 2,349 boxes = 9.4 s per regen, while postmap of the whole
+# map is 8 ms. The walk below emits RAW records with bash expansions only and a
+# single awk does the folding, the skip rules and the formatting. Same rules,
+# same order of tests, same `sort -u`; byte-identical output is the test.
+#
+# Record format handed to awk (tab-separated):  KIND \t STORE_RAW \t NAME_RAW
+#   KIND=flat   STORE_RAW=""       NAME_RAW=<box dir name>
+#   KIND=nested STORE_RAW=<store>  NAME_RAW=<project dir name>
+generate() {
+  local dir name sub subname
+  [ -d "$AGENTS_DIR" ] || return 0
+  for dir in "$AGENTS_DIR"/*/; do
+    [ -d "$dir" ] || continue                 # no boxes -> globs to literal, skip
+    name="${dir%/}"; name="${name##*/}"       # basename, without a fork
+    case "$name" in .*) continue ;; esac      # skip hidden dirs (.notmuch etc)
+    if [ -f "$dir$STORE_MARKER" ]; then
+      # LEVEL 2 — a STORE DIRECTORY. Its CHILDREN are the boxes; it is not one.
+      for sub in "$dir"*/; do
+        [ -d "$sub" ] || continue             # empty store -> literal glob, skip
+        subname="${sub%/}"; subname="${subname##*/}"
+        case "$subname" in .*) continue ;; esac
+        case "$subname" in new|cur|tmp) continue ;; esac   # S2-1: a store box's own maildir is never a project
+        printf 'nested\t%s\t%s\n' "$name" "$subname"
+      done
+      # LEVEL 1, NARROWED (S2-1: the store directory is a mailbox):
+      # a marker dir carrying the WHOLE triad is ALSO a box - emit its own pair beside its
+      # nested projects. Partial triad or none: no pair, <store>@host stays unrouted as before.
+      if [ -d "${dir}new" ] && [ -d "${dir}cur" ] && [ -d "${dir}tmp" ]; then
+        printf 'flat\t\t%s\n' "$name"
+      fi
+      continue
+    fi
+    printf 'flat\t\t%s\n' "$name"
+  done | awk -F '\t' -v host="$HOST" -v fqdn="$FQDN" '
+    function san(s) { s = tolower(s); gsub(/[^a-z0-9_.-]/, "", s); return s }
+    {
+      kind = $1; store = san($2); name = san($3)
+      if (name == "" || name == "." || name == "..") next      # sanitizes to nothing / traversal guard
+      if (kind == "nested") {
+        if (store == "" || store == "." || store == "..") next
+        path = "agents/" store "/" name "/"
+      } else {
+        path = "agents/" name "/"
+      }
+      printf "%s@%s\t%s\n", name, host, path
+      if (fqdn != "") printf "%s@%s\t%s\n", name, fqdn, path   # --no-fqdn: short rows only
+    }' | LC_ALL=C sort -u
+}
+
+# ── VALIAS ─────────────────────────────────────────────────────────────────────
+
+# plus_rows ADDRESS SID -> the alias pairs for ONE declared plus address, one
+# `key<TAB>destination` per line, both host forms:
+#
+#     <base>+<ext>@<host>   <base>@<host>
+#     <base>+<ext>@<host>   <sid>@<host>
+#     <base>+<ext>@<fqdn>   <base>@<fqdn>
+#     <base>+<ext>@<fqdn>   <sid>@<fqdn>
+#
+# THE BARE-BASE GUARD. Every key it prints carries the `+`, so it
+# can never print a key equal to <base>. It REFUSES - prints nothing, returns 3
+# - an address with no `+`, an empty base or extension, a second `+`, or a
+# character postfix would not fold to itself; and a SID that is not a plain
+# name. Refusing is the whole point: a row on the bare base would copy the
+# project's mail into this session. Split at the FIRST `+`, RFC 5233;
+# nothing here reads the extension's parts.
+plus_rows() {
+  local addr="${1:-}" sid="${2:-}" base ext
+  addr="$(printf '%s' "$addr" | LC_ALL=C tr '[:upper:]' '[:lower:]')"
+  case "$addr" in ''|*[!a-z0-9_.+-]*) return 3 ;; esac
+  case "$sid" in ''|.*|*[!a-z0-9_.-]*) return 3 ;; esac
+  base="${addr%%+*}"; ext="${addr#*+}"
+  [ "$base" != "$addr" ] || return 3            # no `+`: the bare base itself
+  [ -n "$base" ] && [ -n "$ext" ] || return 3
+  case "$ext" in *+*) return 3 ;; esac
+  printf '%s@%s\t%s@%s\n' "$addr" "$HOST" "$base" "$HOST" "$addr" "$HOST" "$sid" "$HOST"
+  # --no-fqdn: FQDN is empty, and a key `<addr>@` would be garbage.
+  if [ -n "$FQDN" ]; then
+    printf '%s@%s\t%s@%s\n' "$addr" "$FQDN" "$base" "$FQDN" "$addr" "$FQDN" "$sid" "$FQDN"
+  fi
+}
+
+# ── SUBSCRIPTIONS (openspec/changes/message-subscriptions, tasks 2.2, D1, D2) ──
+#
+# A subscription is a FILE whose NAME is a box (D1):
+#
+#     $SESSIONMAIL_HOME/seats/<seat>/subscriptions/<box>     durable
+#     $SESSIONMAIL_HOME/sessions/<sid>/subscriptions/<box>   while <sid> is live
+#
+# `/` is stored as `--` (`work/demo` -> `work--demo`). The
+# codec is _subscription.py's `box_name`, restated here because this file is
+# bash and ships loose: each `/`-part non-empty, not starting with `.`, and
+# not starting or ending with `-` (so the name reads back as exactly one box).
+#
+# Each subscription becomes a COPY row, the box itself first, both host forms,
+# merged by key union with the seat, plus and static rows (D2):
+#
+#     <box>@<host>   <box>@<host>, <seat-or-sid>@<host>
+#     <box>@<fqdn>   <box>@<fqdn>, <seat-or-sid>@<fqdn>
+#
+# A PLUS box (`widget+tm-123`) is keyed EXACTLY on the plus address, and
+# so CLAIMS its tag: postfix stops at the first key found and tries
+# user+ext@domain before user@domain, so the bare box's subscribers get only
+# the tags nobody claimed - the dead letter office.
+# A bare box brings `<box>+memory -> <box>+memory`, the identity row: the
+# same claim, made by the box alone (vmailbox-gen's +memory rule above).
+#
+# NEVER WRITTEN, each counted on stderr with its reason - fail safe, because a
+# stray file must never route mail:
+#   * a file whose body carries a `query:` line: an OLD saved query from the
+#     pager's retired subscriptions (they share this folder until tasks 6.3
+#     moves them);
+#   * a name that is not a stored box, or holds a character postfix would
+#     not keep as itself (never stripped into some OTHER box's key);
+#   * `<store>/<project>` whose store is not a marked store dir holding that
+#     project: nested-v1 keys such a box by its project, and nothing else has
+#     an address, so the last part alone would copy an unrelated box;
+#   * a folder, a dangling link, an unreadable file or folder;
+#   * a box that does not RESOLVE (tasks 2.4; flat boxes too): no row in the mailbox map `generate()` builds from this same
+#     tree for `<box>@<host>`, nor for its base at the first `+`. That is what
+#     `message path` means by resolves (`_seat.box_via_map`), so `add`'s gate
+#     and this one agree - and, like it, the row must name a MAILDIR (`new/`).
+#     Checked only when some subscription got this far;
+#   * `<x>+memory`: claimed by the box alone (the identity row), never
+#     subscribed; a live session whose id san() would change.
+# A plus box on a key whose row ALREADY delivers to its base (a task doorbell)
+# gets the subscriber, not a second copy of itself: one box, one copy.
+# A dotfile (an atomic write in flight) is passed over silently.
+#
+# The CODEC alone runs as `--subscription-box STORED` (the parity test holds
+# it equal to _subscription.box_name over a shared table).
+
+# Letters are spelled out: a bracket range follows the locale's collation.
+# '+' and '-' are added where it is used, '-' last, so it is never a range.
+SUB_CHARS='abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_.'
+VALIAS_SUBS=0          # subscription files written as rows
+VALIAS_SUBS_SKIPPED=0  # subscription files never written (see above)
+SUBS_SKIPPED_LIST=""   # the first few, `path (why)`, for stderr
+SUBS_SHOWN_MAX=10
+
+sub_skip() {   # PATH WHY
+  VALIAS_SUBS_SKIPPED=$((VALIAS_SUBS_SKIPPED + 1))
+  if [ "$VALIAS_SUBS_SKIPPED" -le "$SUBS_SHOWN_MAX" ]; then
+    SUBS_SKIPPED_LIST="${SUBS_SKIPPED_LIST:+$SUBS_SKIPPED_LIST; }${1#"$SESSIONMAIL_HOME"/} ($2)"
+  elif [ "$VALIAS_SUBS_SKIPPED" -eq $((SUBS_SHOWN_MAX + 1)) ]; then
+    SUBS_SKIPPED_LIST="$SUBS_SKIPPED_LIST; and more (only the first $SUBS_SHOWN_MAX are named)"
+  fi
+}
+
+# sub_decode STORED -> 0 with the BOX in SUB_BOX (`--` read back as `/`), or 3
+# with the reason in SUB_WHY: the codec, exactly _subscription.box_name's
+# rules. Globals, not stdout: $( ) would fork a subshell, and this runs once
+# per file on every listen.
+SUB_BOX=""
+SUB_ADDR=""
+SUB_WHY=""
+sub_decode() {
+  # C locale for THIS function: every byte is one character, so a multibyte
+  # letter is non-printable and refused whatever the caller's locale. Under
+  # UTF-8, [:print:] would pass `é` and NBSP.
+  local LC_ALL=C stored="$1" rest seg
+  SUB_BOX=""; SUB_WHY=""
+  [ -n "$stored" ] || { SUB_WHY="not a stored box: an empty name"; return 3; }
+  case "$stored" in *[![:print:]]*) SUB_WHY="not a stored box: not ASCII, or a control character"; return 3 ;; esac
+  case "$stored" in *[[:space:][:cntrl:]]*) SUB_WHY="not a stored box: white space or a control character"; return 3 ;; esac
+  SUB_BOX="${stored//--//}"
+  rest="$SUB_BOX/"
+  while [ -n "$rest" ]; do
+    seg="${rest%%/*}"; rest="${rest#*/}"
+    [ -n "$seg" ] || { SUB_WHY="not a stored box: an empty part between slashes"; SUB_BOX=""; return 3; }
+    case "$seg" in .*) SUB_WHY="not a stored box: a part starts with '.'"; SUB_BOX=""; return 3 ;; esac
+    case "$seg" in -*|*-) SUB_WHY="not a stored box: a part starts or ends with '-'"; SUB_BOX=""; return 3 ;; esac
+  done
+}
+
+# sub_address STORED -> 0 with the box's ADDRESS local part in SUB_ADDR (case
+# kept; awk folds it), or 3 with the reason in SUB_WHY. The codec first, then
+# what an ADDRESS needs beyond it. Resolvability is checked later, in one
+# pass over every record (sub_resolve).
+sub_address() {
+  local box store project base ext
+  SUB_ADDR=""
+  sub_decode "$1" || return 3
+  box="$SUB_BOX"
+  case "$box" in *[!${SUB_CHARS}/+-]*) SUB_WHY="not an address: a character postfix would not keep"; return 3 ;; esac
+  case "$box" in
+    */*/*) SUB_WHY="no address: more than one '/'"; return 3 ;;
+    */*)
+      store="${box%%/*}"; project="${box#*/}"
+      case "$store$project" in *+*) SUB_WHY="no address: a '+' in a store or project"; return 3 ;; esac
+      if [ ! -f "$AGENTS_DIR/$store/$STORE_MARKER" ] || [ ! -d "$AGENTS_DIR/$store/$project" ]; then
+        SUB_WHY="no address: $store is not a store dir holding $project"; return 3
+      fi
+      SUB_ADDR="$project"; return 0 ;;
+  esac
+  case "$box" in
+    *+*)
+      base="${box%%+*}"; ext="${box#*+}"
+      if [ -z "$base" ] || [ -z "$ext" ] || [ "${ext#*+}" != "$ext" ]; then
+        SUB_WHY="not <base>+<ext>"; return 3
+      fi
+      # <x>+memory is claimed by the box ALONE (its identity row), so the
+      # owner's memory writes never reach a session. A subscription to it
+      # would defeat that; D5 gates it at the verb, this fails safe here.
+      case "$ext" in [Mm][Ee][Mm][Oo][Rr][Yy])
+        SUB_WHY="a +memory address: claimed by the box alone, never subscribed"; return 3 ;;
+      esac ;;
+  esac
+  SUB_ADDR="$box"
+}
+
+# sub_folder RANK OWNER FOLDER OUT [UNCONVERTED] -> one `U` record per good
+# file (RANK 1 is a seat, 2 a session: seats lead their row). With
+# UNCONVERTED set, FOLDER is a SEAT's old folder (session-settings 3.2): a
+# file that is not a saved query routes nothing and is skipped as never
+# converted, with `pager settings migrate` named.
+SUB_NOT_CONVERTED="a seat's old folder, never converted: its subscriptions are read from ~/.session/seats/<seat>/settings/mail.json now, and \`pager settings migrate\` moves this one"
+SUB_NOT_CONVERTED_SESSION="a session's old folder, never converted: its subscriptions are read from ~/.session/sessions/<sid>/settings/mail.json now, and \`pager settings migrate\` (or the session's next \`pager listen\`) moves this one"
+sub_folder() {   # RANK OWNER FOLDER OUT [WHY-NOT-CONVERTED]
+  local rank="$1" owner="$2" folder="$3" out="$4" unconverted="${5:-}" f name line trimmed is_query
+  [ -e "$folder" ] || [ -L "$folder" ] || return 0
+  if [ ! -d "$folder" ] || [ ! -r "$folder" ] || [ ! -x "$folder" ]; then
+    sub_skip "$folder" "cannot read the folder"; return 0
+  fi
+  for f in "$folder"/*; do
+    name="${f##*/}"
+    [ -e "$f" ] || [ -L "$f" ] || continue        # an empty folder globs to itself
+    case "$name" in .*) continue ;; esac
+    if [ -d "$f" ]; then sub_skip "$f" "a folder, not a subscription file"; continue; fi
+    if [ ! -f "$f" ]; then sub_skip "$f" "not a regular file (a dangling link, a fifo?)"; continue; fi
+    if [ ! -r "$f" ]; then sub_skip "$f" "cannot read the file, so cannot rule out a saved query"; continue; fi
+    is_query=0
+    while IFS= read -r line || [ -n "$line" ]; do
+      trimmed="${line#"${line%%[![:space:]]*}"}"
+      case "$trimmed" in query:*) is_query=1; break ;; esac
+    done < "$f"
+    if [ "$is_query" -eq 1 ]; then
+      sub_skip "$f" "an old saved query (its body has a query: line), not a subscription"; continue
+    fi
+    if [ -n "$unconverted" ]; then sub_skip "$f" "$unconverted"; continue; fi
+    if ! sub_address "$name"; then sub_skip "$f" "$SUB_WHY"; continue; fi
+    printf 'U\t%s\t%s\t%s\t%s\n' "$SUB_ADDR" "$rank" "$owner" "$f" >> "$out"
+  done
+}
+
+# sub_resolve IN OUT -> copy each `U` record of IN whose box RESOLVES to OUT
+# (without its path field); skip and count the rest. One `generate()` walk,
+# only when IN holds any record: on most hosts seat folders hold only old queries.
+sub_resolve() {
+  local in="$1" out="$2" names bad dirs path
+  [ -s "$in" ] || return 0
+  names="$(mktemp "${TMPDIR:-/tmp}/valias-names.XXXXXX")"
+  bad="$(mktemp "${TMPDIR:-/tmp}/valias-unresolved.XXXXXX")"
+  dirs="$(mktemp "${TMPDIR:-/tmp}/valias-maildirs.XXXXXX")"
+  generate > "$names"
+  # A MAILDIR, as box_via_map asks (`<path>/new`): generate() maps EVERY
+  # directory under agents/, so a map row alone is not yet a box.
+  find "$AGENTS_DIR" -mindepth 2 -maxdepth 3 -name new -type d > "$dirs" 2>/dev/null || true
+  awk -F '\t' -v host="$HOST" -v root="$MAIL_ROOT/" -v out="$out" -v bad="$bad" '
+    FILENAME == ARGV[1] {
+      if (substr($0, 1, length(root)) == root) {
+        r = substr($0, length(root) + 1); sub(/new$/, "", r); maildir[tolower(r)] = 1
+      }
+      next
+    }
+    FILENAME == ARGV[2] {
+      suf = "@" host; k = $1
+      if (length(k) > length(suf) && substr(k, length(k) - length(suf) + 1) == suf && ($2 in maildir))
+        ok[substr(k, 1, length(k) - length(suf))] = 1
+      next
+    }
+    {
+      box = tolower($2); base = box; p = index(base, "+"); if (p) base = substr(base, 1, p - 1)
+      if ((box in ok) || (base in ok)) print $1 "\t" $2 "\t" $3 "\t" $4 > out
+      else print $5 > bad
+    }' "$dirs" "$names" "$in"
+  while IFS= read -r path; do
+    sub_skip "$path" "the box does not resolve: no maildir in the mailbox map for it or its base"
+  done < "$bad"
+  rm -f "$names" "$bad" "$dirs"
+}
+
+# SEAT MAPS (sessiontools openspec/changes/session-settings, task 3.2): a
+# SEAT's subscriptions are the `subscriptions` map of
+#
+#     $HOME/.session/seats/<seat>/settings/mail.json, then mail.d/*.json
+#
+# folded in name order as sessiontools folds ONE layer (a map merges key by
+# key, recursively; anything else replaces: jq's `*`), and read PER OWNER:
+# each seat's map makes its own
+# rows, and `false` is the same as absent. A key whose value is exactly
+# `true` is a box, through the same gates as a file's name. An AGENT's bare
+# name (no `+`, no `.`) is not a seat: its subscriptions stay
+# in its old folder, read below, until 3.8 reads the agent layer. This half is temporary too: 3.8 moves the records into Python.
+SEATS_SETTINGS="$HOME/.session/seats"
+# A SESSION's layer (task 3.3b): `<session dir>/settings`, in the session dir
+# sessiontools keeps. SESSIONS_DIR as sessiontools reads it; unset (the
+# common case), it is 0.0.4's `$HOME/.session/sessions`, where `_layer` writes.
+SESSIONS_SETTINGS="${SESSIONS_DIR:-$HOME/.session/sessions}"
+
+# layer_files SETTINGS -> LAYER_FILES: SETTINGS/mail.json, then
+# SETTINGS/mail.d/*.json in name order; empty when the layer has no file.
+LAYER_FILES=()
+layer_files() {
+  local f
+  LAYER_FILES=()
+  if [ -f "$1/mail.json" ]; then LAYER_FILES+=("$1/mail.json"); fi
+  for f in "$1/mail.d"/*.json; do
+    if [ -f "$f" ]; then LAYER_FILES+=("$f"); fi
+  done
+}
+
+# layer_records OUT RANK OWNER SETTINGS WHAT -> a `U` record for each `true`
+# key of the `subscriptions` map in the ONE layer at SETTINGS, folded as
+# sessiontools folds a layer (a map merges key by key, recursively; anything
+# else replaces: jq's `*`). WHAT ("seat", "session") names it in a skip.
+# Each record and skip names the FILE that set its key - the last in fold
+# order, as `_layer.read`'s origins do (task 3.4: a box from `mail.d/50-env.json` or `70-live.json` was stamped
+# `mail.json`, so the two sides disagreed about where it came from).
+layer_records() {
+  local out="$1" rank="$2" owner="$3" settings="$4" what="$5" keys box src line
+  layer_files "$settings"
+  [ "${#LAYER_FILES[@]}" -gt 0 ] || return 0
+  src="$settings/mail.json"
+  # One line per `true` key, `<key><TAB><file>`; a key with a control
+  # character (a newline would split it into two boxes, a tab would split
+  # the line) comes out as a lone `!`, never a box.
+  if ! keys="$(jq -n -r '
+      [inputs as $v | {f: input_filename, v: $v}] as $L
+      | if all($L[]; .v | type == "object") then
+        (reduce $L[] as $x ({}; . * $x.v)) | (.subscriptions // {})
+        | if type == "object" then
+            to_entries[] | select(.value == true) | .key as $k
+            | ([$L[] | select(.v.subscriptions | type == "object" and has($k)) | .f]
+               | last) as $f
+            | (if ($k | test("[[:cntrl:]]")) then "!" else $k end) + "\t" + $f
+          else empty end
+      else error("not a JSON object") end' "${LAYER_FILES[@]}" 2>/dev/null)"; then
+    sub_skip "$src" "the $what's settings cannot be read (not JSON, or not a JSON object)"; return 0
+  fi
+  while IFS= read -r line; do
+    [ -n "$line" ] || continue
+    box="${line%%$'\t'*}"; src="${line#*$'\t'}"
+    if [ "$box" = "!" ]; then sub_skip "$src" "a subscriptions key with a control character"; continue; fi
+    case "$box" in *--*) sub_skip "$src#$box" "holds '--', which would read back as '/'"; continue ;; esac
+    if ! sub_address "${box//\//--}"; then sub_skip "$src#$box" "$SUB_WHY"; continue; fi
+    printf 'U\t%s\t%s\t%s\t%s\n' "$SUB_ADDR" "$rank" "$owner" "$src#$box" >> "$out"
+  done <<< "$keys"
+}
+
+seat_map_records() {
+  local out="$1" dir owner
+  for dir in "$SEATS_SETTINGS"/*/; do
+    [ -d "$dir" ] || continue
+    owner="${dir%/}"; owner="${owner##*/}"
+    case "$owner" in .*) continue ;; esac
+    case "$owner" in *[+.]*) ;; *) continue ;; esac   # an agent's bare name: its old folder
+    case "$owner" in *[!${SUB_CHARS}+-]*) sub_skip "${dir%/}" "not a seat name postfix would keep"; continue ;; esac
+    layer_records "$out" 1 "$owner" "${dir}settings" seat
+  done
+}
+
+# layer_address SETTINGS -> 0 with the plus address the ONE layer at SETTINGS
+# declares in LAYER_ADDR (its `address` key trimmed and lower-cased, as
+# `_layer.address`), 1 when it declares none, 2 when it cannot be read. A
+# value with a control character comes back as `!`, which plus_rows refuses.
+LAYER_ADDR=""
+layer_address() {
+  LAYER_ADDR=""
+  layer_files "$1"
+  [ "${#LAYER_FILES[@]}" -gt 0 ] || return 1
+  if ! LAYER_ADDR="$(jq -s -r '
+      if all(.[]; type == "object") then
+        (reduce .[] as $x ({}; . * $x)) | .address
+        | if type == "string" then
+            (sub("^\\s+"; "") | sub("\\s+$"; ""))
+            | if . == "" then empty
+              elif test("[[:cntrl:]]") then "!"
+              else ascii_downcase end
+          else empty end
+      else error("not a JSON object") end' "${LAYER_FILES[@]}" 2>/dev/null)"; then
+    LAYER_ADDR=""; return 2
+  fi
+  [ -n "$LAYER_ADDR" ]
+}
+
+# subscription_records OUT SID... -> `U` records for every seat's map, every
+# agent's old folder, and the map of each SID given (the live sessions WITH a
+# box; the caller applies the liveness rule; task 3.3b). A SEAT's or a
+# SESSION's old folder routes nothing now; a box file left in it is counted
+# as never converted.
+subscription_records() {
+  local out="$1" dir owner sid; shift
+  seat_map_records "$out"
+  for dir in "$SESSIONMAIL_HOME/seats"/*/; do
+    [ -d "$dir" ] || continue
+    owner="${dir%/}"; owner="${owner##*/}"
+    case "$owner" in .*) continue ;; esac
+    case "$owner" in *[!${SUB_CHARS}+-]*) sub_skip "${dir%/}" "not a seat name postfix would keep"; continue ;; esac
+    case "$owner" in
+      *[+.]*) sub_folder 1 "$owner" "${dir}subscriptions" "$out" "$SUB_NOT_CONVERTED" ;;
+      *)      sub_folder 1 "$owner" "${dir}subscriptions" "$out" ;;
+    esac
+  done
+  for sid in "$@"; do
+    dir="$SESSIONMAIL_HOME/sessions/$sid/subscriptions"
+    # The D path writes san(sid); a sid san() would CHANGE (`s1, bob`) must
+    # not reach a row verbatim, where `, ` starts another destination.
+    case "$sid" in *[!${SUB_CHARS}-]*)
+      if [ -e "$SESSIONS_SETTINGS/$sid/settings" ] || [ -e "$dir" ] || [ -L "$dir" ]; then
+        sub_skip "$SESSIONS_SETTINGS/$sid" "not a session id postfix would keep"
+      fi
+      continue ;;
+    esac
+    layer_records "$out" 2 "$sid" "$SESSIONS_SETTINGS/$sid/settings" session
+    sub_folder 2 "$sid" "$dir" "$out" "$SUB_NOT_CONVERTED_SESSION"
+  done
+}
+
+VALIAS_RC=0          # 3 after a refusal; the script's exit status once vmailbox is written
+VALIAS_LIVE=0        # live sessions with a box (lines generated)
+VALIAS_SKIPPED=0     # live sessions WITHOUT a box (never armed) — no line, on purpose
+VALIAS_WITHHELD=0    # live sessions with a box whose SEAT WORD is not a box - no seat row, named on stderr
+VALIAS_STATIC_N=0    # standing lines folded in from $VALIAS_STATIC
+VALIAS_PLUS=0        # declared plus addresses written (one per live session with a box)
+VALIAS_PLUS_REFUSED=0  # declared addresses plus_rows refused - no row, counted on stderr
+VALIAS_ADDR_UNREAD=0   # live sessions whose layer cannot be read - no plus row, named on stderr
+VALIAS_ADDR_OLD=0      # live sessions with only an old address file (3.3b) - no plus row, named on stderr
+
+# valias_refuse REASON -> the warning on stderr, VALIAS_RC=3. On a REGENERATE path it
+# also leaves the $MAIL_ROOT/.state/regen-failures.log breadcrumb (see the header).
+# On --print-valias it writes NO file and NO dir: that path's contract is stdout
+# only, and its caller reads the stderr line and the exit 3 directly.
+valias_refuse() {
+  printf 'vmailbox-gen: ⚠ valias NOT regenerated — the previous alias map stays in force: %s\n' "$*" >&2
+  VALIAS_RC=3
+  if [ "$PRINT_VALIAS" -eq 1 ]; then return 0; fi
+  local d="$MAIL_ROOT/.state"
+  { mkdir -p "$d" 2>/dev/null \
+      && printf '%s\tvalias\tREFUSED\t%s\n' "$(date '+%Y-%m-%dT%H:%M:%S%z')" "$*" >> "$d/regen-failures.log"; } 2>/dev/null || true
+}
+
+# live_sessions_json -> a JSON array on STDOUT, one {session_id, agent} per LIVE
+# Claude Code session, from the sidecars in $SIDECAR_DIR. LIVE is `session
+# list`'s rule, kept whole: the sidecar's pid is running (it is in `ps`) AND
+# that process started within 2 s of the sidecar's procStart, so a pid the OS
+# has handed to something else is not the session. procStart is UTC ctime;
+# `ps` is asked in UTC so the two compare as the same kind of string. A
+# sidecar that will not parse (mid-write, or foreign) is skipped, as `session
+# list` skipped it. Returns non-zero only when it could not LOOK: no sidecar
+# directory, or `ps` failing - never for "nobody is live".
+live_sessions_json() {
+  local f ps_tab cars
+  [ -d "$SIDECAR_DIR" ] || return 2
+  ps_tab="$(LC_ALL=C TZ=UTC ps -axo pid=,lstart= 2>/dev/null)" || return 2
+  [ -n "$ps_tab" ] || return 2
+  cars="$(for f in "$SIDECAR_DIR"/*.json; do
+            [ -f "$f" ] || continue
+            jq -c 'select(type=="object")
+                   | {pid: (.pid | tostring), sid: (.sessionId // ""),
+                      agent: (.agent // ""), start: (.procStart // "")}' "$f" 2>/dev/null || true
+          done)"
+  printf '%s\n' "$cars" | jq -s -c --arg ps "$ps_tab" '
+    def epoch: try (gsub(" +"; " ") | sub("^ | $"; ""; "g")
+                    | strptime("%a %b %d %H:%M:%S %Y") | mktime) catch null;
+    ([ $ps | split("\n")[]
+       | capture("^\\s*(?<pid>[0-9]+)\\s+(?<start>.*\\S)\\s*$")? ]
+     | map({key: .pid, value: (.start | epoch)}) | from_entries) as $started
+    | [ .[]
+        | select(.sid != "" and .start != "")
+        | ($started[.pid] // null) as $t
+        | (.start | epoch) as $s
+        | select($t != null and $s != null and (($t - $s) | fabs) <= 2)
+        | {session_id: .sid, agent: .agent} ]'
+}
+
+# generate_valias -> the alias map text on STDOUT (sorted, deterministic); returns 3
+# and prints NOTHING after a refusal (see the header). Run it with stdout to a FILE,
+# not in $(...): the counters above are set in this shell.
+generate_valias() {
+  local json self rec seat sid line
+  command -v jq >/dev/null 2>&1      || { valias_refuse "no 'jq' on PATH"; return 3; }
+  json="$(live_sessions_json)" \
+    || { valias_refuse "could not read the live sessions (no sidecar dir $SIDECAR_DIR, or 'ps' failed)"; return 3; }
+  printf '%s' "$json" | jq -e 'type=="array"' >/dev/null 2>&1 \
+    || { valias_refuse "the live-session reader did not return a JSON array"; return 3; }
+  self="${CLAUDE_CODE_SESSION_ID:-}"
+  if [ -n "$self" ] && ! printf '%s' "$json" | jq -e --arg s "$self" 'any(.[]; .session_id==$s)' >/dev/null 2>&1; then
+    valias_refuse "run inside session $self but the sidecars in $SIDECAR_DIR do not show it live — the list is not trustworthy and an empty-ish map would switch every seat->session copy off"
+    return 3
+  fi
+  rec="$(mktemp "${TMPDIR:-/tmp}/valias-rec.XXXXXX")"
+  # DYNAMIC records, one per live session WITH a box WHOSE SEAT WORD IS ITSELF A BOX
+  # (see the header). Sorted by seat then sid so two runs over the same
+  # sessions are byte-identical, and so one word's withheld sessions arrive together.
+  local box withheld_list="" withheld_word="" withheld_n=0
+  while IFS="$(printf '\t')" read -r seat sid; do
+    case "$sid" in ''|*/*|*..*|.*) continue ;; esac          # traversal guard before the -d
+    if [ ! -d "$AGENTS_DIR/$sid" ]; then
+      VALIAS_SKIPPED=$((VALIAS_SKIPPED + 1)); continue
+    fi
+    # The seat word, as the awk D branch will key it (lowercased, then stripped to
+    # [a-z0-9_.-]), is the row's FIRST destination: mint only when that is a box.
+    # The raw word and the keyed word both pass the sid's traversal guard first.
+    box="$(printf '%s' "$seat" | LC_ALL=C tr '[:upper:]' '[:lower:]' | LC_ALL=C tr -cd 'a-z0-9_.-')"
+    case "$seat" in ''|*/*|*..*|.*) box="" ;; esac
+    case "$box" in ''|*/*|*..*|.*) box="" ;; esac
+    if [ -n "$box" ] && [ -d "$AGENTS_DIR/$box/new" ]; then
+      printf 'D\t%s\t%s\n' "$seat" "$sid" >> "$rec"; VALIAS_LIVE=$((VALIAS_LIVE + 1))
+      continue
+    fi
+    VALIAS_WITHHELD=$((VALIAS_WITHHELD + 1))
+    if [ "$seat" = "$withheld_word" ]; then
+      withheld_n=$((withheld_n + 1))
+    else
+      if [ "$withheld_n" -gt 0 ]; then withheld_list="$withheld_list $withheld_word=$withheld_n"; fi
+      withheld_word="$seat"; withheld_n=1
+    fi
+  done < <(printf '%s' "$json" \
+           | jq -r '.[] | select(((.session_id // "") != "") and ((.agent // "") != "")) | "\(.agent)\t\(.session_id)"' \
+           | LC_ALL=C sort -u)
+  if [ "$withheld_n" -gt 0 ]; then withheld_list="$withheld_list $withheld_word=$withheld_n"; fi
+  if [ "$VALIAS_WITHHELD" -gt 0 ]; then
+    printf 'vmailbox-gen: withheld %d seat record(s) whose seat word is not itself a box (agents/<word>/new) - no <word>@ row written, word=sessions:%s\n' \
+      "$VALIAS_WITHHELD" "$withheld_list" >&2
+  fi
+  # PLUS records: every live session WITH A BOX that declared an address - by
+  # session id alone, whatever its agent word. Only listed sessions are read.
+  local refused_list="" addr rows row rc unread_list="" old_list=""
+  while IFS= read -r sid; do
+    case "$sid" in ''|*/*|*..*|.*) continue ;; esac
+    [ -d "$AGENTS_DIR/$sid" ] || continue
+    # The session layer's `address` (task 3.3b). An old `address` file routes
+    # nothing: counted below, so a session never converted is not silent.
+    rc=0; layer_address "$SESSIONS_SETTINGS/$sid/settings" || rc=$?
+    if [ "$rc" -eq 2 ]; then
+      VALIAS_ADDR_UNREAD=$((VALIAS_ADDR_UNREAD + 1)); unread_list="$unread_list $sid"; continue
+    fi
+    if [ "$rc" -ne 0 ]; then
+      if [ -e "$SESSIONMAIL_HOME/sessions/$sid/address" ]; then
+        VALIAS_ADDR_OLD=$((VALIAS_ADDR_OLD + 1)); old_list="$old_list $sid"
+      fi
+      continue
+    fi
+    addr="$LAYER_ADDR"
+    if rows="$(plus_rows "$addr" "$sid")"; then
+      while IFS= read -r row; do printf 'A\t%s\n' "$row" >> "$rec"; done <<< "$rows"
+      VALIAS_PLUS=$((VALIAS_PLUS + 1))
+    else
+      VALIAS_PLUS_REFUSED=$((VALIAS_PLUS_REFUSED + 1)); refused_list="$refused_list $sid=$addr"
+    fi
+  done < <(printf '%s' "$json" | jq -r '.[] | (.session_id // "")' | LC_ALL=C sort -u)
+  if [ "$VALIAS_PLUS_REFUSED" -gt 0 ]; then
+    printf 'vmailbox-gen: plus_rows refused %d declared address(es) that are not <base>+<ext> - no row written:%s\n' \
+      "$VALIAS_PLUS_REFUSED" "$refused_list" >&2
+  fi
+  if [ "$VALIAS_ADDR_UNREAD" -gt 0 ]; then
+    printf 'vmailbox-gen: %d session layer(s) could not be read (settings/mail.json not JSON, or not a JSON object) - no plus row written:%s\n' \
+      "$VALIAS_ADDR_UNREAD" "$unread_list" >&2
+  fi
+  if [ "$VALIAS_ADDR_OLD" -gt 0 ]; then
+    printf "vmailbox-gen: %d session(s) with an old address file, never converted - no plus row written; \`pager settings migrate\` (or the session's next \`pager listen\`) moves it:%s\n" \
+      "$VALIAS_ADDR_OLD" "$old_list" >&2
+  fi
+  # SUBSCRIPTION records (message-subscriptions D1/D2): every seat's folder,
+  # and the folder of every live session WITH A BOX - the same liveness rule
+  # as the seat rows above, so a dead session's files are never read.
+  local subs_rec live_boxed=()
+  subs_rec="$(mktemp "${TMPDIR:-/tmp}/valias-subs.XXXXXX")"
+  while IFS= read -r sid; do
+    case "$sid" in ''|*/*|*..*|.*) continue ;; esac
+    if [ -d "$AGENTS_DIR/$sid" ]; then live_boxed+=("$sid"); fi
+  done < <(printf '%s' "$json" | jq -r '.[] | (.session_id // "")' | LC_ALL=C sort -u)
+  subscription_records "$subs_rec" ${live_boxed[@]+"${live_boxed[@]}"}
+  : > "$subs_rec.ok"
+  sub_resolve "$subs_rec" "$subs_rec.ok"
+  VALIAS_SUBS="$(wc -l < "$subs_rec.ok" | tr -d ' ')"
+  LC_ALL=C sort -u "$subs_rec.ok" >> "$rec"
+  rm -f "$subs_rec" "$subs_rec.ok"
+  if [ "$VALIAS_SUBS_SKIPPED" -gt 0 ]; then
+    printf 'vmailbox-gen: subscriptions: skipped %d subscription file(s), never written: %s\n' \
+      "$VALIAS_SUBS_SKIPPED" "$SUBS_SKIPPED_LIST" >&2
+  fi
+  # STATIC records: the raw line, verbatim; awk parses it (tabs allowed).
+  if [ -r "$VALIAS_STATIC" ]; then
+    while IFS= read -r line || [ -n "$line" ]; do
+      printf 'S\t%s\n' "$line" >> "$rec"
+    done < "$VALIAS_STATIC"
+  fi
+  # KEY UNION in one awk: every (key, destination) pair is added once, keys keep
+  # every destination they were given, in first-seen order (dynamic first, so the
+  # seat itself leads). Output is one line per key; `sort` makes the order fixed.
+  awk -v host="$HOST" -v fqdn="$FQDN" '
+    function san(s)  { s = tolower(s); gsub(/[^a-z0-9_.-]/, "", s); return s }
+    function trim(s) { gsub(/^[ \t]+|[ \t]+$/, "", s); return s }
+    function add(k, d) {
+      if (k == "" || d == "") return
+      if (!(k in dests)) { dests[k] = d; seen[k SUBSEP d] = 1; return }
+      if ((k SUBSEP d) in seen) return
+      seen[k SUBSEP d] = 1; dests[k] = dests[k] ", " d
+    }
+    function has(k, d) { return ((k SUBSEP d) in seen) }
+    # The FQDN form of a local part, or "" under --no-fqdn (FQDN empty): add()
+    # drops a pair with an empty side, so no `name@` key is ever written.
+    function fq(n) { return fqdn == "" ? "" : n "@" fqdn }
+    # A key whose domain is `<host>.<anything>` (one `@`): this host in a
+    # longer form. Asked under --no-fqdn only, where no suffix was asked.
+    function ondot(k,   i, dom) {
+      i = index(k, "@"); dom = substr(k, i + 1)
+      return i > 1 && index(dom, "@") == 0 && substr(dom, 1, length(host) + 1) == host "."
+    }
+    function endswith(s, suf) { return length(s) >= length(suf) && substr(s, length(s) - length(suf) + 1) == suf }
+    substr($0, 1, 2) == "D\t" {
+      split(substr($0, 3), f, "\t"); seat = san(f[1]); sid = san(f[2])
+      if (seat == "" || sid == "") next
+      add(seat "@" host, seat "@" host); add(seat "@" host, sid "@" host)
+      add(fq(seat), fq(seat)); add(fq(seat), fq(sid))
+      # +memory is NOT copied (identity line): postfix looks up user+ext@domain
+      # BEFORE user@domain, so this exact key stops the expansion and the owner
+      # memory writes stay out of the session inboxes. Measured
+      # without it: every +memory mail landed in the session box as
+      # <sid>+memory, unheard by the arm, piling up unread. (No apostrophes in
+      # this awk program: it is single-quoted by the shell.)
+      add(seat "+memory@" host, seat "+memory@" host)
+      add(fq(seat "+memory"), fq(seat "+memory"))
+      next
+    }
+    substr($0, 1, 2) == "A\t" {
+      # A plus row, already guarded by plus_rows: key and destination verbatim.
+      split(substr($0, 3), f, "\t"); add(f[1], f[2])
+      next
+    }
+    substr($0, 1, 2) == "U\t" {
+      # A subscription, already guarded by subscription_records: U, box
+      # address, rank (1 seat, 2 session: seats lead), subscriber. The box
+      # itself is the first destination (a COPY, D2). A plus box is an EXACT
+      # key and CLAIMS its tag; nothing is unioned into it. A
+      # bare box brings its +memory identity row: the same claim, made by
+      # the box alone, so memory writes never reach a subscriber.
+      split(substr($0, 3), f, "\t"); box = tolower(f[1]); who = tolower(f[3])
+      if (f[2] == 2) who = san(who)            # a session id, as the D path writes it
+      if (box == "" || who == "") next
+      # ONE BOX, ONE COPY: a plus key whose row already delivers to its base
+      # (a task doorbell, `<base>+<ext> -> <base>, <sid>`) must not also list
+      # `<base>+<ext>`, which lands in the SAME maildir.
+      p = index(box, "+"); base = p ? substr(box, 1, p - 1) : ""
+      if (!(p && has(box "@" host, base "@" host))) add(box "@" host, box "@" host)
+      add(box "@" host, who "@" host)
+      if (!(p && has(fq(box), fq(base)))) add(fq(box), fq(box))
+      add(fq(box), fq(who))
+      if (index(box, "+") == 0) {
+        add(box "+memory@" host, box "+memory@" host)
+        add(fq(box "+memory"), fq(box "+memory"))
+      }
+      next
+    }
+    substr($0, 1, 2) == "S\t" {
+      line = substr($0, 3); sub(/#.*/, "", line); line = trim(line)
+      if (line == "") next
+      n = split(line, f, /[ \t]+/); key = tolower(f[1])
+      rest = ""; for (i = 2; i <= n; i++) rest = rest " " f[i]
+      m = split(rest, ds, /[ \t,]+/)
+      # BOTH host forms for a static key too: bare name, @host or @fqdn.
+      # Under --no-fqdn (fqdn empty) only the short form is keyed, and a key
+      # in ANY `@<host>.<domain>` form is read as this host, as the drop reads
+      # an address (`_drop.qualify`), since the suffix was not asked.
+      if (index(key, "@") == 0)            { k1 = key "@" host; k2 = fq(key) }
+      else if (endswith(key, "@" host))    { k1 = key; k2 = fq(substr(key, 1, length(key) - length(host) - 1)) }
+      else if (fqdn != "" && endswith(key, "@" fqdn)) { k1 = substr(key, 1, length(key) - length(fqdn)) host; k2 = key }
+      else if (fqdn == "" && ondot(key))   { k1 = substr(key, 1, index(key, "@")) host; k2 = "" }
+      else                                 { k1 = key; k2 = "" }
+      got = 0
+      for (i = 1; i <= m; i++) { d = tolower(ds[i]); if (d == "") continue; add(k1, d); if (k2 != "") add(k2, d); got = 1 }
+      if (got) nstatic++
+      next
+    }
+    END { for (k in dests) printf "%s\t%s\n", k, dests[k]; printf "%d\n", nstatic + 0 > "/dev/stderr" }
+  ' "$rec" 2>"$rec.n" | LC_ALL=C sort
+  VALIAS_STATIC_N="$(tr -dc '0-9' < "$rec.n")"; VALIAS_STATIC_N="${VALIAS_STATIC_N:-0}"
+  rm -f "$rec" "$rec.n"
+  return 0
+}
+
+if [ "${#SUB_BOX_ARGS[@]}" -eq 1 ]; then
+  sub_decode "${SUB_BOX_ARGS[0]}" || { printf 'vmailbox-gen: %s\n' "$SUB_WHY" >&2; exit 3; }
+  printf '%s' "$SUB_BOX"
+  exit 0
+fi
+
+if [ "${#PLUS_ROWS_ARGS[@]}" -eq 2 ]; then
+  plus_rows "${PLUS_ROWS_ARGS[0]}" "${PLUS_ROWS_ARGS[1]}" || exit $?
+  exit 0
+fi
+
+if [ "$PRINT_VALIAS" -eq 1 ]; then
+  generate_valias || exit $?
+  exit 0
+fi
+
+if [ "$PRINT" -eq 1 ]; then
+  generate
+  exit 0
+fi
+
+# THE LIVE-TREE GUARD. Everything below WRITES, and the target is decoupled
+# from the source on purpose (--out vs --root), so nothing else ties a run's ROOT to
+# the maps postfix READS: a sandbox root with no --out would publish its own keys over
+# every real route. Both sides are MEASURED from postfix, never written down here:
+# the tree postfix serves is `postconf -xh virtual_mailbox_base`, the dirs it reads
+# maps from are those of virtual_mailbox_maps and virtual_alias_maps.
+#
+#   no --out (the PINNED live target), or an --out whose dir resolves to the pinned
+#            one: run only when the root IS that tree. When postconf cannot answer,
+#            or either path does not resolve, REFUSE whatever the root - fail closed
+#            (a map with no postfix behind it routes nothing).
+#   --out    anywhere else: refuse only when the out dir is one postfix reads AND the
+#            tree postfix serves was measured and is not the root. An --out into
+#            scratch runs: that is how tests and proofs regenerate.
+#
+# A refusal writes NOTHING (no map dir, lock, map, postmap or failure log), prints ONE
+# stderr line naming both paths, and exits 5. postconf is $SESSIONMAIL_POSTCONF when
+# that is SET (only that path, never a fallback: set to a missing file it means "no
+# postconf", which is how the suite stays off the host's), else postconf on PATH,
+# else the system locations sessionmail's _sig.POSTCONF_FALLBACK lists.
+postconf_cmd() {
+  local c
+  if [ -n "${SESSIONMAIL_POSTCONF+set}" ]; then
+    [ -n "$SESSIONMAIL_POSTCONF" ] && [ -x "$SESSIONMAIL_POSTCONF" ] || return 1
+    printf '%s' "$SESSIONMAIL_POSTCONF"; return 0
+  fi
+  c="$(command -v postconf 2>/dev/null)" || c=""
+  [ -n "$c" ] && { printf '%s' "$c"; return 0; }
+  for c in /usr/sbin/postconf /opt/homebrew/sbin/postconf; do
+    [ -x "$c" ] && { printf '%s' "$c"; return 0; }
+  done
+  return 1
+}
+real_dir() { [ -n "$1" ] && [ -d "$1" ] && (CDPATH='' cd -P -- "$1" 2>/dev/null && pwd -P); }
+live_guard() {
+  local pc="" base="" base_r="" root_r map_r def_r maps="" m d why="" live_dir=0
+  root_r="$(real_dir "$MAIL_ROOT")" || root_r=""
+  map_r="$(real_dir "$STATE_DIR")" || map_r="$STATE_DIR"
+  def_r="$(dirname "$DEFAULT_MAP")"
+  def_r="$(real_dir "$def_r")" || def_r="$(dirname "$DEFAULT_MAP")"
+  if pc="$(postconf_cmd)"; then
+    base="$("$pc" -xh virtual_mailbox_base 2>/dev/null)" || base=""
+    base_r="$(real_dir "$base")" || base_r=""
+    maps="$("$pc" -xh virtual_mailbox_maps 2>/dev/null)" || maps=""
+    maps="$maps $("$pc" -xh virtual_alias_maps 2>/dev/null)" || true
+  fi
+  for m in ${maps//,/ }; do
+    case "$m" in *:/*) ;; *) continue ;; esac
+    d="$(dirname "${m##*:}")"
+    d="$(real_dir "$d")" || d="$(dirname "${m##*:}")"
+    [ "$d" = "$map_r" ] && live_dir=1
+  done
+  if [ -n "$base_r" ]; then why="postfix serves $base"
+  elif [ -z "$pc" ]; then why="no postconf to ask"
+  elif [ -n "$base" ]; then why="postfix serves $base, which does not resolve"
+  else why="postconf could not say virtual_mailbox_base"; fi
+  if [ -z "$OUT" ] || [ "$map_r" = "$def_r" ]; then
+    [ -n "$base_r" ] && [ -n "$root_r" ] && [ "$root_r" = "$base_r" ] && return 0
+  else
+    [ "$live_dir" -eq 1 ] && [ -n "$base_r" ] && [ "$root_r" != "$base_r" ] || return 0
+  fi
+  printf 'vmailbox-gen: REFUSED: root %s is not the tree postfix serves (%s) - map dir %s NOT written\n' \
+    "$MAIL_ROOT" "$why" "$STATE_DIR" >&2
+  exit 5
+}
+live_guard
+
+# Build the alias text BEFORE taking the lock (the sidecar read is tens of ms; the lock is
+# held for the writes only). A refusal here is loud, leaves VALIAS_RC=3 and the
+# previous valias untouched, and does NOT stop the mailbox map from being written.
+VALIAS_TEXT=""
+if [ "$DO_VALIAS" -eq 1 ]; then
+  VALIAS_TEXT="$(mktemp "${TMPDIR:-/tmp}/valias-text.XXXXXX")"
+  generate_valias > "$VALIAS_TEXT" || VALIAS_RC=$?
+fi
+
+# The map dir is made ONCE, with sudo, by the setup in docs/postfix-configuration.md
+# (sudo install -d, setgid <you>:_postfix 2750). This generator runs as the owner
+# with NO root. If the dir is missing it tries a plain `mkdir -p`: for --out into a
+# test/temp target that is all it needs. On a live host a dir made that way has the
+# umask's mode and not group _postfix, so the daemon cannot read the maps: do the
+# setup first. When the mkdir fails, stop with a clear error rather than write
+# somewhere the daemon can't read. The error carries the one command that makes
+# the dir, filled in with this account and this dir, so the reader can run it.
+[ -d "$STATE_DIR" ] || mkdir -p "$STATE_DIR" 2>/dev/null \
+  || die "map dir $STATE_DIR does not exist and could not be made - no map written; make it once, as in docs/postfix-configuration.md, Setup step 1: sudo install -d -o $(id -un 2>/dev/null || printf '<you>') -g _postfix -m 2750 $(printf '%q' "$STATE_DIR")"
+
+# Serialize concurrent regens (the arm-hook fires per listener while --apply may
+# be seeding — they race on the same target). Stock macOS ships no flock(1), so
+# use a mkdir lock: mkdir is an atomic create-or-fail on every POSIX/BSD fs. The
+# temp+mv write below is what keeps virtual(8) from ever reading a half-written
+# map; the lock keeps two *writers* from interleaving their generate/mv/postmap.
+LOCKDIR="$STATE_DIR/.vmailbox-gen.lock"
+_locked=0
+i=0
+while [ "$i" -lt 100 ]; do
+  if mkdir "$LOCKDIR" 2>/dev/null; then _locked=1; break; fi
+  sleep 0.1; i=$((i + 1))
+done
+[ "$_locked" -eq 1 ] || die "could not acquire regen lock $LOCKDIR after 10s (stuck run? remove it if stale)"
+trap 'rmdir "$LOCKDIR" 2>/dev/null || true' EXIT
+
+# Write atomically (temp + mv) so a concurrent virtual(8) lookup never reads a
+# half-written map. BOTH the source text AND its .db are built on the temp path
+# and moved into place, so the daemon never sees a source/.db mismatch either.
+# Same-directory temp keeps every mv on one filesystem (rename is atomic).
+tmp="$(mktemp "$STATE_DIR/vmailbox.XXXXXX")"
+# shellcheck disable=SC2064
+vtmp="$(mktemp "$STATE_DIR/valias.XXXXXX")"
+# shellcheck disable=SC2064
+trap 'rm -f "$tmp" "$tmp.db" "$vtmp" "$vtmp.db" ${VALIAS_TEXT:+"$VALIAS_TEXT"}; rmdir "$LOCKDIR" 2>/dev/null || true' EXIT
+if [ "$VALIAS_ONLY" -eq 0 ]; then
+generate > "$tmp"
+# 0640: the CONSUMER (virtual(8)) reads the map via its primary group _postfix
+# (gid 27) off the setgid map dir — owner rw, group r. mktemp/postmap default
+# to 0600/0644; without this clamp the umask would leave 0644 (world-readable) and
+# a 0600 temp would be unreadable by the daemon. 0640 is the §5.8 file mode.
+chmod 0640 "$tmp"
+
+if [ "$DO_POSTMAP" -eq 1 ]; then
+  command -v postmap >/dev/null 2>&1 || die "postmap not on PATH — cannot build $VMAILBOX.db"
+  postmap "hash:$tmp"          # builds $tmp.db from $tmp (the temp source)
+  chmod 0640 "$tmp.db"
+  mv -f "$tmp" "$VMAILBOX"
+  mv -f "$tmp.db" "$VMAILBOX.db"
+else
+  mv -f "$tmp" "$VMAILBOX"
+fi
+
+printf 'vmailbox-gen: wrote %s (%d entries) for host %s\n' \
+  "$VMAILBOX" "$(wc -l < "$VMAILBOX" | tr -d ' ')" "$HOST"
+fi   # VALIAS_ONLY
+
+# THE ALIAS MAP — same discipline: temp + postmap + mv, under the same lock, so
+# virtual(8)/cleanup(8) never see a half-written source or a source/.db mismatch.
+if [ "$DO_VALIAS" -eq 1 ] && [ "$VALIAS_RC" -eq 0 ]; then
+  cp "$VALIAS_TEXT" "$vtmp"
+  chmod 0640 "$vtmp"
+  if [ "$DO_POSTMAP" -eq 1 ]; then
+    command -v postmap >/dev/null 2>&1 || die "postmap not on PATH — cannot build $VALIAS.db"
+    postmap "hash:$vtmp"
+    chmod 0640 "$vtmp.db"
+    mv -f "$vtmp" "$VALIAS"
+    mv -f "$vtmp.db" "$VALIAS.db"
+  else
+    mv -f "$vtmp" "$VALIAS"
+  fi
+  printf 'vmailbox-gen: wrote %s (%d keys: %d live session(s) with a box, %d live without one skipped, %d withheld (seat word not a box), %d plus address(es), %d refused, %d subscription(s), %d skipped, %d standing line(s) from %s)\n' \
+    "$VALIAS" "$(wc -l < "$VALIAS" | tr -d ' ')" "$VALIAS_LIVE" "$VALIAS_SKIPPED" "$VALIAS_WITHHELD" "$VALIAS_PLUS" "$VALIAS_PLUS_REFUSED" "$VALIAS_SUBS" "$VALIAS_SUBS_SKIPPED" "$VALIAS_STATIC_N" \
+    "$([ -r "$VALIAS_STATIC" ] && printf '%s' "$VALIAS_STATIC" || printf '%s (absent)' "$VALIAS_STATIC")"
+elif [ "$DO_VALIAS" -eq 1 ]; then
+  printf 'vmailbox-gen: valias NOT written (refused, see stderr); %s left as it was\n' "$VALIAS"
+fi
+exit "$VALIAS_RC"

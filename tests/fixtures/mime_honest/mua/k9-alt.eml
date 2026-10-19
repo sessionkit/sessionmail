@@ -1,0 +1,22 @@
+From: Carol <carol@example.org>
+To: Dave <dave@example.net>
+Subject: k9-alt
+Date: Thu, 03 Jan 2030 12:00:00 +0000
+Message-ID: <k9-alt@example.org>
+MIME-Version: 1.0
+Content-Type: multipart/alternative; boundary="----P0K9B0UNDARY"
+User-Agent: K-9 Mail for Android
+
+------P0K9B0UNDARY
+Content-Type: text/plain;
+ charset=utf-8
+Content-Transfer-Encoding: quoted-printable
+
+Hi Dave,=0A=0AThe numbers are attached. Caf=C3=A9 at 10?
+------P0K9B0UNDARY
+Content-Type: text/html;
+ charset=utf-8
+Content-Transfer-Encoding: quoted-printable
+
+<html><body>Caf=C3=A9</body></html>
+------P0K9B0UNDARY--

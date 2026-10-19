@@ -1,0 +1,71 @@
+{
+  "description": "sessionmail's hooks, installed with the plugin: every hook sessionmail relies on is installed when a user installs the plugin. SessionStart: `pager hook start` births this session's box (cur/new/tmp under the mail root) at the first moment of every session, declares its seat address and, when a map row is missing, starts the generator detached, so the hook returns at once; it never makes the mail root, and it exits 0 whatever fails. The birth is ungated; what it says (the box line, then the same state line as PostToolBatch) is gated like the rest: only with \"hooks\": true, and never with SESSIONMAIL_PAGER=off. The Stop, PostToolBatch and UserPromptSubmit hooks speak only when ~/.sessionkit/mail/settings/mail.json holds \"hooks\": true. When that file is missing, the PostToolBatch hook writes it with the hooks OFF and says so, once; a faulty file is off, and says so once; SESSIONMAIL_PAGER=off wins over the file. The one exception to off-means-silent is the deaf check: the Stop and PostToolBatch hooks always run it, and when this seat's pager is required (\"pager_required\": true at the host, seat or session layer, or SESSIONMAIL_PAGER_REQUIRED=1, which wins both ways) and nothing listens past a ~10 s grace and it is not muted, they say DEAF with the reason and the two ways out; not required, they say nothing. Stop: say `pager is not listening` (exit 2, one turn) when it is not - it reads the settings file, never writes it, and stamps nothing; idle is `session get idle` (a stopped session is idle). It says nothing to a seat that stood down with `pager stop` (its `off` stamp, cleared by the next `pager listen`). PostToolBatch: the ride-along - the mail this session has not been given yet, then which state line holds (listening, not listening, or muted after `pager mute` or a `pager stop` of a hand listener; `pager off`/`stop` refuse on the pager monitor), given once, then only on change; with the hooks off it says nothing, mail included; inside a subagent (payload agent_id) it takes, marks and stamps nothing and says nothing, so the seat's mail waits for its own main thread or the page. UserPromptSubmit (wake carry): the SAME command as PostToolBatch, one script and one scoop, so a turn start can carry the ride-along with no tool call. It notifies (the ride-along's mail as additionalContext) and stamps (the ride-along stamp) only when it carries; otherwise it writes nothing (not even a missing settings file) and says nothing. A notice prompt (<task-notification>) carries only if it unlinks the carry stamp a page wrote when a wake (every wake carries) paged: of two runs, one. A typed prompt carries only with `set carry-prompt on` in the locked rules file (default off), and never with `set carry off`. Inside a subagent, never. With the hooks off, silent. All four run `pager hook <event>`: seat identity has ONE resolver, in the pager, never a shell copy of it. PreToolUse (Bash): mail-guard - always on; it does not read the settings file. It denies a mail send the shell has damaged before it runs: for `message send`, a backtick or $( outside single quotes in the subject or a --header; for `session mail send`, also an inline or stdin body. It reads the command as typed, and fails OPEN: no python3, a missing file or a crash all allow (hooks/mail-guard-hook). PreToolUse (MCP): the same mail-guard on the message and pager servers' tools (not memory's); it acts only inside a subagent (payload agent_id), where it denies what its Bash door denies (message_read without peek, message_mark, pager_status with new_only, pager_stop/off/mute/unmute/listen), and allows every main-thread MCP call at once, silent.",
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/pager-hook\" start",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/pager-hook\" stop",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "PostToolBatch": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/pager-hook\" batch",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/pager-hook\" batch",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/mail-guard-hook\"",
+            "timeout": 5
+          }
+        ]
+      },
+      {
+        "matcher": "mcp__plugin_sessionmail_(message|pager)__.*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/mail-guard-hook\"",
+            "timeout": 5
+          }
+        ]
+      }
+    ]
+  }
+}

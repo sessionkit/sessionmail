@@ -1,0 +1,391 @@
+#!/usr/bin/env python3
+"""delivery-check - which delivery does this host's postfix use?
+
+Read-only. Package data run by path, like `vmailbox-gen` and `store-index`;
+not a console script (one package, three commands). Stdlib only, and it
+imports nothing from sessionmail.
+
+    delivery-check [--box DIR] [--files N]
+
+Prints one verdict line, then its evidence, then its gaps:
+
+    delivery: virtual | insert | mixed | unknown
+
+  virtual  every virtual_mailbox_domains entry is delivered by virtual(8)
+  insert   every one goes to a pipe service running nm-deliver or
+           `notmuch insert` (index at delivery,
+           docs/postfix-configuration.md#index-at-delivery-opt-in)
+  mixed    some domains one way, some the other
+  unknown  a domain goes elsewhere (lmtp, another pipe), or its service is
+           missing from master.cf, or a lookup failed
+
+Evidence, in order: `postconf -xh virtual_transport` (every parameter is
+read with -x, so `$name` references come back expanded, as postfix uses
+them); for each domain a `transport_maps` lookup (a hit there beats virtual_transport, as in
+postfix; an entry that names a table is reported by virtual_transport, and
+with transport_maps set its rows are a gap); each transport's
+`postconf -M <name>/unix` line;
+`<name>_destination_recipient_limit`. For an insert host it also reads
+notmuch's `new.tags` (must hold `unread`, or insert writes to cur/ and the
+pager never hears the mail), the `post-insert` hook in `database.hook_dir`,
+and `database.mail_root` against `virtual_mailbox_base`. notmuch is read in
+the environment pipe(8) gives nm-deliver: HOME from the passwd entry, PATH
+/usr/bin:/bin, TZ and LANG, and no NOTMUCH_CONFIG, NOTMUCH_PROFILE or XDG_*,
+so it finds the config the wrapper's insert will find, not the caller's. The
+pipe runs as the service's `user=`; run the check as that user, or the
+notmuch reads are some other user's (a gap says so).
+
+--box DIR runs the file-name test over the newest N files (default 50) in
+DIR's new/ and cur/. DIR is a box's maildir, absolute or relative to
+virtual_mailbox_base. virtual(8) names a file `<sec>.V<dev>I<inode>M<usec>.<host>`;
+notmuch insert names it `<sec>.M<usec>P<pid>.<host>`. A box that changed
+delivery holds both, so the files line can say `mixed` while the config
+says one thing; the newest file says which wrote last.
+
+Exit 0 when it could look (gaps or not), 2 when it could not (no postconf,
+or postconf failed). It never writes anything. The NM_DELIVER_POSTCONF,
+NM_DELIVER_POSTMAP and NM_DELIVER_NOTMUCH variables name the binaries, as
+for nm-deliver; otherwise each is the first of a fixed list of absolute
+paths that is executable.
+"""
+
+from __future__ import annotations
+
+import argparse
+import os
+import pwd
+import re
+import subprocess
+import sys
+from pathlib import Path
+
+CANDIDATES = {
+    "NM_DELIVER_POSTCONF": ("/usr/sbin/postconf", "/opt/homebrew/sbin/postconf",
+                            "/usr/local/sbin/postconf"),
+    "NM_DELIVER_POSTMAP": ("/usr/sbin/postmap", "/opt/homebrew/sbin/postmap",
+                           "/usr/local/sbin/postmap"),
+    "NM_DELIVER_NOTMUCH": ("/opt/homebrew/bin/notmuch", "/usr/local/bin/notmuch",
+                           "/usr/bin/notmuch"),
+}
+#: The two writers' maildir file names (measured).
+VIRTUAL_NAME = re.compile(r"^\d+\.V[0-9a-fA-F]+I[0-9a-fA-F]+M\d+\.")
+INSERT_NAME = re.compile(r"^\d+\.M\d+P\d+\.")
+TIMEOUT = 10
+#: pipe(8) sets PATH itself and passes only export_environment (TZ MAIL_CONFIG
+#: LANG by default); nm-deliver adds HOME from passwd. Nothing else reaches it.
+PIPE_PATH = "/usr/bin:/bin"
+PIPE_PASSED = ("TZ", "LANG")
+
+
+class CannotLook(Exception):
+    """postconf is missing or failed: there is no config to report on."""
+
+
+def binary(var: str) -> str | None:
+    if os.environ.get(var):
+        return os.environ[var]
+    for path in CANDIDATES[var]:
+        if os.access(path, os.X_OK):
+            return path
+    return None
+
+
+def me() -> tuple[str, str]:
+    """(login name, home) of the uid this runs as, from passwd, as nm-deliver
+    takes HOME."""
+    try:
+        pw = pwd.getpwuid(os.getuid())
+    except KeyError:
+        return str(os.getuid()), ""
+    return pw.pw_name, pw.pw_dir
+
+
+def pipe_env() -> dict[str, str]:
+    """The environment nm-deliver runs notmuch in, under pipe(8)."""
+    env = {"PATH": PIPE_PATH, "HOME": me()[1]}
+    env.update({k: os.environ[k] for k in PIPE_PASSED if k in os.environ})
+    return env
+
+
+def run(argv: list[str], env: dict[str, str] | None = None) -> tuple[int, str, str]:
+    try:
+        p = subprocess.run(argv, capture_output=True, text=True, timeout=TIMEOUT,
+                           stdin=subprocess.DEVNULL, env=env)
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return 127, "", str(exc)
+    return p.returncode, p.stdout, p.stderr
+
+
+def split_list(value: str) -> list[str]:
+    return [v for v in re.split(r"[\s,]+", value.strip()) if v]
+
+
+def is_table(entry: str) -> bool:
+    """A domain-list entry that names a lookup table (`type:name`) or a file
+    of domains (`/path`), as postfix's domain lists allow, not a domain."""
+    return ":" in entry or entry.startswith("/")
+
+
+class Host:
+    def __init__(self) -> None:
+        self.postconf = binary("NM_DELIVER_POSTCONF")
+        self.postmap = binary("NM_DELIVER_POSTMAP")
+        self.notmuch = binary("NM_DELIVER_NOTMUCH")
+        if not self.postconf:
+            raise CannotLook("no postconf found (set NM_DELIVER_POSTCONF)")
+
+    def param(self, name: str) -> str:
+        rc, out, err = run([self.postconf, "-xh", name])
+        if rc != 0:
+            raise CannotLook(f"postconf -xh {name} failed (rc {rc}): {err.strip()[:200]}")
+        return out.strip()
+
+    def service(self, name: str) -> str:
+        rc, out, _ = run([self.postconf, "-M", f"{name}/unix"])
+        return out.strip() if rc == 0 else ""
+
+    def lookup(self, key: str, maps: list[str]) -> tuple[str | None, str | None]:
+        """(value, error): a hit, a miss (None, None), or a failed lookup."""
+        if not maps:
+            return None, None
+        if not self.postmap:
+            return None, "no postmap found (set NM_DELIVER_POSTMAP)"
+        rc, out, err = run([self.postmap, "-q", key, *maps])
+        if rc == 0 and out.strip():
+            return out.strip().splitlines()[0], None
+        if rc == 1 and "fatal" not in err:
+            return None, None
+        return None, f"postmap -q {key} failed (rc {rc}): {err.strip()[:200]}"
+
+    def notmuch_get(self, key: str) -> list[str] | None:
+        if not self.notmuch:
+            return None
+        rc, out, _ = run([self.notmuch, "config", "get", key], env=pipe_env())
+        return out.splitlines() if rc == 0 else None
+
+
+def classify_service(name: str, line: str) -> tuple[str, list[str]]:
+    """(kind, gaps) for one master.cf service line: virtual, insert, other
+    or missing."""
+    if not line:
+        return "missing", [f"transport {name!r} has no {name}/unix service in master.cf"]
+    fields = line.split()
+    command = fields[7] if len(fields) > 7 else ""
+    args = fields[8:]
+    if command == "virtual":
+        return "virtual", []
+    if command != "pipe":
+        return "other", []
+    argv: list[str] = []
+    for i, tok in enumerate(args):
+        if tok.startswith("argv="):
+            argv = [tok[len("argv="):], *args[i + 1:]]
+            break
+    flags = next((t[len("flags="):] for t in args if t.startswith("flags=")), "")
+    prog = os.path.basename(argv[0]) if argv else ""
+    gaps = []
+    if prog == "nm-deliver":
+        kind = "insert"
+    elif prog == "notmuch" and "insert" in argv[1:]:
+        kind = "insert"
+        gaps.append(f"{name}: argv runs notmuch insert directly; a config or database fault, "
+                    "or a run past the time limit, BOUNCES mail. Point it at nm-deliver")
+    else:
+        return "other", []
+    missing = [f for f in "DOR" if f not in flags]
+    if missing:
+        gaps.append(f"{name}: flags={flags or '(none)'} lacks {''.join(missing)}; "
+                    "virtual(8) writes Delivered-To, X-Original-To and Return-Path (DORhu)")
+    return kind, gaps
+
+
+def service_user(line: str) -> str:
+    """The `user=` of a pipe service line, or "" when it names none."""
+    return next((t.split("=", 1)[1].split(":", 1)[0] for t in line.split()[8:]
+                 if t.startswith("user=")), "")
+
+
+def file_test(box: Path, count: int) -> tuple[str, list[str]]:
+    files = []
+    for sub in ("new", "cur"):
+        d = box / sub
+        try:
+            with os.scandir(d) as it:
+                for e in it:
+                    if e.is_file(follow_symlinks=False):
+                        files.append((e.stat(follow_symlinks=False).st_mtime, e.name))
+        except OSError:
+            continue
+    if not files:
+        return f"files: no files in {box}/new or {box}/cur", []
+    files.sort(reverse=True)
+    newest = files[:count]
+    tally = {"virtual": 0, "insert": 0, "other": 0}
+
+    def writer(name: str) -> str:
+        if VIRTUAL_NAME.match(name):
+            return "virtual"
+        if INSERT_NAME.match(name):
+            return "insert"
+        return "other"
+
+    for _, name in newest:
+        tally[writer(name)] += 1
+    seen = [k for k in ("virtual", "insert") if tally[k]]
+    verdict = "mixed" if len(seen) == 2 else (seen[0] if seen else "unknown")
+    last = writer(newest[0][1])
+    line = (f"files: newest {len(newest)} in {box}: virtual {tally['virtual']}, "
+            f"insert {tally['insert']}, other {tally['other']} -> {verdict} "
+            f"(newest written by {last})")
+    return line, [last] if last in ("virtual", "insert") else []
+
+
+def check(box: str | None, count: int) -> tuple[list[str], int]:
+    host = Host()
+    out: list[str] = []
+    gaps: list[str] = []
+
+    vt_raw = host.param("virtual_transport") or "virtual"
+    vt = vt_raw.split(":", 1)[0] or "virtual"
+    domains = split_list(host.param("virtual_mailbox_domains"))
+    tmaps = split_list(host.param("transport_maps"))
+    base = host.param("virtual_mailbox_base")
+    out.append(f"  virtual_transport = {vt_raw}")
+    if not domains:
+        gaps.append("virtual_mailbox_domains is empty: postfix delivers no agent mail here")
+
+    kinds: dict[str, str] = {}
+    looked: dict[str, tuple[str, list[str], str]] = {}
+    for dom in domains:
+        if is_table(dom):
+            # postfix's default is `$virtual_mailbox_domains = $virtual_mailbox_maps`,
+            # which -x expands to the map itself: the entry names a lookup table,
+            # not a domain, so there is no domain key to probe transport_maps with.
+            name, via = vt, f"virtual_transport -> {vt_raw}"
+            if tmaps:
+                gaps.append(f"virtual_mailbox_domains names a lookup table ({dom}): "
+                            "its domains' transport_maps rows were not probed; "
+                            "check them with postmap -q")
+            if name not in looked:
+                line = host.service(name)
+                looked[name] = (*classify_service(name, line), line)
+            kinds[dom] = looked[name][0]
+            out.append(f"  table {dom}: {via} ({name}: {kinds[dom]})")
+            continue
+        value, err = host.lookup(dom, tmaps)
+        if err:
+            out.append(f"  domain {dom}: transport_maps lookup failed: {err}")
+            kinds[dom] = "error"
+            continue
+        if value is not None and value.split(":", 1)[0]:
+            name, via = value.split(":", 1)[0], f"transport_maps -> {value}"
+        else:
+            name, via = vt, f"virtual_transport -> {vt_raw}"
+        if name not in looked:
+            line = host.service(name)
+            looked[name] = (*classify_service(name, line), line)
+        kind = looked[name][0]
+        kinds[dom] = kind
+        out.append(f"  domain {dom}: {via} ({name}: {kind})")
+
+    for name, (kind, svc_gaps, line) in looked.items():
+        out.append(f"  service {name}/unix: {' '.join(line.split()[7:]) or '(none)'}")
+        gaps.extend(svc_gaps)
+        if kind != "insert":
+            continue
+        limit = ""
+        try:
+            limit = host.param(f"{name}_destination_recipient_limit")
+        except CannotLook:
+            pass
+        out.append(f"  {name}_destination_recipient_limit = {limit or '(unset)'}")
+        if limit != "1":
+            gaps.append(f"{name}_destination_recipient_limit is {limit or 'unset'}, "
+                        "not 1: pipe(8) needs one recipient per run for its D and O flags")
+
+    insert = "insert" in kinds.values()
+    if insert:
+        name, home = me()
+        out.append(f"  notmuch read as the pipe reads it: user {name}, HOME={home or '(none)'}, "
+                   "no NOTMUCH_CONFIG")
+        users = sorted({service_user(line) for kind, _, line in looked.values()
+                        if kind == "insert"} - {""})
+        others = [u for u in users if u != name]
+        if others:
+            gaps.append(f"the insert service runs as user={', '.join(others)}, but this check "
+                        f"ran as {name}: its notmuch reads are {name}'s config, not the "
+                        "pipe's; run delivery-check as that user")
+        tags = host.notmuch_get("new.tags")
+        if tags is None:
+            gaps.append("notmuch not found or `notmuch config get` failed: "
+                        "cannot check new.tags or the post-insert hook")
+        else:
+            out.append(f"  notmuch new.tags = {';'.join(tags) or '(empty)'}")
+            if "unread" not in tags:
+                gaps.append("notmuch new.tags lacks unread: insert files mail into cur/ "
+                            "and the pager, which watches new/, never hears it")
+            hook_dir = (host.notmuch_get("database.hook_dir") or [""])[0]
+            hook = Path(hook_dir) / "post-insert" if hook_dir else None
+            if hook and os.access(hook, os.X_OK):
+                out.append(f"  post-insert hook: {hook} (executable)")
+            else:
+                out.append(f"  post-insert hook: {hook or '(no database.hook_dir)'} (missing)")
+                gaps.append("no executable post-insert hook: delivered mail is not tagged "
+                            "+agent/+memory/+superseded until a notmuch new")
+            root = (host.notmuch_get("database.mail_root") or [""])[0] \
+                or (host.notmuch_get("database.path") or [""])[0]
+            same = bool(root and base) and \
+                os.path.realpath(root.rstrip("/")) == os.path.realpath(base.rstrip("/"))
+            out.append(f"  mail root: virtual_mailbox_base {base or '(unset)'}, "
+                       f"database.mail_root {root or '(unset)'}")
+            if not same:
+                gaps.append("virtual_mailbox_base is not notmuch's database.mail_root: "
+                            "insert's --folder is relative to mail_root")
+
+    if box is not None:
+        path = Path(box)
+        if not path.is_absolute() and base:
+            path = Path(base) / path
+        line, last = file_test(path, count)
+        out.append(f"  {line}")
+        config = set(kinds.values())
+        if last and config <= {"virtual", "insert"} and len(config) == 1 \
+                and last[0] not in config:
+            gaps.append(f"the newest file in {path} was written by {last[0]}, "
+                        f"but the config says {next(iter(config))}")
+
+    values = set(kinds.values())
+    if values == {"virtual"}:
+        verdict = "virtual"
+    elif values == {"insert"}:
+        verdict = "insert"
+    elif values == {"virtual", "insert"}:
+        verdict = "mixed"
+    else:
+        verdict = "unknown"
+    lines = [f"delivery: {verdict}", *out]
+    lines.append(f"gaps: {len(gaps) or 'none'}")
+    lines.extend(f"  gap: {g}" for g in gaps)
+    return lines, 0
+
+
+def main(argv: list[str] | None = None) -> int:
+    ap = argparse.ArgumentParser(prog="delivery-check",
+                                 description="Report which delivery postfix uses (read-only).")
+    ap.add_argument("--box", help="a box's maildir for the file-name test "
+                    "(absolute, or relative to virtual_mailbox_base)")
+    ap.add_argument("--files", type=int, default=50, help="how many newest files (default 50)")
+    args = ap.parse_args(argv)
+    if args.files < 1:
+        ap.error("--files must be at least 1")
+    try:
+        lines, rc = check(args.box, args.files)
+    except CannotLook as exc:
+        print(f"delivery-check: cannot look: {exc}", file=sys.stderr)
+        return 2
+    print("\n".join(lines))
+    return rc
+
+
+if __name__ == "__main__":
+    sys.exit(main())

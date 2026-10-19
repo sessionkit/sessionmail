@@ -1,0 +1,14 @@
+x-session-signature: v=2; a=sshsig; n=session-mail@example.com; h=from:to:cc:subject:date:message-id:in-reply-to:references:supersedes:mime-version:content-type:x-session-from:x-machine; p=hWLGHe/QlsYEym4rfNFUtWvebs3GE4zdnf09gzjXUUc=
+from: "J. Smith" <probe+from3@hq.example.net>
+to: J.Smith <probe+e@hq.example.net>
+cc: Judy <probe+f@hq.example.net>, probe+g@hq.example.net (a comment), "Q\"uote" <probe+h@hq.example.net>
+subject: postfix re-formatting, real (P3)
+date: Tue, 01 Jan 2030 12:00:00 +0000
+message-id: <1901000000.9.1@hq.session-mail>
+in-reply-to: 
+references: 
+supersedes: 
+mime-version: 1.0
+content-type: text/plain; charset=utf-8
+x-session-from: 0a1b2c3d
+x-machine: hq

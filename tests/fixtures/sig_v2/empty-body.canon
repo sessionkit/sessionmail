@@ -1,0 +1,14 @@
+x-session-signature: v=2; a=sshsig; n=session-mail@example.com; h=from:to:cc:subject:date:message-id:in-reply-to:references:supersedes:mime-version:content-type:x-session-from:x-machine; p=m8S8a8T5QErTB5TrqKVr2YrBKlzrWPfmyTOKnnRcWS4=
+from: acme+t-1.worker@hq.example.net
+to: acme+t-1.worker@hq.example.net
+cc: 
+subject: [BOOT]
+date: Tue, 01 Jan 2030 12:00:00 +0000
+message-id: <1901000000.2.1@hq.session-mail>
+in-reply-to: 
+references: 
+supersedes: 
+mime-version: 1.0
+content-type: text/plain; charset=utf-8
+x-session-from: 0a1b2c3d
+x-machine: hq

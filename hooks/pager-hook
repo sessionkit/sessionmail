@@ -1,0 +1,36 @@
+#!/bin/sh
+# pager-hook - the plugin's hook entry, one line of shell: `pager hook <event>`.
+#
+#   pager-hook stop     the Stop hook (hooks/hooks.json)
+#   pager-hook batch    the PostToolBatch hook
+#   pager-hook start    the SessionStart hook (births this session's box)
+#
+# Everything that decides anything - which seat, which session, whether a
+# listener is live, what to say - is the pager's own (`pager hook`), so the
+# rule of seat identity has exactly one copy. This file only finds the
+# command, and says ONE thing of its own. stdin (the hook's JSON) passes
+# through untouched.
+#
+# NO `pager` ON PATH: still exit 0 - a hook must never be the reason a
+# session cannot run (a shell copy of the rule has drifted before; this
+# shim carries none) - but say so ONCE per session first. The
+# plugin's skills, hooks and MCP entries all call commands that come from
+# the PACKAGE (`uv tool install sessionmail`); installing only the plugin
+# leaves a reader with skills describing commands the machine does not
+# have, and silence to explain it. One line, on stdout, which is where
+# PostToolBatch's context goes; a stamp so it is said once, not every call.
+#
+# The stamp keys on $PPID - the harness process that spawns each hook - and
+# deliberately NOT on any session variable: `tests/test_pager_hook.py` pins
+# that no session id appears in this file, because the seat rule has one
+# copy and it is not in shell. PPID is only "about once", which is all a
+# nudge needs.
+if ! command -v pager >/dev/null 2>&1; then
+    stamp="${TMPDIR:-/tmp}/sessionmail-not-installed.$(id -u).$PPID"
+    if [ ! -f "$stamp" ]; then
+        : > "$stamp" 2>/dev/null
+        echo "[sessionmail] the plugin is installed but its commands are not: run \`uv tool install sessionmail\` (the skills, hooks and MCP servers all call message/pager/memory)."
+    fi
+    exit 0
+fi
+exec pager hook "$@"

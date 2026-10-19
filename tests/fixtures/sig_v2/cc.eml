@@ -1,0 +1,28 @@
+Return-Path: <acme+lead@hq.example.net>
+X-Original-To: ivan
+Delivered-To: ivan@hq.example.net
+Received: by hq.example.net (Postfix, from userid 501)
+	id 0123456789ABC; Tue,  1 Jan 2030 12:00:00 +0000 (UTC)
+From: acme+lead@hq.example.net
+To: ivan@hq.example.net
+Cc: acmecorp+ops@hq.example.net,
+	Uma <uma@hq.example.net>,
+	Eve <eve@hq>
+Date: Tue, 01 Jan 2030 12:00:00 +0000
+Subject: cc vector
+Message-ID: <1901000000.4.1@hq.session-mail>
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+Content-Transfer-Encoding: 8bit
+X-Session-From: 0a1b2c3d
+X-Machine: hq
+X-Session-Signature: v=2; a=sshsig; n=session-mail@example.com;
+ h=from:to:cc:subject:date:message-id:in-reply-to:references:supersedes:
+ mime-version:content-type:x-session-from:x-machine;
+ p=FN16FSpeKch4N0IgZD4CuYTUBCtrCCqHYpe+WNzTgXw=;
+ b=U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgmn8BxxaYqsxu3NiwTjLVHtshGWTG
+ ns5uRHAWpWHkUbAAAAAYc2Vzc2lvbi1tYWlsQGV4YW1wbGUuY29tAAAAAAAAAAZzaGE1MTIA
+ AABTAAAAC3NzaC1lZDI1NTE5AAAAQA+jOG7Pr1XB4XZaGr4uWbYdpGp0RAUq88//L7nN3Sbe
+ HInZPlX8GiL7hjrk5cFX3K97giytl0VFBBTgK1n20AM=
+
+Three on Cc: bare, qualified, short host.

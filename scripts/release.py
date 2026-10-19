@@ -1,0 +1,114 @@
+#!/usr/bin/env python3
+"""Cut a sessionmail release.
+
+Modelled on the release scripts of the sibling tools (taskmaster's and
+voicemode's). The ONE version lives in .claude-plugin/plugin.json; the
+build reads it from there (hatchling regex source in pyproject.toml), and
+this script is its single writer: it stamps plugin.json and
+marketplace.json textually, stamps CHANGELOG.md's [Unreleased] section
+with the version and date, commits, and tags.
+
+Pushing is deliberately NOT done for you.
+
+    python3 scripts/release.py --current      # print current version
+    python3 scripts/release.py 0.1.0          # cut 0.1.0
+    python3 scripts/release.py 0.1.0 --dry-run
+"""
+
+import json
+import re
+import subprocess
+import sys
+from datetime import date
+from pathlib import Path
+
+PLUGIN = Path(".claude-plugin/plugin.json")
+MARKET = Path(".claude-plugin/marketplace.json")
+CHANGELOG = Path("CHANGELOG.md")
+
+SEMVER = re.compile(r"^\d+\.\d+\.\d+$")
+
+
+def current_version():
+    return json.loads(PLUGIN.read_text())["version"]
+
+
+def set_json_version(path, version):
+    """Rewrite the first version field TEXTUALLY so formatting survives."""
+    text = path.read_text()
+    new, n = re.subn(r'("version"\s*:\s*")[^"]+(")', r"\g<1>" + version + r"\g<2>", text, count=1)
+    if n != 1:
+        raise SystemExit("could not find a version field in %s" % path)
+    json.loads(new)  # refuse to write invalid JSON
+    return new
+
+
+def stamp_changelog(version):
+    if not CHANGELOG.exists():
+        raise SystemExit("CHANGELOG.md not found - a release without a changelog is refused")
+    text = CHANGELOG.read_text()
+    if "## [Unreleased]" not in text:
+        raise SystemExit("CHANGELOG.md has no '## [Unreleased]' section - nothing to stamp")
+    return text.replace(
+        "## [Unreleased]",
+        "## [Unreleased]\n\n## [%s] - %s" % (version, date.today().isoformat()),
+        1,
+    )
+
+
+def run(*args, dry):
+    print("  $ " + " ".join(args))
+    if not dry:
+        subprocess.run(args, check=True)
+
+
+def main():
+    args = list(sys.argv[1:])
+    if "--current" in args:
+        print(current_version())
+        return
+    dry = "--dry-run" in args
+    args = [a for a in args if not a.startswith("--")]
+    if len(args) != 1 or not SEMVER.match(args[0]):
+        raise SystemExit("usage: release.py <MAJOR.MINOR.PATCH> [--dry-run]")
+    version = args[0]
+
+    if version == current_version():
+        raise SystemExit("version %s is already current" % version)
+    if subprocess.run(["git", "diff", "--quiet"]).returncode != 0:
+        raise SystemExit("working tree is dirty - commit or stash first")
+    if subprocess.run(["git", "var", "GIT_AUTHOR_IDENT"], capture_output=True).returncode != 0:
+        raise SystemExit(
+            "git has no author identity here - set user.name/user.email first.\n"
+            "Refusing to edit files before a commit that cannot succeed."
+        )
+
+    print("sessionmail %s -> %s" % (current_version(), version))
+    edits = [
+        (PLUGIN, set_json_version(PLUGIN, version)),
+        (MARKET, set_json_version(MARKET, version)),
+        (CHANGELOG, stamp_changelog(version)),
+    ]
+    for path, content in edits:
+        print("  updated %s" % path)
+        if not dry:
+            path.write_text(content)
+
+    try:
+        run("git", "add", "--", *[str(p) for p, _ in edits], dry=dry)
+        run("git", "commit", "-m", "chore: release v%s" % version, dry=dry)
+        run("git", "tag", "-a", "v%s" % version, "-m", "sessionmail v%s" % version, dry=dry)
+    except subprocess.CalledProcessError as exc:
+        raise SystemExit(
+            "\ngit step failed: %s\n"
+            "The version files ARE already edited on disk. Either finish by hand,\n"
+            "or undo with:  git checkout -- %s"
+            % (" ".join(exc.cmd), " ".join(str(p) for p, _ in edits))
+        )
+    print("\nTagged v%s. Not pushed - when you are ready:" % version)
+    print("  git push && git push --tags")
+    print("Then: uv build && uv publish   (PyPI), and refresh the installed plugin.")
+
+
+if __name__ == "__main__":
+    main()

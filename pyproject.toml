@@ -1,0 +1,115 @@
+[build-system]
+requires = ["hatchling>=1.24"]
+build-backend = "hatchling.build"
+
+[project]
+name = "sessionmail"
+dynamic = ["version"]
+description = "sessionmail - mail for coding agents: message, pager and memory over one maildir."
+readme = "README.md"
+requires-python = ">=3.11,<3.15"
+authors = [{ name = "Mike Bailey", email = "mike@sessionkit.ai" }]
+license = "AGPL-3.0-or-later"
+classifiers = ["Development Status :: 3 - Alpha"]
+dependencies = [
+    "click>=8.1",
+    # Mhs-thread verifies memory mail in-process (ed25519 SSHSIG) when
+    # this imports, and falls back to the session-mail-verify subprocess when
+    # it does not. 50.0.2 is what the tool venv already carried.
+    "cryptography>=42",
+    "markdown>=3.6",
+    "mcp>=2.2.0",
+    "pymdown-extensions>=10.0",
+    "sessiontools>=0.1.0",
+]
+
+# One package, three commands (openspec/specs/package/spec.md):
+# no fourth top-level command, no umbrella the three hang off.
+#
+# ⚠️ DO NOT add `vmailbox-gen` here. Not as a console script, not as a private
+# helper, not "just for testing". This is not a style rule — it is the switch.
+#
+# `pager listen` regenerates the LIVE postfix maps on a seat birth
+# (pager.py:486-489), and it resolves which generator to run via
+# shutil.which("vmailbox-gen") BEFORE ~/.mail/.postfix/vmailbox-gen
+# (_seat.py:994), with no --no-postmap. So an entry point here does not merely
+# put a command on the PATH: at the next seat birth it COMPILES AND SERVES the
+# packaged generator's map to postfix, for every agent address on this host.
+#
+# That IS the map-generator cutover, and the cutover is RESERVED TO THE
+# MAINTAINER. Adding a line to this table would perform it — silently, with no
+# diff read and no decision made. The generator therefore ships as PACKAGE DATA
+# with no entry point; see the build-targets block below.
+[project.scripts]
+message = "sessionmail.message:cli"
+pager = "sessionmail.pager:cli"
+memory = "sessionmail.memory:cli"
+
+[project.urls]
+Homepage = "https://github.com/sessionkit/sessionmail"
+Repository = "https://github.com/sessionkit/sessionmail"
+
+# ── Version: one source of truth ──────────────────────────────────────
+# .claude-plugin/plugin.json holds the version and scripts/release.py is
+# its single writer (it stamps plugin.json and marketplace.json). The
+# build READS it from there; hatchling's regex version source is why
+# hatchling is the backend (session's precedent, same reasoning).
+[tool.hatch.version]
+source = "regex"
+path = ".claude-plugin/plugin.json"
+pattern = '"version"\s*:\s*"(?P<version>[^"]+)"'
+
+# ── Package data: the postfix map generator, and the arm instruction ──
+#
+# `src/sessionmail/arm.txt` is the ONE source of the arm instruction
+# (specs/pager, "The arm instruction has one source").
+# Every teller reads it at runtime, so a wheel that shipped without it would
+# make `pager status` raise instead of nudge. `packages` sweeps it up;
+# `artifacts` names it so a later exclude cannot drop it silently.
+# `src/sessionmail/settings.template.json` is the ONE source of what a fresh
+# install writes to ~/.sessionkit/mail/settings/mail.json
+# (`_settings.RELATIVE`); a wheel without it
+# would leave the ride-along unable to create the file.
+# `src/sessionmail/mail.schema.json` is the mail tool's settings schema,
+# installed beside the host file with the template (session-settings 3.1);
+# a wheel without it leaves the settings reader nothing to check against.
+# `src/sessionmail/humans` is the shipped humans registry (task 4b of
+# send-in-python): the final fallback for who is owed a rendered part.
+# `src/sessionmail/postfix/vmailbox-gen` is the generator that writes
+# postfix's virtual_mailbox_maps. It ships as PACKAGE
+# DATA, NOT a fourth console script: openspec/specs/package/spec.md RATIFIES
+# "no fourth top-level command and no umbrella command the three hang off".
+# `packages` already sweeps it up; `artifacts` names it so a future exclude
+# or .gitignore rule cannot silently drop it out of the wheel — losing it
+# quietly is a failure seen before.
+# `src/sessionmail/postfix/magicdns-suffix` ships beside it: the ONE
+# definition of the tailnet suffix, run by the generator from its own directory
+# and by `_magicdns` from the package path. A wheel without it fails loudly.
+# `src/sessionmail/postfix/nm-deliver` and `delivery-check` are the
+# OPT-IN index-at-delivery path: a pipe(8) wrapper master.cf runs by path, and
+# a read-only report of which delivery a host uses. Package data, executable,
+# no console script; nothing in the package runs either one.
+# `src/sessionmail/mhs/` is the memory verbs' oracle: the bash/python MHS
+# reader (`mhs-thread`, `session-mail-{ls,tree,cat,run,wake,verify}`, two
+# sourced libs), copied verbatim from the session repo at 2fcd1d1 so that
+# `memory` stops shelling to `session mail VERB` (session is being retired).
+# Package data, executed by path from `_mhs.py`; not a console script, for
+# the same "no fourth command" reason. The executable bits are part of it.
+# `src/sessionmail/seat/` is the seat agent: the bash wrapper (0755) and
+# its LaunchAgent template, moved verbatim out of scripts/
+# (the mint script moved beside it, as a module `packages` sweeps up). Package
+# data, run by path; still no fourth command: the seat verbs hang off
+# `message`. scripts/ keeps thin exec shims.
+[tool.hatch.build.targets.wheel]
+packages = ["src/sessionmail"]
+artifacts = ["src/sessionmail/postfix/vmailbox-gen", "src/sessionmail/postfix/magicdns-suffix", "src/sessionmail/postfix/nm-deliver", "src/sessionmail/postfix/delivery-check", "src/sessionmail/arm.txt", "src/sessionmail/settings.template.json", "src/sessionmail/mail.schema.json", "src/sessionmail/humans", "src/sessionmail/mhs", "src/sessionmail/seat", "src/sessionmail/notmuch"]
+
+[tool.hatch.build.targets.sdist]
+include = ["src/sessionmail", ".claude-plugin/plugin.json", "README.md"]
+artifacts = ["src/sessionmail/postfix/vmailbox-gen", "src/sessionmail/postfix/magicdns-suffix", "src/sessionmail/postfix/nm-deliver", "src/sessionmail/postfix/delivery-check", "src/sessionmail/arm.txt", "src/sessionmail/settings.template.json", "src/sessionmail/mail.schema.json", "src/sessionmail/humans", "src/sessionmail/mhs", "src/sessionmail/seat", "src/sessionmail/notmuch"]
+
+[dependency-groups]
+dev = ["pytest>=8"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

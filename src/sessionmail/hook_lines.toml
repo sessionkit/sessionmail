@@ -1,0 +1,93 @@
+# THE TWO STANDARD LINES the hooks say - one place, both hooks read it.
+# "pager is not listening, run `pager listen`" and, when it is, "pager is
+# listening, run `pager stop` to stop": the wording lives in one place so both
+# hooks read it. `pager hook stop` (the Stop hook) says not_listening, and
+# only when it is true; `pager hook batch` (PostToolBatch) says whichever
+# holds, after the ride-along's mail lines. Every other page the pager
+# prints (a wake, a nothing) is pager.py's.
+# {arm} is the arm instruction, read from arm.txt (the-quiet-page: ONE source for how to arm).
+not_listening = "pager is not listening - {arm}"
+listening = "pager is listening - run `pager stop` to stop"
+# The SessionStart hook's ONE fact line about the box,
+# said before the state line. {box} is the session's maildir, {session} its
+# id - the address that reaches exactly this session. Placed here, not at
+# EOF, where the settings-file keys are appended.
+born = "sessionmail: this session's box is {box} - mail to {session} lands there"
+# The same state when the live listener is
+# this session's pager monitor (`pager listen --monitor`). It names the
+# monitor and drops the stop advice. It
+# teaches the mute instead - `pager mute` silences the monitor and leaves it
+# running, because a monitor that is ended is gone for good (Claude Code does
+# not restart one). A plain listener keeps the line above.
+listening_monitor = "pager is listening - this session's pager monitor hears for you, so there is nothing to arm. `pager mute` silences it; it keeps running."
+# The ride-along's line
+# while this session's `off` stamp stands - `pager mute`, or `pager off` /
+# `pager stop` run on purpose (on a hand listener, or with nothing listening:
+# on the pager monitor they refuse and write nothing). The stamp mutes WHATEVER listens: a listener
+# that is still running pages nothing. Settled, not deaf. It carries no arm
+# instruction: a seat standing down that obeyed "re-arm" would break its own
+# stand-down.
+off = "pager is muted - it pages nothing, on purpose; `pager unmute` resumes"
+# The ride-along's line while the `off` stamp
+# stands, on a seat that is NOT required, when the stamp was written by
+# `pager stop --kill` ENDING the pager monitor: a monitor armed, and nothing
+# listens now. `off` above would say "`pager unmute` resumes", which is wrong
+# here: there is nothing left to unmute. It names the ended monitor and the
+# two ways out, as deaf_monitor_ended does on a required seat, but it is a
+# state line, not DEAF: said once, then on change, like every state line.
+monitor_ended = "pager is not listening - this session's pager monitor was ended, and Claude Code does not restart one. {ways_out}"
+# What `pager unmute`, `pager mute` and `pager status` say when no listener runs for this session. ONE
+# sentence, kept here once: the monitor cannot be started mid-session, and
+# the two ways out. Not formatted with {arm}: it names the hand arm itself.
+# The two ways out are kept ONCE, here, and every line that
+# ends with them formats {ways_out} (no_monitor above, the DEAF lines below).
+no_monitor = "the pager monitor is not running for this session, and it can only start when the seat launches. {ways_out}"
+ways_out = "Two ways out: run `pager listen` in the background (the hand arm), or restart the seat."
+# The deaf check is always there, but it says nothing unless the seat's pager
+# is required. The Stop and PostToolBatch hooks say ONE of
+# these when this seat's pager is required (`pager_required`) and nothing
+# listens for the session, past the grace - even with "hooks": false, where it
+# is the only thing they say. Each names the reason and ends with the two ways
+# out. Formatted where said: {gate} is Claude Code's cached
+# tengu_amber_sentinel (true, false or unknown), read only to NAME the cause;
+# {why} is why no monitor was expected.
+deaf_monitor_missing = "pager: DEAF - this session's pager monitor did not arm (monitor_missing; Claude Code's gate tengu_amber_sentinel={gate} in ~/.claude.json). {ways_out}"
+deaf_monitor_ended = "pager: DEAF - this session's pager monitor was ended, and Claude Code does not restart one. {ways_out}"
+deaf_not_listening = "pager: DEAF - pager is not listening, and no monitor hears for this session: {why}. {ways_out}"
+# `pager status` before claude has started for this session (a
+# `session start` context generator, such as a wake item, runs before claude
+# is exec'd). Nothing CAN be listening yet, so it is not deaf - but nothing
+# here can know whether a pager-monitor plugin will run (its gate, trust and
+# interactivity decide), so it never says "nothing to arm" on its own: it
+# says to arm once claude is up, and what a refused arm means. True on both
+# paths, monitor and no monitor. Never `pager stop` a monitor: Claude Code
+# does not restart one. {arm} as above, never restated.
+not_yet = "pager cannot be listening yet: claude is not running for this session - that is expected, not deaf. Once claude is up, {arm}. If this session's pager monitor is already listening, that arm is refused and says so: then there is nothing to arm, and never `pager stop` it."
+# openspec/changes/pager-settings-file: the two lines
+# about the settings file. Each is formatted where it is said, with {path}
+# (and {error}); neither restates the arm instruction.
+# settings_created: said ONCE, only by the ride-along run that CREATED the
+# file: where it was written, that it is off by default, and which skill to
+# load - something very minimal, and only when it creates a config.
+settings_created = "sessionmail: wrote {path}. Its hooks are OFF by default. When on, they hand this session its mail between tool calls and remind it to keep `pager listen` running. To turn them on, set \"hooks\": true in that file. For more, load the sessionmail:pager skill."
+# settings_fault: a file that cannot be read, parsed or understood, or a
+# missing one that cannot be written, is OFF but not silent (provisional).
+# It must carry "treated as off" verbatim.
+settings_fault = "sessionmail: {path} is treated as off: {error}"
+# settings_drift: the OLD host file is a real file whose bytes differ from
+# the new one, so the move did not link it (session-settings 3.1). Said once
+# per session, even with the hooks off, as the fault is: the off may be the
+# drift (provisional). Formatted with {old} and {path}.
+# settings_stranded: the old settings folder is still a real folder (an
+# upgrade from 0.1.0 whose files have not been moved), so nothing was
+# written and the hooks are off until they are. Said once, then only on
+# change, as the fault is; `pager settings install` refuses with it too.
+# Formatted with {old} and {new}, the two folders as `~` paths.
+settings_stranded = "sessionmail: the settings in {old} have not been moved, so nothing was written and the hooks are off. Move the files in {old} to {new}, then re-run."
+# settings_copied: BOTH folders are real (the old files were copied, not
+# moved). The new file is used; nothing is written to either folder while
+# the old one is still there. Said once per session, on or off, as the
+# drift line is; `pager settings install` refuses with it too. Formatted
+# with {old} and {new}, the two folders as `~` paths.
+settings_copied = "sessionmail: Remove {old} once its files are in {new}."
+settings_drift = "sessionmail: {old} differs from {path}, so it is not linked; the hooks read only {path}. Merge them by hand: once the bytes match, the old path becomes a symlink."

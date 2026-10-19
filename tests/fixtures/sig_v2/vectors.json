@@ -1,0 +1,319 @@
+{
+  "pubkey": "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIJp/AccWmKrMbtzYsE4y1R7bIRlkxp7ObkRwFqVh5FGw sessionmail-sig-TEST-VECTORS-ONLY",
+  "vectors": {
+    "single": {
+      "ns": "session-mail@example.com",
+      "origin": "hq.example.net",
+      "h": [
+        "from",
+        "to",
+        "cc",
+        "subject",
+        "date",
+        "message-id",
+        "in-reply-to",
+        "references",
+        "supersedes",
+        "mime-version",
+        "content-type",
+        "x-session-from",
+        "x-machine"
+      ],
+      "p": [
+        "LJY6MJzXiTno5o7129RP1sPlEJ2sEwRy2P6R/7y5gi4="
+      ],
+      "postfix_rewrote": [
+        "from",
+        "to"
+      ],
+      "leaves": [
+        "text/plain"
+      ]
+    },
+    "empty-body": {
+      "ns": "session-mail@example.com",
+      "origin": "hq.example.net",
+      "h": [
+        "from",
+        "to",
+        "cc",
+        "subject",
+        "date",
+        "message-id",
+        "in-reply-to",
+        "references",
+        "supersedes",
+        "mime-version",
+        "content-type",
+        "x-session-from",
+        "x-machine"
+      ],
+      "p": [
+        "m8S8a8T5QErTB5TrqKVr2YrBKlzrWPfmyTOKnnRcWS4="
+      ],
+      "postfix_rewrote": [
+        "from",
+        "to"
+      ],
+      "leaves": [
+        "text/plain"
+      ]
+    },
+    "two-part": {
+      "ns": "session-mail@example.com",
+      "origin": "hq.example.net",
+      "h": [
+        "from",
+        "to",
+        "cc",
+        "subject",
+        "date",
+        "message-id",
+        "in-reply-to",
+        "references",
+        "supersedes",
+        "mime-version",
+        "content-type",
+        "x-session-from",
+        "x-machine"
+      ],
+      "p": [
+        "xIYNu4JmX29I+6wUeZdSd/6Fk7FjCNeDX8KNWLfqcEg=",
+        "fyyVeEfvNY4xwx4fdUVcXuhnHot11bVo1qXXK98EBxk="
+      ],
+      "postfix_rewrote": [
+        "from",
+        "to"
+      ],
+      "leaves": [
+        "text/plain",
+        "text/html"
+      ]
+    },
+    "cc": {
+      "ns": "session-mail@example.com",
+      "origin": "hq.example.net",
+      "h": [
+        "from",
+        "to",
+        "cc",
+        "subject",
+        "date",
+        "message-id",
+        "in-reply-to",
+        "references",
+        "supersedes",
+        "mime-version",
+        "content-type",
+        "x-session-from",
+        "x-machine"
+      ],
+      "p": [
+        "FN16FSpeKch4N0IgZD4CuYTUBCtrCCqHYpe+WNzTgXw="
+      ],
+      "postfix_rewrote": [
+        "from",
+        "to",
+        "cc"
+      ],
+      "leaves": [
+        "text/plain"
+      ]
+    },
+    "reply": {
+      "ns": "session-mail@example.com",
+      "origin": "hq.example.net",
+      "h": [
+        "from",
+        "to",
+        "cc",
+        "subject",
+        "date",
+        "message-id",
+        "in-reply-to",
+        "references",
+        "supersedes",
+        "mime-version",
+        "content-type",
+        "x-session-from",
+        "x-machine"
+      ],
+      "p": [
+        "l43CQNDei/cycWkmEWVNnb0gRlmuLHmk5P5gugPBrfQ="
+      ],
+      "postfix_rewrote": [
+        "from",
+        "to"
+      ],
+      "leaves": [
+        "text/plain"
+      ]
+    },
+    "atom-headers": {
+      "ns": "session-mail@example.com",
+      "origin": "hq.example.net",
+      "h": [
+        "from",
+        "to",
+        "cc",
+        "subject",
+        "date",
+        "message-id",
+        "in-reply-to",
+        "references",
+        "supersedes",
+        "mime-version",
+        "content-type",
+        "x-session-from",
+        "x-project",
+        "x-task",
+        "atom-type",
+        "atom-authority",
+        "atom-id",
+        "x-machine"
+      ],
+      "p": [
+        "EuFUFSWtl7zjxjD7799uToFhohRkcmYIKLInJ5IIUqY="
+      ],
+      "postfix_rewrote": [
+        "from",
+        "to"
+      ],
+      "leaves": [
+        "text/plain"
+      ]
+    },
+    "atom-three-part": {
+      "ns": "session-mail@example.com",
+      "origin": "hq.example.net",
+      "h": [
+        "from",
+        "to",
+        "cc",
+        "subject",
+        "date",
+        "message-id",
+        "in-reply-to",
+        "references",
+        "supersedes",
+        "mime-version",
+        "content-type",
+        "x-session-from",
+        "atom-type",
+        "atom-authority",
+        "atom-id",
+        "x-machine"
+      ],
+      "p": [
+        "xIYNu4JmX29I+6wUeZdSd/6Fk7FjCNeDX8KNWLfqcEg=",
+        "L6dxqUfAFQEOQNpnH7OCHTvnzZMezImbxSb4ydkvi00=",
+        "fyyVeEfvNY4xwx4fdUVcXuhnHot11bVo1qXXK98EBxk="
+      ],
+      "postfix_rewrote": [
+        "from",
+        "to"
+      ],
+      "leaves": [
+        "text/plain",
+        "application/json",
+        "text/html"
+      ]
+    },
+    "atom-three-part-b64": {
+      "ns": "session-mail@example.com",
+      "origin": "hq.example.net",
+      "h": [
+        "from",
+        "to",
+        "cc",
+        "subject",
+        "date",
+        "message-id",
+        "in-reply-to",
+        "references",
+        "supersedes",
+        "mime-version",
+        "content-type",
+        "x-session-from",
+        "atom-type",
+        "atom-authority",
+        "atom-id",
+        "x-machine"
+      ],
+      "p": [
+        "xIYNu4JmX29I+6wUeZdSd/6Fk7FjCNeDX8KNWLfqcEg=",
+        "L6dxqUfAFQEOQNpnH7OCHTvnzZMezImbxSb4ydkvi00=",
+        "fyyVeEfvNY4xwx4fdUVcXuhnHot11bVo1qXXK98EBxk="
+      ],
+      "postfix_rewrote": [
+        "from",
+        "to"
+      ],
+      "leaves": [
+        "text/plain",
+        "application/json",
+        "text/html"
+      ]
+    },
+    "postfix-reformatted": {
+      "ns": "session-mail@example.com",
+      "origin": "hq.example.net",
+      "h": [
+        "from",
+        "to",
+        "cc",
+        "subject",
+        "date",
+        "message-id",
+        "in-reply-to",
+        "references",
+        "supersedes",
+        "mime-version",
+        "content-type",
+        "x-session-from",
+        "x-machine"
+      ],
+      "p": [
+        "hWLGHe/QlsYEym4rfNFUtWvebs3GE4zdnf09gzjXUUc="
+      ],
+      "postfix_rewrote": [
+        "from",
+        "to",
+        "cc"
+      ],
+      "leaves": [
+        "text/plain"
+      ]
+    },
+    "postfix-reformatted-2": {
+      "ns": "session-mail@example.com",
+      "origin": "hq.example.net",
+      "h": [
+        "from",
+        "to",
+        "cc",
+        "subject",
+        "date",
+        "message-id",
+        "in-reply-to",
+        "references",
+        "supersedes",
+        "mime-version",
+        "content-type",
+        "x-session-from",
+        "x-machine"
+      ],
+      "p": [
+        "mqDD+xdM3zpU5DdymBLVJxbHe5QATugnmzmZYym9q68="
+      ],
+      "postfix_rewrote": [
+        "from",
+        "to",
+        "cc"
+      ],
+      "leaves": [
+        "text/plain"
+      ]
+    }
+  }
+}

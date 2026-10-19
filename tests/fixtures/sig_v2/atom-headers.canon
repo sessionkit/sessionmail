@@ -1,0 +1,19 @@
+x-session-signature: v=2; a=sshsig; n=session-mail@example.com; h=from:to:cc:subject:date:message-id:in-reply-to:references:supersedes:mime-version:content-type:x-session-from:x-project:x-task:atom-type:atom-authority:atom-id:x-machine; p=EuFUFSWtl7zjxjD7799uToFhohRkcmYIKLInJ5IIUqY=
+from: =?UTF-8?B?SsOpcsO0bWU=?= <uma@hq.example.net>
+to: acme@hq.example.net
+cc: 
+subject: =?UTF-8?B?RMOpY2lzaW9uOiBzaWduIGV2ZXJ5IHBhcnQ=?=
+date: Tue, 01 Jan 2030 12:00:00 +0000
+message-id: <1901000000.6.1@hq.session-mail>
+in-reply-to: 
+references: 
+supersedes: 
+mime-version: 1.0
+content-type: text/plain; charset=utf-8
+x-session-from: 0a1b2c3d
+x-project: acme
+x-task: T-1
+atom-type: decision
+atom-authority: judy
+atom-id: D2
+x-machine: hq

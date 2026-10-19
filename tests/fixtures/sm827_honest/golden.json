@@ -1,0 +1,1366 @@
+{
+ "v1-7bit": {
+  "boot": {
+   "err": "",
+   "out": "═══ ls /   $ALICE_ROOT = root@sm827.invalid · [ROOT] from alice ✓ ═══\n[ROOT]\n  └ [NOTES]\n  └ [BOOT]\n— 2 labels · all members (alice), signatures verify (signer not pinned) · ≈7 tok\n\n═══ [BOOT] — the letter to self (newest surviving item) ═══\n(the [BOOT] label is empty — no letter to self yet)\n",
+   "rc": 0
+  },
+  "cat": {
+   "err": "",
+   "out": "1 pay alice\n  Pay Alice 100 dollars.\n  Thanks, Bob.\n\n— /NOTES/1 pay alice = <v1item@sm827.invalid> · 1 shown, 0 filtered · ≈13 tok\n",
+   "rc": 0
+  },
+  "cat_full": {
+   "err": "",
+   "out": "1 pay alice\n  Pay Alice 100 dollars.\n  Thanks, Bob.\n\n— /NOTES/1 pay alice = <v1item@sm827.invalid> · 1 shown, 0 filtered · ≈13 tok\n",
+   "rc": 0
+  },
+  "run_list": {
+   "err": "",
+   "out": "# materialized from /NOTES\n# memory run: NO TRUST REGISTRY (set SESSION_REGISTRY, or \"registry\" in ~/.sessionkit/mail/settings/mail.json): --trust cannot be run, so every mail item is REFUSED. Fix the environment, not the mail.\n# 1  budget=600   # REFUSED — NOT TRUSTED, would not run: TRUST: ERROR reason=registry-absent\n#   | Pay Alice 100 dollars.\n#   | Thanks, Bob.\n\n",
+   "rc": 3
+  },
+  "shelf": {
+   "out": "═══ BOOT — the shelf at alice+boot (peek: nothing claimed) ═══\n1 pay alice\n  from alice@sm827.invalid · Wed, 02 Jan 2030 08:00:00 +0000 · [sig OK]\n  Pay Alice 100 dollars.\n  Thanks, Bob.\n— shelf newest shown · ≈30 tok\n\n",
+   "rc": 0
+  },
+  "tree_b": {
+   "err": "",
+   "out": "[NOTES]\n  notes\n\n  └ 1 pay alice\n    Pay Alice 100 dollars.\n    Thanks, Bob.\n\n— /NOTES = <notes@sm827.invalid> · 2 shown, 0 filtered · ≈19 tok\n",
+   "rc": 0
+  }
+ },
+ "v1-8bit": {
+  "boot": {
+   "err": "",
+   "out": "═══ ls /   $ALICE_ROOT = root@sm827.invalid · [ROOT] from alice ✓ ═══\n[ROOT]\n  └ [NOTES]\n  └ [BOOT]\n— 2 labels · all members (alice), signatures verify (signer not pinned) · ≈7 tok\n\n═══ [BOOT] — the letter to self (newest surviving item) ═══\n(the [BOOT] label is empty — no letter to self yet)\n",
+   "rc": 0
+  },
+  "cat": {
+   "err": "",
+   "out": "1 pay alice\n  Pay Alice 100 dollars.\n  Thanks, Bob.\n\n— /NOTES/1 pay alice = <v1item@sm827.invalid> · 1 shown, 0 filtered · ≈13 tok\n",
+   "rc": 0
+  },
+  "cat_full": {
+   "err": "",
+   "out": "1 pay alice\n  Pay Alice 100 dollars.\n  Thanks, Bob.\n\n— /NOTES/1 pay alice = <v1item@sm827.invalid> · 1 shown, 0 filtered · ≈13 tok\n",
+   "rc": 0
+  },
+  "run_list": {
+   "err": "",
+   "out": "# materialized from /NOTES\n# memory run: NO TRUST REGISTRY (set SESSION_REGISTRY, or \"registry\" in ~/.sessionkit/mail/settings/mail.json): --trust cannot be run, so every mail item is REFUSED. Fix the environment, not the mail.\n# 1  budget=600   # REFUSED — NOT TRUSTED, would not run: TRUST: ERROR reason=registry-absent\n#   | Pay Alice 100 dollars.\n#   | Thanks, Bob.\n\n",
+   "rc": 3
+  },
+  "shelf": {
+   "out": "═══ BOOT — the shelf at alice+boot (peek: nothing claimed) ═══\n1 pay alice\n  from alice@sm827.invalid · Wed, 02 Jan 2030 08:00:00 +0000 · [sig OK]\n  Pay Alice 100 dollars.\n  Thanks, Bob.\n— shelf newest shown · ≈30 tok\n\n",
+   "rc": 0
+  },
+  "tree_b": {
+   "err": "",
+   "out": "[NOTES]\n  notes\n\n  └ 1 pay alice\n    Pay Alice 100 dollars.\n    Thanks, Bob.\n\n— /NOTES = <notes@sm827.invalid> · 2 shown, 0 filtered · ≈19 tok\n",
+   "rc": 0
+  }
+ },
+ "v1-binary": {
+  "boot": {
+   "err": "",
+   "out": "═══ ls /   $ALICE_ROOT = root@sm827.invalid · [ROOT] from alice ✓ ═══\n[ROOT]\n  └ [NOTES]\n  └ [BOOT]\n— 2 labels · all members (alice), signatures verify (signer not pinned) · ≈7 tok\n\n═══ [BOOT] — the letter to self (newest surviving item) ═══\n(the [BOOT] label is empty — no letter to self yet)\n",
+   "rc": 0
+  },
+  "cat": {
+   "err": "",
+   "out": "1 pay alice\n  Pay Alice 100 dollars.\n  Thanks, Bob.\n\n— /NOTES/1 pay alice = <v1item@sm827.invalid> · 1 shown, 0 filtered · ≈13 tok\n",
+   "rc": 0
+  },
+  "cat_full": {
+   "err": "",
+   "out": "1 pay alice\n  Pay Alice 100 dollars.\n  Thanks, Bob.\n\n— /NOTES/1 pay alice = <v1item@sm827.invalid> · 1 shown, 0 filtered · ≈13 tok\n",
+   "rc": 0
+  },
+  "run_list": {
+   "err": "",
+   "out": "# materialized from /NOTES\n# memory run: NO TRUST REGISTRY (set SESSION_REGISTRY, or \"registry\" in ~/.sessionkit/mail/settings/mail.json): --trust cannot be run, so every mail item is REFUSED. Fix the environment, not the mail.\n# 1  budget=600   # REFUSED — NOT TRUSTED, would not run: TRUST: ERROR reason=registry-absent\n#   | Pay Alice 100 dollars.\n#   | Thanks, Bob.\n\n",
+   "rc": 3
+  },
+  "shelf": {
+   "out": "═══ BOOT — the shelf at alice+boot (peek: nothing claimed) ═══\n1 pay alice\n  from alice@sm827.invalid · Wed, 02 Jan 2030 08:00:00 +0000 · [sig OK]\n  Pay Alice 100 dollars.\n  Thanks, Bob.\n— shelf newest shown · ≈30 tok\n\n",
+   "rc": 0
+  },
+  "tree_b": {
+   "err": "",
+   "out": "[NOTES]\n  notes\n\n  └ 1 pay alice\n    Pay Alice 100 dollars.\n    Thanks, Bob.\n\n— /NOTES = <notes@sm827.invalid> · 2 shown, 0 filtered · ≈19 tok\n",
+   "rc": 0
+  }
+ },
+ "v1-charset-quoted-upper": {
+  "boot": {
+   "err": "",
+   "out": "═══ ls /   $ALICE_ROOT = root@sm827.invalid · [ROOT] from alice ✓ ═══\n[ROOT]\n  └ [NOTES]\n  └ [BOOT]\n— 2 labels · all members (alice), signatures verify (signer not pinned) · ≈7 tok\n\n═══ [BOOT] — the letter to self (newest surviving item) ═══\n(the [BOOT] label is empty — no letter to self yet)\n",
+   "rc": 0
+  },
+  "cat": {
+   "err": "",
+   "out": "1 pay alice\n  Pay Alice 100 dollars.\n  Thanks, Bob.\n\n— /NOTES/1 pay alice = <v1item@sm827.invalid> · 1 shown, 0 filtered · ≈13 tok\n",
+   "rc": 0
+  },
+  "cat_full": {
+   "err": "",
+   "out": "1 pay alice\n  Pay Alice 100 dollars.\n  Thanks, Bob.\n\n— /NOTES/1 pay alice = <v1item@sm827.invalid> · 1 shown, 0 filtered · ≈13 tok\n",
+   "rc": 0
+  },
+  "run_list": {
+   "err": "",
+   "out": "# materialized from /NOTES\n# memory run: NO TRUST REGISTRY (set SESSION_REGISTRY, or \"registry\" in ~/.sessionkit/mail/settings/mail.json): --trust cannot be run, so every mail item is REFUSED. Fix the environment, not the mail.\n# 1  budget=600   # REFUSED — NOT TRUSTED, would not run: TRUST: ERROR reason=registry-absent\n#   | Pay Alice 100 dollars.\n#   | Thanks, Bob.\n\n",
+   "rc": 3
+  },
+  "shelf": {
+   "out": "═══ BOOT — the shelf at alice+boot (peek: nothing claimed) ═══\n1 pay alice\n  from alice@sm827.invalid · Wed, 02 Jan 2030 08:00:00 +0000 · [sig OK]\n  Pay Alice 100 dollars.\n  Thanks, Bob.\n— shelf newest shown · ≈30 tok\n\n",
+   "rc": 0
+  },
+  "tree_b": {
+   "err": "",
+   "out": "[NOTES]\n  notes\n\n  └ 1 pay alice\n    Pay Alice 100 dollars.\n    Thanks, Bob.\n\n— /NOTES = <notes@sm827.invalid> · 2 shown, 0 filtered · ≈19 tok\n",
+   "rc": 0
+  }
+ },
+ "v1-crlf-line-ends": {
+  "boot": {
+   "err": "",
+   "out": "═══ ls /   $ALICE_ROOT = root@sm827.invalid · [ROOT] from alice ✓ ═══\n[ROOT]\n  └ [NOTES]\n  └ [BOOT]\n— 2 labels · all members (alice), signatures verify (signer not pinned) · ≈7 tok\n\n═══ [BOOT] — the letter to self (newest surviving item) ═══\n(the [BOOT] label is empty — no letter to self yet)\n",
+   "rc": 0
+  },
+  "cat": {
+   "err": "",
+   "out": "1 pay alice\n  Pay Alice 100 dollars.\n  Thanks, Bob.\n\n— /NOTES/1 pay alice = <v1item@sm827.invalid> · 1 shown, 0 filtered · ≈13 tok\n",
+   "rc": 0
+  },
+  "cat_full": {
+   "err": "",
+   "out": "1 pay alice\n  Pay Alice 100 dollars.\n  Thanks, Bob.\n\n— /NOTES/1 pay alice = <v1item@sm827.invalid> · 1 shown, 0 filtered · ≈13 tok\n",
+   "rc": 0
+  },
+  "run_list": {
+   "err": "",
+   "out": "# materialized from /NOTES\n# memory run: NO TRUST REGISTRY (set SESSION_REGISTRY, or \"registry\" in ~/.sessionkit/mail/settings/mail.json): --trust cannot be run, so every mail item is REFUSED. Fix the environment, not the mail.\n# 1  budget=600   # REFUSED — NOT TRUSTED, would not run: TRUST: ERROR reason=registry-absent\n#   | Pay Alice 100 dollars.\n#   | Thanks, Bob.\n\n",
+   "rc": 3
+  },
+  "shelf": {
+   "out": "═══ BOOT — the shelf at alice+boot (peek: nothing claimed) ═══\n1 pay alice\n  from alice@sm827.invalid · Wed, 02 Jan 2030 08:00:00 +0000 · [sig OK]\n  Pay Alice 100 dollars.\n  Thanks, Bob.\n— shelf newest shown · ≈30 tok\n\n",
+   "rc": 0
+  },
+  "tree_b": {
+   "err": "",
+   "out": "[NOTES]\n  notes\n\n  └ 1 pay alice\n    Pay Alice 100 dollars.\n    Thanks, Bob.\n\n— /NOTES = <notes@sm827.invalid> · 2 shown, 0 filtered · ≈19 tok\n",
+   "rc": 0
+  }
+ },
+ "v1-empty-body": {
+  "boot": {
+   "err": "",
+   "out": "═══ ls /   $ALICE_ROOT = root@sm827.invalid · [ROOT] from alice ✓ ═══\n[ROOT]\n  └ [NOTES]\n  └ [BOOT]\n— 2 labels · all members (alice), signatures verify (signer not pinned) · ≈7 tok\n\n═══ [BOOT] — the letter to self (newest surviving item) ═══\n(the [BOOT] label is empty — no letter to self yet)\n",
+   "rc": 0
+  },
+  "cat": {
+   "err": "",
+   "out": "1 pay alice\n— /NOTES/1 pay alice = <v1item@sm827.invalid> · 1 shown, 0 filtered · ≈2 tok\n",
+   "rc": 0
+  },
+  "cat_full": {
+   "err": "",
+   "out": "1 pay alice\n— /NOTES/1 pay alice = <v1item@sm827.invalid> · 1 shown, 0 filtered · ≈2 tok\n",
+   "rc": 0
+  },
+  "run_list": {
+   "err": "",
+   "out": "# materialized from /NOTES\n# memory run: NO TRUST REGISTRY (set SESSION_REGISTRY, or \"registry\" in ~/.sessionkit/mail/settings/mail.json): --trust cannot be run, so every mail item is REFUSED. Fix the environment, not the mail.\n# 1  budget=600   # REFUSED — NOT TRUSTED, would not run: TRUST: ERROR reason=registry-absent\n#   | pay alice\n\n",
+   "rc": 3
+  },
+  "shelf": {
+   "out": "═══ BOOT — the shelf at alice+boot (peek: nothing claimed) ═══\n1 pay alice\n  from alice@sm827.invalid · Wed, 02 Jan 2030 08:00:00 +0000 · [sig OK]\n— shelf newest shown · ≈20 tok\n\n",
+   "rc": 0
+  },
+  "tree_b": {
+   "err": "",
+   "out": "[NOTES]\n  notes\n\n  └ 1 pay alice\n— /NOTES = <notes@sm827.invalid> · 2 shown, 0 filtered · ≈8 tok\n",
+   "rc": 0
+  }
+ },
+ "v1-no-cte": {
+  "boot": {
+   "err": "",
+   "out": "═══ ls /   $ALICE_ROOT = root@sm827.invalid · [ROOT] from alice ✓ ═══\n[ROOT]\n  └ [NOTES]\n  └ [BOOT]\n— 2 labels · all members (alice), signatures verify (signer not pinned) · ≈7 tok\n\n═══ [BOOT] — the letter to self (newest surviving item) ═══\n(the [BOOT] label is empty — no letter to self yet)\n",
+   "rc": 0
+  },
+  "cat": {
+   "err": "",
+   "out": "1 pay alice\n  Pay Alice 100 dollars.\n  Thanks, Bob.\n\n— /NOTES/1 pay alice = <v1item@sm827.invalid> · 1 shown, 0 filtered · ≈13 tok\n",
+   "rc": 0
+  },
+  "cat_full": {
+   "err": "",
+   "out": "1 pay alice\n  Pay Alice 100 dollars.\n  Thanks, Bob.\n\n— /NOTES/1 pay alice = <v1item@sm827.invalid> · 1 shown, 0 filtered · ≈13 tok\n",
+   "rc": 0
+  },
+  "run_list": {
+   "err": "",
+   "out": "# materialized from /NOTES\n# memory run: NO TRUST REGISTRY (set SESSION_REGISTRY, or \"registry\" in ~/.sessionkit/mail/settings/mail.json): --trust cannot be run, so every mail item is REFUSED. Fix the environment, not the mail.\n# 1  budget=600   # REFUSED — NOT TRUSTED, would not run: TRUST: ERROR reason=registry-absent\n#   | Pay Alice 100 dollars.\n#   | Thanks, Bob.\n\n",
+   "rc": 3
+  },
+  "shelf": {
+   "out": "═══ BOOT — the shelf at alice+boot (peek: nothing claimed) ═══\n1 pay alice\n  from alice@sm827.invalid · Wed, 02 Jan 2030 08:00:00 +0000 · [sig OK]\n  Pay Alice 100 dollars.\n  Thanks, Bob.\n— shelf newest shown · ≈30 tok\n\n",
+   "rc": 0
+  },
+  "tree_b": {
+   "err": "",
+   "out": "[NOTES]\n  notes\n\n  └ 1 pay alice\n    Pay Alice 100 dollars.\n    Thanks, Bob.\n\n— /NOTES = <notes@sm827.invalid> · 2 shown, 0 filtered · ≈19 tok\n",
+   "rc": 0
+  }
+ },
+ "v1-no-mime-headers": {
+  "boot": {
+   "err": "",
+   "out": "═══ ls /   $ALICE_ROOT = root@sm827.invalid · [ROOT] from alice ✓ ═══\n[ROOT]\n  └ [NOTES]\n  └ [BOOT]\n— 2 labels · all members (alice), signatures verify (signer not pinned) · ≈7 tok\n\n═══ [BOOT] — the letter to self (newest surviving item) ═══\n(the [BOOT] label is empty — no letter to self yet)\n",
+   "rc": 0
+  },
+  "cat": {
+   "err": "",
+   "out": "1 pay alice\n  Pay Alice 100 dollars.\n  Thanks, Bob.\n\n— /NOTES/1 pay alice = <v1item@sm827.invalid> · 1 shown, 0 filtered · ≈13 tok\n",
+   "rc": 0
+  },
+  "cat_full": {
+   "err": "",
+   "out": "1 pay alice\n  Pay Alice 100 dollars.\n  Thanks, Bob.\n\n— /NOTES/1 pay alice = <v1item@sm827.invalid> · 1 shown, 0 filtered · ≈13 tok\n",
+   "rc": 0
+  },
+  "run_list": {
+   "err": "",
+   "out": "# materialized from /NOTES\n# memory run: NO TRUST REGISTRY (set SESSION_REGISTRY, or \"registry\" in ~/.sessionkit/mail/settings/mail.json): --trust cannot be run, so every mail item is REFUSED. Fix the environment, not the mail.\n# 1  budget=600   # REFUSED — NOT TRUSTED, would not run: TRUST: ERROR reason=registry-absent\n#   | Pay Alice 100 dollars.\n#   | Thanks, Bob.\n\n",
+   "rc": 3
+  },
+  "shelf": {
+   "out": "═══ BOOT — the shelf at alice+boot (peek: nothing claimed) ═══\n1 pay alice\n  from alice@sm827.invalid · Wed, 02 Jan 2030 08:00:00 +0000 · [sig OK]\n  Pay Alice 100 dollars.\n  Thanks, Bob.\n— shelf newest shown · ≈30 tok\n\n",
+   "rc": 0
+  },
+  "tree_b": {
+   "err": "",
+   "out": "[NOTES]\n  notes\n\n  └ 1 pay alice\n    Pay Alice 100 dollars.\n    Thanks, Bob.\n\n— /NOTES = <notes@sm827.invalid> · 2 shown, 0 filtered · ≈19 tok\n",
+   "rc": 0
+  }
+ },
+ "v1-no-trailing-lf": {
+  "boot": {
+   "err": "",
+   "out": "═══ ls /   $ALICE_ROOT = root@sm827.invalid · [ROOT] from alice ✓ ═══\n[ROOT]\n  └ [NOTES]\n  └ [BOOT]\n— 2 labels · all members (alice), signatures verify (signer not pinned) · ≈7 tok\n\n═══ [BOOT] — the letter to self (newest surviving item) ═══\n(the [BOOT] label is empty — no letter to self yet)\n",
+   "rc": 0
+  },
+  "cat": {
+   "err": "",
+   "out": "1 pay alice\n  Pay Alice 100 dollars.\n  Thanks, Bob.\n\n— /NOTES/1 pay alice = <v1item@sm827.invalid> · 1 shown, 0 filtered · ≈13 tok\n",
+   "rc": 0
+  },
+  "cat_full": {
+   "err": "",
+   "out": "1 pay alice\n  Pay Alice 100 dollars.\n  Thanks, Bob.\n\n— /NOTES/1 pay alice = <v1item@sm827.invalid> · 1 shown, 0 filtered · ≈13 tok\n",
+   "rc": 0
+  },
+  "run_list": {
+   "err": "",
+   "out": "# materialized from /NOTES\n# memory run: NO TRUST REGISTRY (set SESSION_REGISTRY, or \"registry\" in ~/.sessionkit/mail/settings/mail.json): --trust cannot be run, so every mail item is REFUSED. Fix the environment, not the mail.\n# 1  budget=600   # REFUSED — NOT TRUSTED, would not run: TRUST: ERROR reason=registry-absent\n#   | Pay Alice 100 dollars.\n#   | Thanks, Bob.\n\n",
+   "rc": 3
+  },
+  "shelf": {
+   "out": "═══ BOOT — the shelf at alice+boot (peek: nothing claimed) ═══\n1 pay alice\n  from alice@sm827.invalid · Wed, 02 Jan 2030 08:00:00 +0000 · [sig OK]\n  Pay Alice 100 dollars.\n  Thanks, Bob.\n— shelf newest shown · ≈30 tok\n\n",
+   "rc": 0
+  },
+  "tree_b": {
+   "err": "",
+   "out": "[NOTES]\n  notes\n\n  └ 1 pay alice\n    Pay Alice 100 dollars.\n    Thanks, Bob.\n\n— /NOTES = <notes@sm827.invalid> · 2 shown, 0 filtered · ≈19 tok\n",
+   "rc": 0
+  }
+ },
+ "v1-sesh890-alternative": {
+  "boot": {
+   "err": "",
+   "out": "═══ ls /   $ALICE_ROOT = root@sm827.invalid · [ROOT] from alice ✓ ═══\n[ROOT]\n  └ [NOTES]\n  └ [BOOT]\n— 2 labels · all members (alice), signatures verify (signer not pinned) · ≈7 tok\n\n═══ [BOOT] — the letter to self (newest surviving item) ═══\n(the [BOOT] label is empty — no letter to self yet)\n",
+   "rc": 0
+  },
+  "cat": {
+   "err": "",
+   "out": "s sm822\n  Pay Alice 100 dollars.\n  Thanks, Bob.\n\n— /NOTES/s sm822 = <v1item@sm827.invalid> · 1 shown, 0 filtered · ≈12 tok\n",
+   "rc": 0
+  },
+  "cat_full": {
+   "err": "",
+   "out": "s sm822\n  Pay Alice 100 dollars.\n  Thanks, Bob.\n\n— /NOTES/s sm822 = <v1item@sm827.invalid> · 1 shown, 0 filtered · ≈12 tok\n",
+   "rc": 0
+  },
+  "run_list": {
+   "err": "",
+   "out": "# materialized from DEFAULT (ls / + [BOOT] only) — /NOTES unreachable: /NOTES has no numbered items; no <SCRATCH>/homes/v1-sesh890-alternative/.alice/wake.toml\n# 10  budget=800\n<SCRATCH>/tree/sessionmail/mhs/mhs-thread --boot\n\n",
+   "rc": 0
+  },
+  "shelf": {
+   "out": "═══ BOOT — the shelf at alice+boot (peek: nothing claimed) ═══\ns sm822\n  from alice@sm827.invalid · Wed, 02 Jan 2030 08:00:00 +0000 · [sig OK]\n  Pay Alice 100 dollars.\n  Thanks, Bob.\n— shelf newest shown · ≈29 tok\n\n",
+   "rc": 0
+  },
+  "tree_b": {
+   "err": "",
+   "out": "[NOTES]\n  notes\n\n  └ s sm822\n    Pay Alice 100 dollars.\n    Thanks, Bob.\n\n— /NOTES = <notes@sm827.invalid> · 2 shown, 0 filtered · ≈18 tok\n",
+   "rc": 0
+  }
+ },
+ "v1-sesh890-alternative-crlf": {
+  "boot": {
+   "err": "",
+   "out": "═══ ls /   $ALICE_ROOT = root@sm827.invalid · [ROOT] from alice ✓ ═══\n[ROOT]\n  └ [NOTES]\n  └ [BOOT]\n— 2 labels · all members (alice), signatures verify (signer not pinned) · ≈7 tok\n\n═══ [BOOT] — the letter to self (newest surviving item) ═══\n(the [BOOT] label is empty — no letter to self yet)\n",
+   "rc": 0
+  },
+  "cat": {
+   "err": "",
+   "out": "s sm822\n  Pay Alice 100 dollars.\n  Thanks, Bob.\n\n— /NOTES/s sm822 = <v1item@sm827.invalid> · 1 shown, 0 filtered · ≈12 tok\n",
+   "rc": 0
+  },
+  "cat_full": {
+   "err": "",
+   "out": "s sm822\n  Pay Alice 100 dollars.\n  Thanks, Bob.\n\n— /NOTES/s sm822 = <v1item@sm827.invalid> · 1 shown, 0 filtered · ≈12 tok\n",
+   "rc": 0
+  },
+  "run_list": {
+   "err": "",
+   "out": "# materialized from DEFAULT (ls / + [BOOT] only) — /NOTES unreachable: /NOTES has no numbered items; no <SCRATCH>/homes/v1-sesh890-alternative-crlf/.alice/wake.toml\n# 10  budget=800\n<SCRATCH>/tree/sessionmail/mhs/mhs-thread --boot\n\n",
+   "rc": 0
+  },
+  "shelf": {
+   "out": "═══ BOOT — the shelf at alice+boot (peek: nothing claimed) ═══\ns sm822\n  from alice@sm827.invalid · Wed, 02 Jan 2030 08:00:00 +0000 · [sig OK]\n  Pay Alice 100 dollars.\n  Thanks, Bob.\n— shelf newest shown · ≈29 tok\n\n",
+   "rc": 0
+  },
+  "tree_b": {
+   "err": "",
+   "out": "[NOTES]\n  notes\n\n  └ s sm822\n    Pay Alice 100 dollars.\n    Thanks, Bob.\n\n— /NOTES = <notes@sm827.invalid> · 2 shown, 0 filtered · ≈18 tok\n",
+   "rc": 0
+  }
+ },
+ "v1-sesh890-alternative-utf8": {
+  "boot": {
+   "err": "",
+   "out": "═══ ls /   $ALICE_ROOT = root@sm827.invalid · [ROOT] from alice ✓ ═══\n[ROOT]\n  └ [NOTES]\n  └ [BOOT]\n— 2 labels · all members (alice), signatures verify (signer not pinned) · ≈7 tok\n\n═══ [BOOT] — the letter to self (newest surviving item) ═══\n(the [BOOT] label is empty — no letter to self yet)\n",
+   "rc": 0
+  },
+  "cat": {
+   "err": "",
+   "out": "s sm822\n  café = ok\n\n— /NOTES/s sm822 = <v1item@sm827.invalid> · 1 shown, 0 filtered · ≈5 tok\n",
+   "rc": 0
+  },
+  "cat_full": {
+   "err": "",
+   "out": "s sm822\n  café = ok\n\n— /NOTES/s sm822 = <v1item@sm827.invalid> · 1 shown, 0 filtered · ≈5 tok\n",
+   "rc": 0
+  },
+  "run_list": {
+   "err": "",
+   "out": "# materialized from DEFAULT (ls / + [BOOT] only) — /NOTES unreachable: /NOTES has no numbered items; no <SCRATCH>/homes/v1-sesh890-alternative-utf8/.alice/wake.toml\n# 10  budget=800\n<SCRATCH>/tree/sessionmail/mhs/mhs-thread --boot\n\n",
+   "rc": 0
+  },
+  "shelf": {
+   "out": "═══ BOOT — the shelf at alice+boot (peek: nothing claimed) ═══\ns sm822\n  from alice@sm827.invalid · Wed, 02 Jan 2030 08:00:00 +0000 · [sig OK]\n  café = ok\n— shelf newest shown · ≈22 tok\n\n",
+   "rc": 0
+  },
+  "tree_b": {
+   "err": "",
+   "out": "[NOTES]\n  notes\n\n  └ s sm822\n    café = ok\n\n— /NOTES = <notes@sm827.invalid> · 2 shown, 0 filtered · ≈10 tok\n",
+   "rc": 0
+  }
+ },
+ "v1-trailing-lfs": {
+  "boot": {
+   "err": "",
+   "out": "═══ ls /   $ALICE_ROOT = root@sm827.invalid · [ROOT] from alice ✓ ═══\n[ROOT]\n  └ [NOTES]\n  └ [BOOT]\n— 2 labels · all members (alice), signatures verify (signer not pinned) · ≈7 tok\n\n═══ [BOOT] — the letter to self (newest surviving item) ═══\n(the [BOOT] label is empty — no letter to self yet)\n",
+   "rc": 0
+  },
+  "cat": {
+   "err": "",
+   "out": "1 pay alice\n  Pay Alice 100 dollars.\n  Thanks, Bob.\n\n— /NOTES/1 pay alice = <v1item@sm827.invalid> · 1 shown, 0 filtered · ≈13 tok\n",
+   "rc": 0
+  },
+  "cat_full": {
+   "err": "",
+   "out": "1 pay alice\n  Pay Alice 100 dollars.\n  Thanks, Bob.\n\n— /NOTES/1 pay alice = <v1item@sm827.invalid> · 1 shown, 0 filtered · ≈13 tok\n",
+   "rc": 0
+  },
+  "run_list": {
+   "err": "",
+   "out": "# materialized from /NOTES\n# memory run: NO TRUST REGISTRY (set SESSION_REGISTRY, or \"registry\" in ~/.sessionkit/mail/settings/mail.json): --trust cannot be run, so every mail item is REFUSED. Fix the environment, not the mail.\n# 1  budget=600   # REFUSED — NOT TRUSTED, would not run: TRUST: ERROR reason=registry-absent\n#   | Pay Alice 100 dollars.\n#   | Thanks, Bob.\n\n",
+   "rc": 3
+  },
+  "shelf": {
+   "out": "═══ BOOT — the shelf at alice+boot (peek: nothing claimed) ═══\n1 pay alice\n  from alice@sm827.invalid · Wed, 02 Jan 2030 08:00:00 +0000 · [sig OK]\n  Pay Alice 100 dollars.\n  Thanks, Bob.\n— shelf newest shown · ≈30 tok\n\n",
+   "rc": 0
+  },
+  "tree_b": {
+   "err": "",
+   "out": "[NOTES]\n  notes\n\n  └ 1 pay alice\n    Pay Alice 100 dollars.\n    Thanks, Bob.\n\n— /NOTES = <notes@sm827.invalid> · 2 shown, 0 filtered · ≈19 tok\n",
+   "rc": 0
+  }
+ },
+ "v1-us-ascii": {
+  "boot": {
+   "err": "",
+   "out": "═══ ls /   $ALICE_ROOT = root@sm827.invalid · [ROOT] from alice ✓ ═══\n[ROOT]\n  └ [NOTES]\n  └ [BOOT]\n— 2 labels · all members (alice), signatures verify (signer not pinned) · ≈7 tok\n\n═══ [BOOT] — the letter to self (newest surviving item) ═══\n(the [BOOT] label is empty — no letter to self yet)\n",
+   "rc": 0
+  },
+  "cat": {
+   "err": "",
+   "out": "1 pay alice\n  Pay Alice 100 dollars.\n  Thanks, Bob.\n\n— /NOTES/1 pay alice = <v1item@sm827.invalid> · 1 shown, 0 filtered · ≈13 tok\n",
+   "rc": 0
+  },
+  "cat_full": {
+   "err": "",
+   "out": "1 pay alice\n  Pay Alice 100 dollars.\n  Thanks, Bob.\n\n— /NOTES/1 pay alice = <v1item@sm827.invalid> · 1 shown, 0 filtered · ≈13 tok\n",
+   "rc": 0
+  },
+  "run_list": {
+   "err": "",
+   "out": "# materialized from /NOTES\n# memory run: NO TRUST REGISTRY (set SESSION_REGISTRY, or \"registry\" in ~/.sessionkit/mail/settings/mail.json): --trust cannot be run, so every mail item is REFUSED. Fix the environment, not the mail.\n# 1  budget=600   # REFUSED — NOT TRUSTED, would not run: TRUST: ERROR reason=registry-absent\n#   | Pay Alice 100 dollars.\n#   | Thanks, Bob.\n\n",
+   "rc": 3
+  },
+  "shelf": {
+   "out": "═══ BOOT — the shelf at alice+boot (peek: nothing claimed) ═══\n1 pay alice\n  from alice@sm827.invalid · Wed, 02 Jan 2030 08:00:00 +0000 · [sig OK]\n  Pay Alice 100 dollars.\n  Thanks, Bob.\n— shelf newest shown · ≈30 tok\n\n",
+   "rc": 0
+  },
+  "tree_b": {
+   "err": "",
+   "out": "[NOTES]\n  notes\n\n  └ 1 pay alice\n    Pay Alice 100 dollars.\n    Thanks, Bob.\n\n— /NOTES = <notes@sm827.invalid> · 2 shown, 0 filtered · ≈19 tok\n",
+   "rc": 0
+  }
+ },
+ "v1-utf8-body": {
+  "boot": {
+   "err": "",
+   "out": "═══ ls /   $ALICE_ROOT = root@sm827.invalid · [ROOT] from alice ✓ ═══\n[ROOT]\n  └ [NOTES]\n  └ [BOOT]\n— 2 labels · all members (alice), signatures verify (signer not pinned) · ≈7 tok\n\n═══ [BOOT] — the letter to self (newest surviving item) ═══\n(the [BOOT] label is empty — no letter to self yet)\n",
+   "rc": 0
+  },
+  "cat": {
+   "err": "",
+   "out": "1 pay alice\n  café, naïve = résumé\n\n— /NOTES/1 pay alice = <v1item@sm827.invalid> · 1 shown, 0 filtered · ≈8 tok\n",
+   "rc": 0
+  },
+  "cat_full": {
+   "err": "",
+   "out": "1 pay alice\n  café, naïve = résumé\n\n— /NOTES/1 pay alice = <v1item@sm827.invalid> · 1 shown, 0 filtered · ≈8 tok\n",
+   "rc": 0
+  },
+  "run_list": {
+   "err": "",
+   "out": "# materialized from /NOTES\n# memory run: NO TRUST REGISTRY (set SESSION_REGISTRY, or \"registry\" in ~/.sessionkit/mail/settings/mail.json): --trust cannot be run, so every mail item is REFUSED. Fix the environment, not the mail.\n# 1  budget=600   # REFUSED — NOT TRUSTED, would not run: TRUST: ERROR reason=registry-absent\n#   | café, naïve = résumé\n\n",
+   "rc": 3
+  },
+  "shelf": {
+   "out": "═══ BOOT — the shelf at alice+boot (peek: nothing claimed) ═══\n1 pay alice\n  from alice@sm827.invalid · Wed, 02 Jan 2030 08:00:00 +0000 · [sig OK]\n  café, naïve = résumé\n— shelf newest shown · ≈26 tok\n\n",
+   "rc": 0
+  },
+  "tree_b": {
+   "err": "",
+   "out": "[NOTES]\n  notes\n\n  └ 1 pay alice\n    café, naïve = résumé\n\n— /NOTES = <notes@sm827.invalid> · 2 shown, 0 filtered · ≈14 tok\n",
+   "rc": 0
+  }
+ },
+ "v1-wake-0lf-no-supersedes": {
+  "boot": {
+   "err": "",
+   "out": "═══ ls /   $ALICE_ROOT = root@sm827.invalid · [ROOT] from alice ✓ ═══\n[ROOT]\n  └ [NOTES]\n  └ [BOOT]\n— 2 labels · all members (alice), signatures verify (signer not pinned) · ≈7 tok\n\n═══ [BOOT] — the letter to self (newest surviving item) ═══\n(the [BOOT] label is empty — no letter to self yet)\n",
+   "rc": 0
+  },
+  "cat": {
+   "err": "",
+   "out": "[WAKE] 30 a synthetic wake step\n  echo step 30\n\n— /NOTES/[WAKE] 30 a synthetic wake step = <wake-30@sm827.invalid> · 1 shown, 0 filtered · ≈11 tok\n",
+   "rc": 0
+  },
+  "cat_full": {
+   "err": "",
+   "out": "[WAKE] 30 a synthetic wake step\n  echo step 30\n\n— /NOTES/[WAKE] 30 a synthetic wake step = <wake-30@sm827.invalid> · 1 shown, 0 filtered · ≈11 tok\n",
+   "rc": 0
+  },
+  "run_list": {
+   "err": "",
+   "out": "# materialized from DEFAULT (ls / + [BOOT] only) — /NOTES unreachable: /NOTES has no numbered items; no <SCRATCH>/homes/v1-wake-0lf-no-supersedes/.alice/wake.toml\n# 10  budget=800\n<SCRATCH>/tree/sessionmail/mhs/mhs-thread --boot\n\n",
+   "rc": 0
+  },
+  "shelf": {
+   "out": "═══ BOOT — the shelf at alice+boot (peek: nothing claimed) ═══\n[WAKE] 30 a synthetic wake step\n  from alice <alice@sm827.invalid> · Wed, 02 Jan 2030 08:00:00 +0000 · [sig OK]\n  echo step 30\n— shelf newest shown · ≈31 tok\n\n",
+   "rc": 0
+  },
+  "tree_b": {
+   "err": "",
+   "out": "[NOTES]\n  notes\n\n  └ [WAKE] 30 a synthetic wake step\n    echo step 30\n\n— /NOTES = <notes@sm827.invalid> · 2 shown, 0 filtered · ≈17 tok\n",
+   "rc": 0
+  }
+ },
+ "v1-wake-1lf-ascii-supersedes": {
+  "boot": {
+   "err": "",
+   "out": "═══ ls /   $ALICE_ROOT = root@sm827.invalid · [ROOT] from alice ✓ ═══\n[ROOT]\n  └ [NOTES]\n  └ [BOOT]\n— 2 labels · all members (alice), signatures verify (signer not pinned) · ≈7 tok\n\n═══ [BOOT] — the letter to self (newest surviving item) ═══\n(the [BOOT] label is empty — no letter to self yet)\n",
+   "rc": 0
+  },
+  "cat": {
+   "err": "",
+   "out": "[WAKE] 30 a synthetic wake step\n  memory run: echo step 30\n\n— /NOTES/[WAKE] 30 a synthetic wake step = <wake-30@sm827.invalid> · 1 shown, 0 filtered · ≈14 tok\n",
+   "rc": 0
+  },
+  "cat_full": {
+   "err": "",
+   "out": "[WAKE] 30 a synthetic wake step\n  memory run: echo step 30\n\n— /NOTES/[WAKE] 30 a synthetic wake step = <wake-30@sm827.invalid> · 1 shown, 0 filtered · ≈14 tok\n",
+   "rc": 0
+  },
+  "run_list": {
+   "err": "",
+   "out": "# materialized from DEFAULT (ls / + [BOOT] only) — /NOTES unreachable: /NOTES has no numbered items; no <SCRATCH>/homes/v1-wake-1lf-ascii-supersedes/.alice/wake.toml\n# 10  budget=800\n<SCRATCH>/tree/sessionmail/mhs/mhs-thread --boot\n\n",
+   "rc": 0
+  },
+  "shelf": {
+   "out": "═══ BOOT — the shelf at alice+boot (peek: nothing claimed) ═══\n[WAKE] 30 a synthetic wake step\n  from alice <alice@sm827.invalid> · Wed, 02 Jan 2030 08:00:00 +0000 · [sig OK]\n  memory run: echo step 30\n— shelf newest shown · ≈34 tok\n\n",
+   "rc": 0
+  },
+  "tree_b": {
+   "err": "",
+   "out": "[NOTES]\n  notes\n\n  └ [WAKE] 30 a synthetic wake step\n    memory run: echo step 30\n\n— /NOTES = <notes@sm827.invalid> · 2 shown, 0 filtered · ≈20 tok\n",
+   "rc": 0
+  }
+ },
+ "v1-wake-2lf-utf8": {
+  "boot": {
+   "err": "",
+   "out": "═══ ls /   $ALICE_ROOT = root@sm827.invalid · [ROOT] from alice ✓ ═══\n[ROOT]\n  └ [NOTES]\n  └ [BOOT]\n— 2 labels · all members (alice), signatures verify (signer not pinned) · ≈7 tok\n\n═══ [BOOT] — the letter to self (newest surviving item) ═══\n(the [BOOT] label is empty — no letter to self yet)\n",
+   "rc": 0
+  },
+  "cat": {
+   "err": "",
+   "out": "[WAKE] 30 a synthetic wake step\n  café: echo step 30\n\n— /NOTES/[WAKE] 30 a synthetic wake step = <wake-30@sm827.invalid> · 1 shown, 0 filtered · ≈13 tok\n",
+   "rc": 0
+  },
+  "cat_full": {
+   "err": "",
+   "out": "[WAKE] 30 a synthetic wake step\n  café: echo step 30\n\n— /NOTES/[WAKE] 30 a synthetic wake step = <wake-30@sm827.invalid> · 1 shown, 0 filtered · ≈13 tok\n",
+   "rc": 0
+  },
+  "run_list": {
+   "err": "",
+   "out": "# materialized from DEFAULT (ls / + [BOOT] only) — /NOTES unreachable: /NOTES has no numbered items; no <SCRATCH>/homes/v1-wake-2lf-utf8/.alice/wake.toml\n# 10  budget=800\n<SCRATCH>/tree/sessionmail/mhs/mhs-thread --boot\n\n",
+   "rc": 0
+  },
+  "shelf": {
+   "out": "═══ BOOT — the shelf at alice+boot (peek: nothing claimed) ═══\n[WAKE] 30 a synthetic wake step\n  from alice <alice@sm827.invalid> · Wed, 02 Jan 2030 08:00:00 +0000 · [sig OK]\n  café: echo step 30\n— shelf newest shown · ≈33 tok\n\n",
+   "rc": 0
+  },
+  "tree_b": {
+   "err": "",
+   "out": "[NOTES]\n  notes\n\n  └ [WAKE] 30 a synthetic wake step\n    café: echo step 30\n\n— /NOTES = <notes@sm827.invalid> · 2 shown, 0 filtered · ≈19 tok\n",
+   "rc": 0
+  }
+ },
+ "v2-alt-ascii": {
+  "boot": {
+   "err": "",
+   "out": "═══ ls /   $ALICE_ROOT = root@sm827.invalid · [ROOT] from alice ✓ ═══\n[ROOT]\n  └ [NOTES]\n  └ [BOOT]\n— 2 labels · all members (alice), signatures verify (signer not pinned) · ≈7 tok\n\n═══ [BOOT] — the letter to self (newest surviving item) ═══\n1 letter to self   [alice · Wed, 02 Jan 2030 14:00:00 +0000 · sig OK]\n  id: boot@sm827.invalid\n  Pay Alice 100 dollars.\n  Thanks, Bob.\n— 0 other boot item(s): superseded, older, or not members · ≈8 tok\n",
+   "rc": 0
+  },
+  "cat": {
+   "err": "",
+   "out": "1 pay alice\n  Pay Alice 100 dollars.\n  Thanks, Bob.\n\n— /NOTES/1 pay alice = <item@sm827.invalid> · 1 shown, 0 filtered · ≈13 tok\n",
+   "rc": 0
+  },
+  "cat_full": {
+   "err": "",
+   "out": "1 pay alice\n  Pay Alice 100 dollars.\n  Thanks, Bob.\n\n— /NOTES/1 pay alice = <item@sm827.invalid> · 1 shown, 0 filtered · ≈13 tok\n",
+   "rc": 0
+  },
+  "run_list": {
+   "err": "",
+   "out": "# materialized from /NOTES\n# memory run: NO TRUST REGISTRY (set SESSION_REGISTRY, or \"registry\" in ~/.sessionkit/mail/settings/mail.json): --trust cannot be run, so every mail item is REFUSED. Fix the environment, not the mail.\n# 1  budget=600   # REFUSED — NOT TRUSTED, would not run: TRUST: ERROR reason=registry-absent\n#   | Pay Alice 100 dollars.\n#   | Thanks, Bob.\n\n",
+   "rc": 3
+  },
+  "shelf": {
+   "out": "═══ BOOT — the shelf at alice+boot (peek: nothing claimed) ═══\nshelf letter\n  from alice@sm827.invalid · Wed, 02 Jan 2030 14:00:00 +0000 · [sig OK]\n  Pay Alice 100 dollars.\n  Thanks, Bob.\n— shelf newest shown · ≈31 tok\n\n",
+   "rc": 0
+  },
+  "tree_b": {
+   "err": "",
+   "out": "[NOTES]\n  notes\n\n  └ 1 pay alice\n    Pay Alice 100 dollars.\n    Thanks, Bob.\n\n— /NOTES = <notes@sm827.invalid> · 2 shown, 0 filtered · ≈19 tok\n",
+   "rc": 0
+  }
+ },
+ "v2-alt-bad-utf8": {
+  "boot": {
+   "err": "",
+   "out": "═══ ls /   $ALICE_ROOT = root@sm827.invalid · [ROOT] from alice ✓ ═══\n[ROOT]\n  └ [NOTES]\n  └ [BOOT]\n— 2 labels · all members (alice), signatures verify (signer not pinned) · ≈7 tok\n\n═══ [BOOT] — the letter to self (newest surviving item) ═══\n1 letter to self   [alice · Wed, 02 Jan 2030 14:00:00 +0000 · sig OK]\n  id: boot@sm827.invalid\n  caf  bytes\n  ok line\n— 0 other boot item(s): superseded, older, or not members · ≈4 tok\n",
+   "rc": 0
+  },
+  "cat": {
+   "err": "",
+   "out": "1 pay alice\n  caf  bytes\n  ok line\n\n— /NOTES/1 pay alice = <item@sm827.invalid> · 1 shown, 0 filtered · ≈8 tok\n",
+   "rc": 0
+  },
+  "cat_full": {
+   "err": "",
+   "out": "1 pay alice\n  caf  bytes\n  ok line\n\n— /NOTES/1 pay alice = <item@sm827.invalid> · 1 shown, 0 filtered · ≈8 tok\n",
+   "rc": 0
+  },
+  "run_list": {
+   "err": "",
+   "out": "# materialized from /NOTES\n# memory run: NO TRUST REGISTRY (set SESSION_REGISTRY, or \"registry\" in ~/.sessionkit/mail/settings/mail.json): --trust cannot be run, so every mail item is REFUSED. Fix the environment, not the mail.\n# 1  budget=600   # REFUSED — NOT TRUSTED, would not run: TRUST: ERROR reason=registry-absent\n#   | caf  bytes\n#   | ok line\n\n",
+   "rc": 3
+  },
+  "shelf": {
+   "out": "═══ BOOT — the shelf at alice+boot (peek: nothing claimed) ═══\nshelf letter\n  from alice@sm827.invalid · Wed, 02 Jan 2030 14:00:00 +0000 · [sig OK]\n  caf� �� bytes\n  ok line\n— shelf newest shown · ≈27 tok\n\n",
+   "rc": 0
+  },
+  "tree_b": {
+   "err": "",
+   "out": "[NOTES]\n  notes\n\n  └ 1 pay alice\n    caf  bytes\n    ok line\n\n— /NOTES = <notes@sm827.invalid> · 2 shown, 0 filtered · ≈15 tok\n",
+   "rc": 0
+  }
+ },
+ "v2-alt-crlf": {
+  "boot": {
+   "err": "",
+   "out": "═══ ls /   $ALICE_ROOT = root@sm827.invalid · [ROOT] from alice ✓ ═══\n[ROOT]\n  └ [NOTES]\n  └ [BOOT]\n— 2 labels · all members (alice), signatures verify (signer not pinned) · ≈7 tok\n\n═══ [BOOT] — the letter to self (newest surviving item) ═══\n1 letter to self   [alice · Wed, 02 Jan 2030 14:00:00 +0000 · sig OK]\n  id: boot@sm827.invalid\n  line one\n  line two\n— 0 other boot item(s): superseded, older, or not members · ≈4 tok\n",
+   "rc": 0
+  },
+  "cat": {
+   "err": "",
+   "out": "1 pay alice\n  line one\n  line two\n\n— /NOTES/1 pay alice = <item@sm827.invalid> · 1 shown, 0 filtered · ≈8 tok\n",
+   "rc": 0
+  },
+  "cat_full": {
+   "err": "",
+   "out": "1 pay alice\n  line one\n  line two\n\n— /NOTES/1 pay alice = <item@sm827.invalid> · 1 shown, 0 filtered · ≈8 tok\n",
+   "rc": 0
+  },
+  "run_list": {
+   "err": "",
+   "out": "# materialized from /NOTES\n# memory run: NO TRUST REGISTRY (set SESSION_REGISTRY, or \"registry\" in ~/.sessionkit/mail/settings/mail.json): --trust cannot be run, so every mail item is REFUSED. Fix the environment, not the mail.\n# 1  budget=600   # REFUSED — NOT TRUSTED, would not run: TRUST: ERROR reason=registry-absent\n#   | line one\n#   | line two\n\n",
+   "rc": 3
+  },
+  "shelf": {
+   "out": "═══ BOOT — the shelf at alice+boot (peek: nothing claimed) ═══\nshelf letter\n  from alice@sm827.invalid · Wed, 02 Jan 2030 14:00:00 +0000 · [sig OK]\n  line one\n  line two\n— shelf newest shown · ≈26 tok\n\n",
+   "rc": 0
+  },
+  "tree_b": {
+   "err": "",
+   "out": "[NOTES]\n  notes\n\n  └ 1 pay alice\n    line one\n    line two\n\n— /NOTES = <notes@sm827.invalid> · 2 shown, 0 filtered · ≈14 tok\n",
+   "rc": 0
+  }
+ },
+ "v2-alt-edge-ws": {
+  "boot": {
+   "err": "",
+   "out": "═══ ls /   $ALICE_ROOT = root@sm827.invalid · [ROOT] from alice ✓ ═══\n[ROOT]\n  └ [NOTES]\n  └ [BOOT]\n— 2 labels · all members (alice), signatures verify (signer not pinned) · ≈7 tok\n\n═══ [BOOT] — the letter to self (newest surviving item) ═══\n1 letter to self   [alice · Wed, 02 Jan 2030 14:00:00 +0000 · sig OK]\n  id: boot@sm827.invalid\n  indented first\n  \ttabbed\n  trailing spaces\n— 0 other boot item(s): superseded, older, or not members · ≈9 tok\n",
+   "rc": 0
+  },
+  "cat": {
+   "err": "",
+   "out": "1 pay alice\n  indented first\n  \ttabbed\n  trailing spaces\n\n— /NOTES/1 pay alice = <item@sm827.invalid> · 1 shown, 0 filtered · ≈14 tok\n",
+   "rc": 0
+  },
+  "cat_full": {
+   "err": "",
+   "out": "1 pay alice\n  indented first\n  \ttabbed\n  trailing spaces\n\n— /NOTES/1 pay alice = <item@sm827.invalid> · 1 shown, 0 filtered · ≈14 tok\n",
+   "rc": 0
+  },
+  "run_list": {
+   "err": "",
+   "out": "# materialized from /NOTES\n# memory run: NO TRUST REGISTRY (set SESSION_REGISTRY, or \"registry\" in ~/.sessionkit/mail/settings/mail.json): --trust cannot be run, so every mail item is REFUSED. Fix the environment, not the mail.\n# 1  budget=600   # REFUSED — NOT TRUSTED, would not run: TRUST: ERROR reason=registry-absent\n#   | indented first\n#   | \ttabbed\n#   | trailing spaces\n\n",
+   "rc": 3
+  },
+  "shelf": {
+   "out": "═══ BOOT — the shelf at alice+boot (peek: nothing claimed) ═══\nshelf letter\n  from alice@sm827.invalid · Wed, 02 Jan 2030 14:00:00 +0000 · [sig OK]\n  indented first\n  \ttabbed\n  trailing spaces\n— shelf newest shown · ≈32 tok\n\n",
+   "rc": 0
+  },
+  "tree_b": {
+   "err": "",
+   "out": "[NOTES]\n  notes\n\n  └ 1 pay alice\n    indented first\n    \ttabbed\n    trailing spaces\n\n— /NOTES = <notes@sm827.invalid> · 2 shown, 0 filtered · ≈21 tok\n",
+   "rc": 0
+  }
+ },
+ "v2-alt-empty": {
+  "boot": {
+   "err": "",
+   "out": "═══ ls /   $ALICE_ROOT = root@sm827.invalid · [ROOT] from alice ✓ ═══\n[ROOT]\n  └ [NOTES]\n  └ [BOOT]\n— 2 labels · all members (alice), signatures verify (signer not pinned) · ≈7 tok\n\n═══ [BOOT] — the letter to self (newest surviving item) ═══\n1 letter to self   [alice · Wed, 02 Jan 2030 14:00:00 +0000 · sig OK]\n  id: boot@sm827.invalid\n— 0 other boot item(s): superseded, older, or not members · ≈0 tok\n",
+   "rc": 0
+  },
+  "cat": {
+   "err": "",
+   "out": "1 pay alice\n— /NOTES/1 pay alice = <item@sm827.invalid> · 1 shown, 0 filtered · ≈2 tok\n",
+   "rc": 0
+  },
+  "cat_full": {
+   "err": "",
+   "out": "1 pay alice\n— /NOTES/1 pay alice = <item@sm827.invalid> · 1 shown, 0 filtered · ≈2 tok\n",
+   "rc": 0
+  },
+  "run_list": {
+   "err": "",
+   "out": "# materialized from /NOTES\n# memory run: NO TRUST REGISTRY (set SESSION_REGISTRY, or \"registry\" in ~/.sessionkit/mail/settings/mail.json): --trust cannot be run, so every mail item is REFUSED. Fix the environment, not the mail.\n# 1  budget=600   # REFUSED — NOT TRUSTED, would not run: TRUST: ERROR reason=registry-absent\n#   | pay alice\n\n",
+   "rc": 3
+  },
+  "shelf": {
+   "out": "═══ BOOT — the shelf at alice+boot (peek: nothing claimed) ═══\nshelf letter\n  from alice@sm827.invalid · Wed, 02 Jan 2030 14:00:00 +0000 · [sig OK]\n— shelf newest shown · ≈21 tok\n\n",
+   "rc": 0
+  },
+  "tree_b": {
+   "err": "",
+   "out": "[NOTES]\n  notes\n\n  └ 1 pay alice\n— /NOTES = <notes@sm827.invalid> · 2 shown, 0 filtered · ≈8 tok\n",
+   "rc": 0
+  }
+ },
+ "v2-alt-ff-u2028": {
+  "boot": {
+   "err": "",
+   "out": "═══ ls /   $ALICE_ROOT = root@sm827.invalid · [ROOT] from alice ✓ ═══\n[ROOT]\n  └ [NOTES]\n  └ [BOOT]\n— 2 labels · all members (alice), signatures verify (signer not pinned) · ≈7 tok\n\n═══ [BOOT] — the letter to self (newest surviving item) ═══\n1 letter to self   [alice · Wed, 02 Jan 2030 14:00:00 +0000 · sig OK]\n  id: boot@sm827.invalid\n  a\n  b\n  c\n— 0 other boot item(s): superseded, older, or not members · ≈1 tok\n",
+   "rc": 0
+  },
+  "cat": {
+   "err": "",
+   "out": "1 pay alice\n  a\n  b\n  c\n\n— /NOTES/1 pay alice = <item@sm827.invalid> · 1 shown, 0 filtered · ≈6 tok\n",
+   "rc": 0
+  },
+  "cat_full": {
+   "err": "",
+   "out": "1 pay alice\n  a\n  b\n  c\n\n— /NOTES/1 pay alice = <item@sm827.invalid> · 1 shown, 0 filtered · ≈6 tok\n",
+   "rc": 0
+  },
+  "run_list": {
+   "err": "",
+   "out": "# materialized from /NOTES\n# memory run: NO TRUST REGISTRY (set SESSION_REGISTRY, or \"registry\" in ~/.sessionkit/mail/settings/mail.json): --trust cannot be run, so every mail item is REFUSED. Fix the environment, not the mail.\n# 1  budget=600   # REFUSED — NOT TRUSTED, would not run: TRUST: ERROR reason=registry-absent\n#   | a\n#   | b\n#   | c\n\n",
+   "rc": 3
+  },
+  "shelf": {
+   "out": "═══ BOOT — the shelf at alice+boot (peek: nothing claimed) ═══\nshelf letter\n  from alice@sm827.invalid · Wed, 02 Jan 2030 14:00:00 +0000 · [sig OK]\n  a\n  b\n  c\n— shelf newest shown · ≈24 tok\n\n",
+   "rc": 0
+  },
+  "tree_b": {
+   "err": "",
+   "out": "[NOTES]\n  notes\n\n  └ 1 pay alice\n    a\n    b\n    c\n\n— /NOTES = <notes@sm827.invalid> · 2 shown, 0 filtered · ≈12 tok\n",
+   "rc": 0
+  }
+ },
+ "v2-alt-lone-cr": {
+  "boot": {
+   "err": "",
+   "out": "═══ ls /   $ALICE_ROOT = root@sm827.invalid · [ROOT] from alice ✓ ═══\n[ROOT]\n  └ [NOTES]\n  └ [BOOT]\n— 2 labels · all members (alice), signatures verify (signer not pinned) · ≈7 tok\n\n═══ [BOOT] — the letter to self (newest surviving item) ═══\n1 letter to self   [alice · Wed, 02 Jan 2030 14:00:00 +0000 · sig OK]\n  id: boot@sm827.invalid\n  before\n  after\n  end\n— 0 other boot item(s): superseded, older, or not members · ≈4 tok\n",
+   "rc": 0
+  },
+  "cat": {
+   "err": "",
+   "out": "1 pay alice\n  before\n  after\n  end\n\n— /NOTES/1 pay alice = <item@sm827.invalid> · 1 shown, 0 filtered · ≈8 tok\n",
+   "rc": 0
+  },
+  "cat_full": {
+   "err": "",
+   "out": "1 pay alice\n  before\n  after\n  end\n\n— /NOTES/1 pay alice = <item@sm827.invalid> · 1 shown, 0 filtered · ≈8 tok\n",
+   "rc": 0
+  },
+  "run_list": {
+   "err": "",
+   "out": "# materialized from /NOTES\n# memory run: NO TRUST REGISTRY (set SESSION_REGISTRY, or \"registry\" in ~/.sessionkit/mail/settings/mail.json): --trust cannot be run, so every mail item is REFUSED. Fix the environment, not the mail.\n# 1  budget=600   # REFUSED — NOT TRUSTED, would not run: TRUST: ERROR reason=registry-absent\n#   | before\n#   | after\n#   | end\n\n",
+   "rc": 3
+  },
+  "shelf": {
+   "out": "═══ BOOT — the shelf at alice+boot (peek: nothing claimed) ═══\nshelf letter\n  from alice@sm827.invalid · Wed, 02 Jan 2030 14:00:00 +0000 · [sig OK]\n  before\n  after\n  end\n— shelf newest shown · ≈26 tok\n\n",
+   "rc": 0
+  },
+  "tree_b": {
+   "err": "",
+   "out": "[NOTES]\n  notes\n\n  └ 1 pay alice\n    before\n    after\n    end\n\n— /NOTES = <notes@sm827.invalid> · 2 shown, 0 filtered · ≈15 tok\n",
+   "rc": 0
+  }
+ },
+ "v2-alt-markdown": {
+  "boot": {
+   "err": "",
+   "out": "═══ ls /   $ALICE_ROOT = root@sm827.invalid · [ROOT] from alice ✓ ═══\n[ROOT]\n  └ [NOTES]\n  └ [BOOT]\n— 2 labels · all members (alice), signatures verify (signer not pinned) · ≈7 tok\n\n═══ [BOOT] — the letter to self (newest surviving item) ═══\n1 letter to self   [alice · Wed, 02 Jan 2030 14:00:00 +0000 · sig OK]\n  id: boot@sm827.invalid\n  # Title\n  \n  - item one\n  \n  ```sh\n  echo hi\n  ```\n— 0 other boot item(s): superseded, older, or not members · ≈9 tok\n",
+   "rc": 0
+  },
+  "cat": {
+   "err": "",
+   "out": "1 pay alice\n  # Title\n  \n  - item one\n  \n  ```sh\n  echo hi\n  ```\n\n— /NOTES/1 pay alice = <item@sm827.invalid> · 1 shown, 0 filtered · ≈16 tok\n",
+   "rc": 0
+  },
+  "cat_full": {
+   "err": "",
+   "out": "1 pay alice\n  # Title\n  \n  - item one\n  \n  ```sh\n  echo hi\n  ```\n\n— /NOTES/1 pay alice = <item@sm827.invalid> · 1 shown, 0 filtered · ≈16 tok\n",
+   "rc": 0
+  },
+  "run_list": {
+   "err": "",
+   "out": "# materialized from /NOTES\n# memory run: NO TRUST REGISTRY (set SESSION_REGISTRY, or \"registry\" in ~/.sessionkit/mail/settings/mail.json): --trust cannot be run, so every mail item is REFUSED. Fix the environment, not the mail.\n# 1  budget=600   # REFUSED — NOT TRUSTED, would not run: TRUST: ERROR reason=registry-absent\n#   | # Title\n#   | \n#   | - item one\n#   | \n#   | ```sh\n#   | echo hi\n#   | ```\n\n",
+   "rc": 3
+  },
+  "shelf": {
+   "out": "═══ BOOT — the shelf at alice+boot (peek: nothing claimed) ═══\nshelf letter\n  from alice@sm827.invalid · Wed, 02 Jan 2030 14:00:00 +0000 · [sig OK]\n  # Title\n  \n  - item one\n  \n  ```sh\n  echo hi\n  ```\n— shelf newest shown · ≈34 tok\n\n",
+   "rc": 0
+  },
+  "tree_b": {
+   "err": "",
+   "out": "[NOTES]\n  notes\n\n  └ 1 pay alice\n    # Title\n    \n    - item one\n    \n    ```sh\n    echo hi\n    ```\n\n— /NOTES = <notes@sm827.invalid> · 2 shown, 0 filtered · ≈25 tok\n",
+   "rc": 0
+  }
+ },
+ "v2-alt-no-final-lf": {
+  "boot": {
+   "err": "",
+   "out": "═══ ls /   $ALICE_ROOT = root@sm827.invalid · [ROOT] from alice ✓ ═══\n[ROOT]\n  └ [NOTES]\n  └ [BOOT]\n— 2 labels · all members (alice), signatures verify (signer not pinned) · ≈7 tok\n\n═══ [BOOT] — the letter to self (newest surviving item) ═══\n1 letter to self   [alice · Wed, 02 Jan 2030 14:00:00 +0000 · sig OK]\n  id: boot@sm827.invalid\n  no newline at the end\n— 0 other boot item(s): superseded, older, or not members · ≈5 tok\n",
+   "rc": 0
+  },
+  "cat": {
+   "err": "",
+   "out": "1 pay alice\n  no newline at the end\n\n— /NOTES/1 pay alice = <item@sm827.invalid> · 1 shown, 0 filtered · ≈9 tok\n",
+   "rc": 0
+  },
+  "cat_full": {
+   "err": "",
+   "out": "1 pay alice\n  no newline at the end\n\n— /NOTES/1 pay alice = <item@sm827.invalid> · 1 shown, 0 filtered · ≈9 tok\n",
+   "rc": 0
+  },
+  "run_list": {
+   "err": "",
+   "out": "# materialized from /NOTES\n# memory run: NO TRUST REGISTRY (set SESSION_REGISTRY, or \"registry\" in ~/.sessionkit/mail/settings/mail.json): --trust cannot be run, so every mail item is REFUSED. Fix the environment, not the mail.\n# 1  budget=600   # REFUSED — NOT TRUSTED, would not run: TRUST: ERROR reason=registry-absent\n#   | no newline at the end\n\n",
+   "rc": 3
+  },
+  "shelf": {
+   "out": "═══ BOOT — the shelf at alice+boot (peek: nothing claimed) ═══\nshelf letter\n  from alice@sm827.invalid · Wed, 02 Jan 2030 14:00:00 +0000 · [sig OK]\n  no newline at the end\n— shelf newest shown · ≈27 tok\n\n",
+   "rc": 0
+  },
+  "tree_b": {
+   "err": "",
+   "out": "[NOTES]\n  notes\n\n  └ 1 pay alice\n    no newline at the end\n\n— /NOTES = <notes@sm827.invalid> · 2 shown, 0 filtered · ≈14 tok\n",
+   "rc": 0
+  }
+ },
+ "v2-alt-qp-long": {
+  "boot": {
+   "err": "",
+   "out": "═══ ls /   $ALICE_ROOT = root@sm827.invalid · [ROOT] from alice ✓ ═══\n[ROOT]\n  └ [NOTES]\n  └ [BOOT]\n— 2 labels · all members (alice), signatures verify (signer not pinned) · ≈7 tok\n\n═══ [BOOT] — the letter to self (newest surviving item) ═══\n1 letter to self   [alice · Wed, 02 Jan 2030 14:00:00 +0000 · sig OK]\n  id: boot@sm827.invalid\n  echo aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n  second line\n— 0 other boot item(s): superseded, older, or not members · ≈304 tok\n",
+   "rc": 0
+  },
+  "cat": {
+   "err": "",
+   "out": "1 pay alice\n  echo aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n  second line\n\n— /NOTES/1 pay alice = <item@sm827.invalid> · 1 shown, 0 filtered · ≈308 tok\n",
+   "rc": 0
+  },
+  "cat_full": {
+   "err": "",
+   "out": "1 pay alice\n  echo aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n  second line\n\n— /NOTES/1 pay alice = <item@sm827.invalid> · 1 shown, 0 filtered · ≈308 tok\n",
+   "rc": 0
+  },
+  "run_list": {
+   "err": "",
+   "out": "# materialized from /NOTES\n# memory run: NO TRUST REGISTRY (set SESSION_REGISTRY, or \"registry\" in ~/.sessionkit/mail/settings/mail.json): --trust cannot be run, so every mail item is REFUSED. Fix the environment, not the mail.\n# 1  budget=600   # REFUSED — NOT TRUSTED, would not run: TRUST: ERROR reason=registry-absent\n#   | echo aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n#   | second line\n\n",
+   "rc": 3
+  },
+  "shelf": {
+   "out": "═══ BOOT — the shelf at alice+boot (peek: nothing claimed) ═══\nshelf letter\n  from alice@sm827.invalid · Wed, 02 Jan 2030 14:00:00 +0000 · [sig OK]\n  echo aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n  second line\n— shelf newest shown · ≈326 tok\n\n",
+   "rc": 0
+  },
+  "tree_b": {
+   "err": "",
+   "out": "[NOTES]\n  notes\n\n  └ 1 pay alice\n    echo aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n    second line\n\n— /NOTES = <notes@sm827.invalid> · 2 shown, 0 filtered · ≈314 tok\n",
+   "rc": 0
+  }
+ },
+ "v2-alt-script": {
+  "boot": {
+   "err": "",
+   "out": "═══ ls /   $ALICE_ROOT = root@sm827.invalid · [ROOT] from alice ✓ ═══\n[ROOT]\n  └ [NOTES]\n  └ [BOOT]\n— 2 labels · all members (alice), signatures verify (signer not pinned) · ≈7 tok\n\n═══ [BOOT] — the letter to self (newest surviving item) ═══\n1 letter to self   [alice · Wed, 02 Jan 2030 14:00:00 +0000 · sig OK]\n  id: boot@sm827.invalid\n  echo one\n  echo two\n  # a comment\n— 0 other boot item(s): superseded, older, or not members · ≈7 tok\n",
+   "rc": 0
+  },
+  "cat": {
+   "err": "",
+   "out": "1 pay alice\n  echo one\n  echo two\n  # a comment\n\n— /NOTES/1 pay alice = <item@sm827.invalid> · 1 shown, 0 filtered · ≈12 tok\n",
+   "rc": 0
+  },
+  "cat_full": {
+   "err": "",
+   "out": "1 pay alice\n  echo one\n  echo two\n  # a comment\n\n— /NOTES/1 pay alice = <item@sm827.invalid> · 1 shown, 0 filtered · ≈12 tok\n",
+   "rc": 0
+  },
+  "run_list": {
+   "err": "",
+   "out": "# materialized from /NOTES\n# memory run: NO TRUST REGISTRY (set SESSION_REGISTRY, or \"registry\" in ~/.sessionkit/mail/settings/mail.json): --trust cannot be run, so every mail item is REFUSED. Fix the environment, not the mail.\n# 1  budget=600   # REFUSED — NOT TRUSTED, would not run: TRUST: ERROR reason=registry-absent\n#   | echo one\n#   | echo two\n#   | # a comment\n\n",
+   "rc": 3
+  },
+  "shelf": {
+   "out": "═══ BOOT — the shelf at alice+boot (peek: nothing claimed) ═══\nshelf letter\n  from alice@sm827.invalid · Wed, 02 Jan 2030 14:00:00 +0000 · [sig OK]\n  echo one\n  echo two\n  # a comment\n— shelf newest shown · ≈30 tok\n\n",
+   "rc": 0
+  },
+  "tree_b": {
+   "err": "",
+   "out": "[NOTES]\n  notes\n\n  └ 1 pay alice\n    echo one\n    echo two\n    # a comment\n\n— /NOTES = <notes@sm827.invalid> · 2 shown, 0 filtered · ≈18 tok\n",
+   "rc": 0
+  }
+ },
+ "v2-alt-utf8": {
+  "boot": {
+   "err": "",
+   "out": "═══ ls /   $ALICE_ROOT = root@sm827.invalid · [ROOT] from alice ✓ ═══\n[ROOT]\n  └ [NOTES]\n  └ [BOOT]\n— 2 labels · all members (alice), signatures verify (signer not pinned) · ≈7 tok\n\n═══ [BOOT] — the letter to self (newest surviving item) ═══\n1 letter to self   [alice · Wed, 02 Jan 2030 14:00:00 +0000 · sig OK]\n  id: boot@sm827.invalid\n  Pay Alïce 100 € — thanks 🎉\n  naïve café\n— 0 other boot item(s): superseded, older, or not members · ≈9 tok\n",
+   "rc": 0
+  },
+  "cat": {
+   "err": "",
+   "out": "1 pay alice\n  Pay Alïce 100 € — thanks 🎉\n  naïve café\n\n— /NOTES/1 pay alice = <item@sm827.invalid> · 1 shown, 0 filtered · ≈13 tok\n",
+   "rc": 0
+  },
+  "cat_full": {
+   "err": "",
+   "out": "1 pay alice\n  Pay Alïce 100 € — thanks 🎉\n  naïve café\n\n— /NOTES/1 pay alice = <item@sm827.invalid> · 1 shown, 0 filtered · ≈13 tok\n",
+   "rc": 0
+  },
+  "run_list": {
+   "err": "",
+   "out": "# materialized from /NOTES\n# memory run: NO TRUST REGISTRY (set SESSION_REGISTRY, or \"registry\" in ~/.sessionkit/mail/settings/mail.json): --trust cannot be run, so every mail item is REFUSED. Fix the environment, not the mail.\n# 1  budget=600   # REFUSED — NOT TRUSTED, would not run: TRUST: ERROR reason=registry-absent\n#   | Pay Alïce 100 € — thanks 🎉\n#   | naïve café\n\n",
+   "rc": 3
+  },
+  "shelf": {
+   "out": "═══ BOOT — the shelf at alice+boot (peek: nothing claimed) ═══\nshelf letter\n  from alice@sm827.invalid · Wed, 02 Jan 2030 14:00:00 +0000 · [sig OK]\n  Pay Alïce 100 € — thanks 🎉\n  naïve café\n— shelf newest shown · ≈31 tok\n\n",
+   "rc": 0
+  },
+  "tree_b": {
+   "err": "",
+   "out": "[NOTES]\n  notes\n\n  └ 1 pay alice\n    Pay Alïce 100 € — thanks 🎉\n    naïve café\n\n— /NOTES = <notes@sm827.invalid> · 2 shown, 0 filtered · ≈19 tok\n",
+   "rc": 0
+  }
+ },
+ "v2-alt-x": {
+  "boot": {
+   "err": "",
+   "out": "═══ ls /   $ALICE_ROOT = root@sm827.invalid · [ROOT] from alice ✓ ═══\n[ROOT]\n  └ [NOTES]\n  └ [BOOT]\n— 2 labels · all members (alice), signatures verify (signer not pinned) · ≈7 tok\n\n═══ [BOOT] — the letter to self (newest surviving item) ═══\n1 letter to self   [alice · Wed, 02 Jan 2030 14:00:00 +0000 · sig OK]\n  id: boot@sm827.invalid\n  x\n— 0 other boot item(s): superseded, older, or not members · ≈0 tok\n",
+   "rc": 0
+  },
+  "cat": {
+   "err": "",
+   "out": "1 pay alice\n  x\n\n— /NOTES/1 pay alice = <item@sm827.invalid> · 1 shown, 0 filtered · ≈4 tok\n",
+   "rc": 0
+  },
+  "cat_full": {
+   "err": "",
+   "out": "1 pay alice\n  x\n\n— /NOTES/1 pay alice = <item@sm827.invalid> · 1 shown, 0 filtered · ≈4 tok\n",
+   "rc": 0
+  },
+  "run_list": {
+   "err": "",
+   "out": "# materialized from /NOTES\n# memory run: NO TRUST REGISTRY (set SESSION_REGISTRY, or \"registry\" in ~/.sessionkit/mail/settings/mail.json): --trust cannot be run, so every mail item is REFUSED. Fix the environment, not the mail.\n# 1  budget=600   # REFUSED — NOT TRUSTED, would not run: TRUST: ERROR reason=registry-absent\n#   | pay alice\n\n",
+   "rc": 3
+  },
+  "shelf": {
+   "out": "═══ BOOT — the shelf at alice+boot (peek: nothing claimed) ═══\nshelf letter\n  from alice@sm827.invalid · Wed, 02 Jan 2030 14:00:00 +0000 · [sig OK]\n  x\n— shelf newest shown · ≈22 tok\n\n",
+   "rc": 0
+  },
+  "tree_b": {
+   "err": "",
+   "out": "[NOTES]\n  notes\n\n  └ 1 pay alice\n    x\n\n— /NOTES = <notes@sm827.invalid> · 2 shown, 0 filtered · ≈9 tok\n",
+   "rc": 0
+  }
+ },
+ "v2-single-ascii": {
+  "boot": {
+   "err": "",
+   "out": "═══ ls /   $ALICE_ROOT = root@sm827.invalid · [ROOT] from alice ✓ ═══\n[ROOT]\n  └ [NOTES]\n  └ [BOOT]\n— 2 labels · all members (alice), signatures verify (signer not pinned) · ≈7 tok\n\n═══ [BOOT] — the letter to self (newest surviving item) ═══\n1 letter to self   [alice · Wed, 02 Jan 2030 14:00:00 +0000 · sig OK]\n  id: boot@sm827.invalid\n  Pay Alice 100 dollars.\n  Thanks, Bob.\n— 0 other boot item(s): superseded, older, or not members · ≈8 tok\n",
+   "rc": 0
+  },
+  "cat": {
+   "err": "",
+   "out": "1 pay alice\n  Pay Alice 100 dollars.\n  Thanks, Bob.\n\n— /NOTES/1 pay alice = <item@sm827.invalid> · 1 shown, 0 filtered · ≈13 tok\n",
+   "rc": 0
+  },
+  "cat_full": {
+   "err": "",
+   "out": "1 pay alice\n  Pay Alice 100 dollars.\n  Thanks, Bob.\n\n— /NOTES/1 pay alice = <item@sm827.invalid> · 1 shown, 0 filtered · ≈13 tok\n",
+   "rc": 0
+  },
+  "run_list": {
+   "err": "",
+   "out": "# materialized from /NOTES\n# memory run: NO TRUST REGISTRY (set SESSION_REGISTRY, or \"registry\" in ~/.sessionkit/mail/settings/mail.json): --trust cannot be run, so every mail item is REFUSED. Fix the environment, not the mail.\n# 1  budget=600   # REFUSED — NOT TRUSTED, would not run: TRUST: ERROR reason=registry-absent\n#   | Pay Alice 100 dollars.\n#   | Thanks, Bob.\n\n",
+   "rc": 3
+  },
+  "shelf": {
+   "out": "═══ BOOT — the shelf at alice+boot (peek: nothing claimed) ═══\nshelf letter\n  from alice@sm827.invalid · Wed, 02 Jan 2030 14:00:00 +0000 · [sig OK]\n  Pay Alice 100 dollars.\n  Thanks, Bob.\n— shelf newest shown · ≈31 tok\n\n",
+   "rc": 0
+  },
+  "tree_b": {
+   "err": "",
+   "out": "[NOTES]\n  notes\n\n  └ 1 pay alice\n    Pay Alice 100 dollars.\n    Thanks, Bob.\n\n— /NOTES = <notes@sm827.invalid> · 2 shown, 0 filtered · ≈19 tok\n",
+   "rc": 0
+  }
+ },
+ "v2-single-bad-utf8": {
+  "boot": {
+   "err": "",
+   "out": "═══ ls /   $ALICE_ROOT = root@sm827.invalid · [ROOT] from alice ✓ ═══\n[ROOT]\n  └ [NOTES]\n  └ [BOOT]\n— 2 labels · all members (alice), signatures verify (signer not pinned) · ≈7 tok\n\n═══ [BOOT] — the letter to self (newest surviving item) ═══\n1 letter to self   [alice · Wed, 02 Jan 2030 14:00:00 +0000 · sig OK]\n  id: boot@sm827.invalid\n  caf  bytes\n  ok line\n— 0 other boot item(s): superseded, older, or not members · ≈4 tok\n",
+   "rc": 0
+  },
+  "cat": {
+   "err": "",
+   "out": "1 pay alice\n  caf  bytes\n  ok line\n\n— /NOTES/1 pay alice = <item@sm827.invalid> · 1 shown, 0 filtered · ≈8 tok\n",
+   "rc": 0
+  },
+  "cat_full": {
+   "err": "",
+   "out": "1 pay alice\n  caf  bytes\n  ok line\n\n— /NOTES/1 pay alice = <item@sm827.invalid> · 1 shown, 0 filtered · ≈8 tok\n",
+   "rc": 0
+  },
+  "run_list": {
+   "err": "",
+   "out": "# materialized from /NOTES\n# memory run: NO TRUST REGISTRY (set SESSION_REGISTRY, or \"registry\" in ~/.sessionkit/mail/settings/mail.json): --trust cannot be run, so every mail item is REFUSED. Fix the environment, not the mail.\n# 1  budget=600   # REFUSED — NOT TRUSTED, would not run: TRUST: ERROR reason=registry-absent\n#   | caf  bytes\n#   | ok line\n\n",
+   "rc": 3
+  },
+  "shelf": {
+   "out": "═══ BOOT — the shelf at alice+boot (peek: nothing claimed) ═══\nshelf letter\n  from alice@sm827.invalid · Wed, 02 Jan 2030 14:00:00 +0000 · [sig OK]\n  caf� �� bytes\n  ok line\n— shelf newest shown · ≈27 tok\n\n",
+   "rc": 0
+  },
+  "tree_b": {
+   "err": "",
+   "out": "[NOTES]\n  notes\n\n  └ 1 pay alice\n    caf  bytes\n    ok line\n\n— /NOTES = <notes@sm827.invalid> · 2 shown, 0 filtered · ≈15 tok\n",
+   "rc": 0
+  }
+ },
+ "v2-single-crlf": {
+  "boot": {
+   "err": "",
+   "out": "═══ ls /   $ALICE_ROOT = root@sm827.invalid · [ROOT] from alice ✓ ═══\n[ROOT]\n  └ [NOTES]\n  └ [BOOT]\n— 2 labels · all members (alice), signatures verify (signer not pinned) · ≈7 tok\n\n═══ [BOOT] — the letter to self (newest surviving item) ═══\n1 letter to self   [alice · Wed, 02 Jan 2030 14:00:00 +0000 · sig OK]\n  id: boot@sm827.invalid\n  line one\n  line two\n— 0 other boot item(s): superseded, older, or not members · ≈4 tok\n",
+   "rc": 0
+  },
+  "cat": {
+   "err": "",
+   "out": "1 pay alice\n  line one\n  line two\n\n— /NOTES/1 pay alice = <item@sm827.invalid> · 1 shown, 0 filtered · ≈8 tok\n",
+   "rc": 0
+  },
+  "cat_full": {
+   "err": "",
+   "out": "1 pay alice\n  line one\n  line two\n\n— /NOTES/1 pay alice = <item@sm827.invalid> · 1 shown, 0 filtered · ≈8 tok\n",
+   "rc": 0
+  },
+  "run_list": {
+   "err": "",
+   "out": "# materialized from /NOTES\n# memory run: NO TRUST REGISTRY (set SESSION_REGISTRY, or \"registry\" in ~/.sessionkit/mail/settings/mail.json): --trust cannot be run, so every mail item is REFUSED. Fix the environment, not the mail.\n# 1  budget=600   # REFUSED — NOT TRUSTED, would not run: TRUST: ERROR reason=registry-absent\n#   | line one\n#   | line two\n\n",
+   "rc": 3
+  },
+  "shelf": {
+   "out": "═══ BOOT — the shelf at alice+boot (peek: nothing claimed) ═══\nshelf letter\n  from alice@sm827.invalid · Wed, 02 Jan 2030 14:00:00 +0000 · [sig OK]\n  line one\n  line two\n— shelf newest shown · ≈26 tok\n\n",
+   "rc": 0
+  },
+  "tree_b": {
+   "err": "",
+   "out": "[NOTES]\n  notes\n\n  └ 1 pay alice\n    line one\n    line two\n\n— /NOTES = <notes@sm827.invalid> · 2 shown, 0 filtered · ≈14 tok\n",
+   "rc": 0
+  }
+ },
+ "v2-single-edge-ws": {
+  "boot": {
+   "err": "",
+   "out": "═══ ls /   $ALICE_ROOT = root@sm827.invalid · [ROOT] from alice ✓ ═══\n[ROOT]\n  └ [NOTES]\n  └ [BOOT]\n— 2 labels · all members (alice), signatures verify (signer not pinned) · ≈7 tok\n\n═══ [BOOT] — the letter to self (newest surviving item) ═══\n1 letter to self   [alice · Wed, 02 Jan 2030 14:00:00 +0000 · sig OK]\n  id: boot@sm827.invalid\n  indented first\n  \ttabbed\n  trailing spaces\n— 0 other boot item(s): superseded, older, or not members · ≈9 tok\n",
+   "rc": 0
+  },
+  "cat": {
+   "err": "",
+   "out": "1 pay alice\n  indented first\n  \ttabbed\n  trailing spaces\n\n— /NOTES/1 pay alice = <item@sm827.invalid> · 1 shown, 0 filtered · ≈14 tok\n",
+   "rc": 0
+  },
+  "cat_full": {
+   "err": "",
+   "out": "1 pay alice\n  indented first\n  \ttabbed\n  trailing spaces\n\n— /NOTES/1 pay alice = <item@sm827.invalid> · 1 shown, 0 filtered · ≈14 tok\n",
+   "rc": 0
+  },
+  "run_list": {
+   "err": "",
+   "out": "# materialized from /NOTES\n# memory run: NO TRUST REGISTRY (set SESSION_REGISTRY, or \"registry\" in ~/.sessionkit/mail/settings/mail.json): --trust cannot be run, so every mail item is REFUSED. Fix the environment, not the mail.\n# 1  budget=600   # REFUSED — NOT TRUSTED, would not run: TRUST: ERROR reason=registry-absent\n#   | indented first\n#   | \ttabbed\n#   | trailing spaces\n\n",
+   "rc": 3
+  },
+  "shelf": {
+   "out": "═══ BOOT — the shelf at alice+boot (peek: nothing claimed) ═══\nshelf letter\n  from alice@sm827.invalid · Wed, 02 Jan 2030 14:00:00 +0000 · [sig OK]\n  indented first\n  \ttabbed\n  trailing spaces\n— shelf newest shown · ≈32 tok\n\n",
+   "rc": 0
+  },
+  "tree_b": {
+   "err": "",
+   "out": "[NOTES]\n  notes\n\n  └ 1 pay alice\n    indented first\n    \ttabbed\n    trailing spaces\n\n— /NOTES = <notes@sm827.invalid> · 2 shown, 0 filtered · ≈21 tok\n",
+   "rc": 0
+  }
+ },
+ "v2-single-empty": {
+  "boot": {
+   "err": "",
+   "out": "═══ ls /   $ALICE_ROOT = root@sm827.invalid · [ROOT] from alice ✓ ═══\n[ROOT]\n  └ [NOTES]\n  └ [BOOT]\n— 2 labels · all members (alice), signatures verify (signer not pinned) · ≈7 tok\n\n═══ [BOOT] — the letter to self (newest surviving item) ═══\n1 letter to self   [alice · Wed, 02 Jan 2030 14:00:00 +0000 · sig OK]\n  id: boot@sm827.invalid\n— 0 other boot item(s): superseded, older, or not members · ≈0 tok\n",
+   "rc": 0
+  },
+  "cat": {
+   "err": "",
+   "out": "1 pay alice\n— /NOTES/1 pay alice = <item@sm827.invalid> · 1 shown, 0 filtered · ≈2 tok\n",
+   "rc": 0
+  },
+  "cat_full": {
+   "err": "",
+   "out": "1 pay alice\n— /NOTES/1 pay alice = <item@sm827.invalid> · 1 shown, 0 filtered · ≈2 tok\n",
+   "rc": 0
+  },
+  "run_list": {
+   "err": "",
+   "out": "# materialized from /NOTES\n# memory run: NO TRUST REGISTRY (set SESSION_REGISTRY, or \"registry\" in ~/.sessionkit/mail/settings/mail.json): --trust cannot be run, so every mail item is REFUSED. Fix the environment, not the mail.\n# 1  budget=600   # REFUSED — NOT TRUSTED, would not run: TRUST: ERROR reason=registry-absent\n#   | pay alice\n\n",
+   "rc": 3
+  },
+  "shelf": {
+   "out": "═══ BOOT — the shelf at alice+boot (peek: nothing claimed) ═══\nshelf letter\n  from alice@sm827.invalid · Wed, 02 Jan 2030 14:00:00 +0000 · [sig OK]\n— shelf newest shown · ≈21 tok\n\n",
+   "rc": 0
+  },
+  "tree_b": {
+   "err": "",
+   "out": "[NOTES]\n  notes\n\n  └ 1 pay alice\n— /NOTES = <notes@sm827.invalid> · 2 shown, 0 filtered · ≈8 tok\n",
+   "rc": 0
+  }
+ },
+ "v2-single-ff-u2028": {
+  "boot": {
+   "err": "",
+   "out": "═══ ls /   $ALICE_ROOT = root@sm827.invalid · [ROOT] from alice ✓ ═══\n[ROOT]\n  └ [NOTES]\n  └ [BOOT]\n— 2 labels · all members (alice), signatures verify (signer not pinned) · ≈7 tok\n\n═══ [BOOT] — the letter to self (newest surviving item) ═══\n1 letter to self   [alice · Wed, 02 Jan 2030 14:00:00 +0000 · sig OK]\n  id: boot@sm827.invalid\n  a\n  b\n  c\n— 0 other boot item(s): superseded, older, or not members · ≈1 tok\n",
+   "rc": 0
+  },
+  "cat": {
+   "err": "",
+   "out": "1 pay alice\n  a\n  b\n  c\n\n— /NOTES/1 pay alice = <item@sm827.invalid> · 1 shown, 0 filtered · ≈6 tok\n",
+   "rc": 0
+  },
+  "cat_full": {
+   "err": "",
+   "out": "1 pay alice\n  a\n  b\n  c\n\n— /NOTES/1 pay alice = <item@sm827.invalid> · 1 shown, 0 filtered · ≈6 tok\n",
+   "rc": 0
+  },
+  "run_list": {
+   "err": "",
+   "out": "# materialized from /NOTES\n# memory run: NO TRUST REGISTRY (set SESSION_REGISTRY, or \"registry\" in ~/.sessionkit/mail/settings/mail.json): --trust cannot be run, so every mail item is REFUSED. Fix the environment, not the mail.\n# 1  budget=600   # REFUSED — NOT TRUSTED, would not run: TRUST: ERROR reason=registry-absent\n#   | a\n#   | b\n#   | c\n\n",
+   "rc": 3
+  },
+  "shelf": {
+   "out": "═══ BOOT — the shelf at alice+boot (peek: nothing claimed) ═══\nshelf letter\n  from alice@sm827.invalid · Wed, 02 Jan 2030 14:00:00 +0000 · [sig OK]\n  a\n  b\n  c\n— shelf newest shown · ≈24 tok\n\n",
+   "rc": 0
+  },
+  "tree_b": {
+   "err": "",
+   "out": "[NOTES]\n  notes\n\n  └ 1 pay alice\n    a\n    b\n    c\n\n— /NOTES = <notes@sm827.invalid> · 2 shown, 0 filtered · ≈12 tok\n",
+   "rc": 0
+  }
+ },
+ "v2-single-lone-cr": {
+  "boot": {
+   "err": "",
+   "out": "═══ ls /   $ALICE_ROOT = root@sm827.invalid · [ROOT] from alice ✓ ═══\n[ROOT]\n  └ [NOTES]\n  └ [BOOT]\n— 2 labels · all members (alice), signatures verify (signer not pinned) · ≈7 tok\n\n═══ [BOOT] — the letter to self (newest surviving item) ═══\n1 letter to self   [alice · Wed, 02 Jan 2030 14:00:00 +0000 · sig OK]\n  id: boot@sm827.invalid\n  before\n  after\n  end\n— 0 other boot item(s): superseded, older, or not members · ≈4 tok\n",
+   "rc": 0
+  },
+  "cat": {
+   "err": "",
+   "out": "1 pay alice\n  before\n  after\n  end\n\n— /NOTES/1 pay alice = <item@sm827.invalid> · 1 shown, 0 filtered · ≈8 tok\n",
+   "rc": 0
+  },
+  "cat_full": {
+   "err": "",
+   "out": "1 pay alice\n  before\n  after\n  end\n\n— /NOTES/1 pay alice = <item@sm827.invalid> · 1 shown, 0 filtered · ≈8 tok\n",
+   "rc": 0
+  },
+  "run_list": {
+   "err": "",
+   "out": "# materialized from /NOTES\n# memory run: NO TRUST REGISTRY (set SESSION_REGISTRY, or \"registry\" in ~/.sessionkit/mail/settings/mail.json): --trust cannot be run, so every mail item is REFUSED. Fix the environment, not the mail.\n# 1  budget=600   # REFUSED — NOT TRUSTED, would not run: TRUST: ERROR reason=registry-absent\n#   | before\n#   | after\n#   | end\n\n",
+   "rc": 3
+  },
+  "shelf": {
+   "out": "═══ BOOT — the shelf at alice+boot (peek: nothing claimed) ═══\nshelf letter\n  from alice@sm827.invalid · Wed, 02 Jan 2030 14:00:00 +0000 · [sig OK]\n  before\n  after\n  end\n— shelf newest shown · ≈26 tok\n\n",
+   "rc": 0
+  },
+  "tree_b": {
+   "err": "",
+   "out": "[NOTES]\n  notes\n\n  └ 1 pay alice\n    before\n    after\n    end\n\n— /NOTES = <notes@sm827.invalid> · 2 shown, 0 filtered · ≈15 tok\n",
+   "rc": 0
+  }
+ },
+ "v2-single-markdown": {
+  "boot": {
+   "err": "",
+   "out": "═══ ls /   $ALICE_ROOT = root@sm827.invalid · [ROOT] from alice ✓ ═══\n[ROOT]\n  └ [NOTES]\n  └ [BOOT]\n— 2 labels · all members (alice), signatures verify (signer not pinned) · ≈7 tok\n\n═══ [BOOT] — the letter to self (newest surviving item) ═══\n1 letter to self   [alice · Wed, 02 Jan 2030 14:00:00 +0000 · sig OK]\n  id: boot@sm827.invalid\n  # Title\n  \n  - item one\n  \n  ```sh\n  echo hi\n  ```\n— 0 other boot item(s): superseded, older, or not members · ≈9 tok\n",
+   "rc": 0
+  },
+  "cat": {
+   "err": "",
+   "out": "1 pay alice\n  # Title\n  \n  - item one\n  \n  ```sh\n  echo hi\n  ```\n\n— /NOTES/1 pay alice = <item@sm827.invalid> · 1 shown, 0 filtered · ≈16 tok\n",
+   "rc": 0
+  },
+  "cat_full": {
+   "err": "",
+   "out": "1 pay alice\n  # Title\n  \n  - item one\n  \n  ```sh\n  echo hi\n  ```\n\n— /NOTES/1 pay alice = <item@sm827.invalid> · 1 shown, 0 filtered · ≈16 tok\n",
+   "rc": 0
+  },
+  "run_list": {
+   "err": "",
+   "out": "# materialized from /NOTES\n# memory run: NO TRUST REGISTRY (set SESSION_REGISTRY, or \"registry\" in ~/.sessionkit/mail/settings/mail.json): --trust cannot be run, so every mail item is REFUSED. Fix the environment, not the mail.\n# 1  budget=600   # REFUSED — NOT TRUSTED, would not run: TRUST: ERROR reason=registry-absent\n#   | # Title\n#   | \n#   | - item one\n#   | \n#   | ```sh\n#   | echo hi\n#   | ```\n\n",
+   "rc": 3
+  },
+  "shelf": {
+   "out": "═══ BOOT — the shelf at alice+boot (peek: nothing claimed) ═══\nshelf letter\n  from alice@sm827.invalid · Wed, 02 Jan 2030 14:00:00 +0000 · [sig OK]\n  # Title\n  \n  - item one\n  \n  ```sh\n  echo hi\n  ```\n— shelf newest shown · ≈34 tok\n\n",
+   "rc": 0
+  },
+  "tree_b": {
+   "err": "",
+   "out": "[NOTES]\n  notes\n\n  └ 1 pay alice\n    # Title\n    \n    - item one\n    \n    ```sh\n    echo hi\n    ```\n\n— /NOTES = <notes@sm827.invalid> · 2 shown, 0 filtered · ≈25 tok\n",
+   "rc": 0
+  }
+ },
+ "v2-single-no-final-lf": {
+  "boot": {
+   "err": "",
+   "out": "═══ ls /   $ALICE_ROOT = root@sm827.invalid · [ROOT] from alice ✓ ═══\n[ROOT]\n  └ [NOTES]\n  └ [BOOT]\n— 2 labels · all members (alice), signatures verify (signer not pinned) · ≈7 tok\n\n═══ [BOOT] — the letter to self (newest surviving item) ═══\n1 letter to self   [alice · Wed, 02 Jan 2030 14:00:00 +0000 · sig OK]\n  id: boot@sm827.invalid\n  no newline at the end\n— 0 other boot item(s): superseded, older, or not members · ≈5 tok\n",
+   "rc": 0
+  },
+  "cat": {
+   "err": "",
+   "out": "1 pay alice\n  no newline at the end\n\n— /NOTES/1 pay alice = <item@sm827.invalid> · 1 shown, 0 filtered · ≈9 tok\n",
+   "rc": 0
+  },
+  "cat_full": {
+   "err": "",
+   "out": "1 pay alice\n  no newline at the end\n\n— /NOTES/1 pay alice = <item@sm827.invalid> · 1 shown, 0 filtered · ≈9 tok\n",
+   "rc": 0
+  },
+  "run_list": {
+   "err": "",
+   "out": "# materialized from /NOTES\n# memory run: NO TRUST REGISTRY (set SESSION_REGISTRY, or \"registry\" in ~/.sessionkit/mail/settings/mail.json): --trust cannot be run, so every mail item is REFUSED. Fix the environment, not the mail.\n# 1  budget=600   # REFUSED — NOT TRUSTED, would not run: TRUST: ERROR reason=registry-absent\n#   | no newline at the end\n\n",
+   "rc": 3
+  },
+  "shelf": {
+   "out": "═══ BOOT — the shelf at alice+boot (peek: nothing claimed) ═══\nshelf letter\n  from alice@sm827.invalid · Wed, 02 Jan 2030 14:00:00 +0000 · [sig OK]\n  no newline at the end\n— shelf newest shown · ≈27 tok\n\n",
+   "rc": 0
+  },
+  "tree_b": {
+   "err": "",
+   "out": "[NOTES]\n  notes\n\n  └ 1 pay alice\n    no newline at the end\n\n— /NOTES = <notes@sm827.invalid> · 2 shown, 0 filtered · ≈14 tok\n",
+   "rc": 0
+  }
+ },
+ "v2-single-qp-long": {
+  "boot": {
+   "err": "",
+   "out": "═══ ls /   $ALICE_ROOT = root@sm827.invalid · [ROOT] from alice ✓ ═══\n[ROOT]\n  └ [NOTES]\n  └ [BOOT]\n— 2 labels · all members (alice), signatures verify (signer not pinned) · ≈7 tok\n\n═══ [BOOT] — the letter to self (newest surviving item) ═══\n1 letter to self   [alice · Wed, 02 Jan 2030 14:00:00 +0000 · sig OK]\n  id: boot@sm827.invalid\n  echo aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n  second line\n— 0 other boot item(s): superseded, older, or not members · ≈304 tok\n",
+   "rc": 0
+  },
+  "cat": {
+   "err": "",
+   "out": "1 pay alice\n  echo aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n  second line\n\n— /NOTES/1 pay alice = <item@sm827.invalid> · 1 shown, 0 filtered · ≈308 tok\n",
+   "rc": 0
+  },
+  "cat_full": {
+   "err": "",
+   "out": "1 pay alice\n  echo aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n  second line\n\n— /NOTES/1 pay alice = <item@sm827.invalid> · 1 shown, 0 filtered · ≈308 tok\n",
+   "rc": 0
+  },
+  "run_list": {
+   "err": "",
+   "out": "# materialized from /NOTES\n# memory run: NO TRUST REGISTRY (set SESSION_REGISTRY, or \"registry\" in ~/.sessionkit/mail/settings/mail.json): --trust cannot be run, so every mail item is REFUSED. Fix the environment, not the mail.\n# 1  budget=600   # REFUSED — NOT TRUSTED, would not run: TRUST: ERROR reason=registry-absent\n#   | echo aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n#   | second line\n\n",
+   "rc": 3
+  },
+  "shelf": {
+   "out": "═══ BOOT — the shelf at alice+boot (peek: nothing claimed) ═══\nshelf letter\n  from alice@sm827.invalid · Wed, 02 Jan 2030 14:00:00 +0000 · [sig OK]\n  echo aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n  second line\n— shelf newest shown · ≈326 tok\n\n",
+   "rc": 0
+  },
+  "tree_b": {
+   "err": "",
+   "out": "[NOTES]\n  notes\n\n  └ 1 pay alice\n    echo aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n    second line\n\n— /NOTES = <notes@sm827.invalid> · 2 shown, 0 filtered · ≈314 tok\n",
+   "rc": 0
+  }
+ },
+ "v2-single-script": {
+  "boot": {
+   "err": "",
+   "out": "═══ ls /   $ALICE_ROOT = root@sm827.invalid · [ROOT] from alice ✓ ═══\n[ROOT]\n  └ [NOTES]\n  └ [BOOT]\n— 2 labels · all members (alice), signatures verify (signer not pinned) · ≈7 tok\n\n═══ [BOOT] — the letter to self (newest surviving item) ═══\n1 letter to self   [alice · Wed, 02 Jan 2030 14:00:00 +0000 · sig OK]\n  id: boot@sm827.invalid\n  echo one\n  echo two\n  # a comment\n— 0 other boot item(s): superseded, older, or not members · ≈7 tok\n",
+   "rc": 0
+  },
+  "cat": {
+   "err": "",
+   "out": "1 pay alice\n  echo one\n  echo two\n  # a comment\n\n— /NOTES/1 pay alice = <item@sm827.invalid> · 1 shown, 0 filtered · ≈12 tok\n",
+   "rc": 0
+  },
+  "cat_full": {
+   "err": "",
+   "out": "1 pay alice\n  echo one\n  echo two\n  # a comment\n\n— /NOTES/1 pay alice = <item@sm827.invalid> · 1 shown, 0 filtered · ≈12 tok\n",
+   "rc": 0
+  },
+  "run_list": {
+   "err": "",
+   "out": "# materialized from /NOTES\n# memory run: NO TRUST REGISTRY (set SESSION_REGISTRY, or \"registry\" in ~/.sessionkit/mail/settings/mail.json): --trust cannot be run, so every mail item is REFUSED. Fix the environment, not the mail.\n# 1  budget=600   # REFUSED — NOT TRUSTED, would not run: TRUST: ERROR reason=registry-absent\n#   | echo one\n#   | echo two\n#   | # a comment\n\n",
+   "rc": 3
+  },
+  "shelf": {
+   "out": "═══ BOOT — the shelf at alice+boot (peek: nothing claimed) ═══\nshelf letter\n  from alice@sm827.invalid · Wed, 02 Jan 2030 14:00:00 +0000 · [sig OK]\n  echo one\n  echo two\n  # a comment\n— shelf newest shown · ≈30 tok\n\n",
+   "rc": 0
+  },
+  "tree_b": {
+   "err": "",
+   "out": "[NOTES]\n  notes\n\n  └ 1 pay alice\n    echo one\n    echo two\n    # a comment\n\n— /NOTES = <notes@sm827.invalid> · 2 shown, 0 filtered · ≈18 tok\n",
+   "rc": 0
+  }
+ },
+ "v2-single-utf8": {
+  "boot": {
+   "err": "",
+   "out": "═══ ls /   $ALICE_ROOT = root@sm827.invalid · [ROOT] from alice ✓ ═══\n[ROOT]\n  └ [NOTES]\n  └ [BOOT]\n— 2 labels · all members (alice), signatures verify (signer not pinned) · ≈7 tok\n\n═══ [BOOT] — the letter to self (newest surviving item) ═══\n1 letter to self   [alice · Wed, 02 Jan 2030 14:00:00 +0000 · sig OK]\n  id: boot@sm827.invalid\n  Pay Alïce 100 € — thanks 🎉\n  naïve café\n— 0 other boot item(s): superseded, older, or not members · ≈9 tok\n",
+   "rc": 0
+  },
+  "cat": {
+   "err": "",
+   "out": "1 pay alice\n  Pay Alïce 100 € — thanks 🎉\n  naïve café\n\n— /NOTES/1 pay alice = <item@sm827.invalid> · 1 shown, 0 filtered · ≈13 tok\n",
+   "rc": 0
+  },
+  "cat_full": {
+   "err": "",
+   "out": "1 pay alice\n  Pay Alïce 100 € — thanks 🎉\n  naïve café\n\n— /NOTES/1 pay alice = <item@sm827.invalid> · 1 shown, 0 filtered · ≈13 tok\n",
+   "rc": 0
+  },
+  "run_list": {
+   "err": "",
+   "out": "# materialized from /NOTES\n# memory run: NO TRUST REGISTRY (set SESSION_REGISTRY, or \"registry\" in ~/.sessionkit/mail/settings/mail.json): --trust cannot be run, so every mail item is REFUSED. Fix the environment, not the mail.\n# 1  budget=600   # REFUSED — NOT TRUSTED, would not run: TRUST: ERROR reason=registry-absent\n#   | Pay Alïce 100 € — thanks 🎉\n#   | naïve café\n\n",
+   "rc": 3
+  },
+  "shelf": {
+   "out": "═══ BOOT — the shelf at alice+boot (peek: nothing claimed) ═══\nshelf letter\n  from alice@sm827.invalid · Wed, 02 Jan 2030 14:00:00 +0000 · [sig OK]\n  Pay Alïce 100 € — thanks 🎉\n  naïve café\n— shelf newest shown · ≈31 tok\n\n",
+   "rc": 0
+  },
+  "tree_b": {
+   "err": "",
+   "out": "[NOTES]\n  notes\n\n  └ 1 pay alice\n    Pay Alïce 100 € — thanks 🎉\n    naïve café\n\n— /NOTES = <notes@sm827.invalid> · 2 shown, 0 filtered · ≈19 tok\n",
+   "rc": 0
+  }
+ },
+ "v2-single-x": {
+  "boot": {
+   "err": "",
+   "out": "═══ ls /   $ALICE_ROOT = root@sm827.invalid · [ROOT] from alice ✓ ═══\n[ROOT]\n  └ [NOTES]\n  └ [BOOT]\n— 2 labels · all members (alice), signatures verify (signer not pinned) · ≈7 tok\n\n═══ [BOOT] — the letter to self (newest surviving item) ═══\n1 letter to self   [alice · Wed, 02 Jan 2030 14:00:00 +0000 · sig OK]\n  id: boot@sm827.invalid\n  x\n— 0 other boot item(s): superseded, older, or not members · ≈0 tok\n",
+   "rc": 0
+  },
+  "cat": {
+   "err": "",
+   "out": "1 pay alice\n  x\n\n— /NOTES/1 pay alice = <item@sm827.invalid> · 1 shown, 0 filtered · ≈4 tok\n",
+   "rc": 0
+  },
+  "cat_full": {
+   "err": "",
+   "out": "1 pay alice\n  x\n\n— /NOTES/1 pay alice = <item@sm827.invalid> · 1 shown, 0 filtered · ≈4 tok\n",
+   "rc": 0
+  },
+  "run_list": {
+   "err": "",
+   "out": "# materialized from /NOTES\n# memory run: NO TRUST REGISTRY (set SESSION_REGISTRY, or \"registry\" in ~/.sessionkit/mail/settings/mail.json): --trust cannot be run, so every mail item is REFUSED. Fix the environment, not the mail.\n# 1  budget=600   # REFUSED — NOT TRUSTED, would not run: TRUST: ERROR reason=registry-absent\n#   | pay alice\n\n",
+   "rc": 3
+  },
+  "shelf": {
+   "out": "═══ BOOT — the shelf at alice+boot (peek: nothing claimed) ═══\nshelf letter\n  from alice@sm827.invalid · Wed, 02 Jan 2030 14:00:00 +0000 · [sig OK]\n  x\n— shelf newest shown · ≈22 tok\n\n",
+   "rc": 0
+  },
+  "tree_b": {
+   "err": "",
+   "out": "[NOTES]\n  notes\n\n  └ 1 pay alice\n    x\n\n— /NOTES = <notes@sm827.invalid> · 2 shown, 0 filtered · ≈9 tok\n",
+   "rc": 0
+  }
+ }
+}

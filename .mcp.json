@@ -1,0 +1,7 @@
+{
+  "mcpServers": {
+    "message": { "command": "message", "args": ["mcp"] },
+    "pager":   { "command": "pager",   "args": ["mcp"], "timeout": 86400000 },
+    "memory":  { "command": "memory",  "args": ["mcp"] }
+  }
+}

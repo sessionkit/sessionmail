@@ -1,0 +1,34 @@
+Return-Path: <uma@hq.example.net>
+X-Original-To: acme
+Delivered-To: acme@hq.example.net
+Received: by hq.example.net (Postfix, from userid 501)
+	id 0123456789ABC; Tue,  1 Jan 2030 12:00:00 +0000 (UTC)
+From: =?UTF-8?B?SsOpcsO0bWU=?= <uma@hq.example.net>
+To: acme@hq.example.net
+Date: Tue, 01 Jan 2030 12:00:00 +0000
+Subject: =?UTF-8?B?RMOpY2lzaW9uOiBzaWduIGV2ZXJ5IHBhcnQ=?=
+Message-ID: <1901000000.6.1@hq.session-mail>
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+Content-Transfer-Encoding: 8bit
+X-Project: acme
+X-Task: T-1
+X-Original-Subject:
+ =?UTF-8?B?RMOpY2lzaW9uOiBzaWduIGV2ZXJ5IHBhcnQsIHRoZSBsb25nIHdheSByb3Vu?=
+ =?UTF-8?B?ZA==?=
+Atom-Type: decision
+Atom-Authority: judy
+Atom-Id: D2
+X-Session-From: 0a1b2c3d
+X-Machine: hq
+X-Session-Signature: v=2; a=sshsig; n=session-mail@example.com;
+ h=from:to:cc:subject:date:message-id:in-reply-to:references:supersedes:
+ mime-version:content-type:x-session-from:x-project:x-task:atom-type:
+ atom-authority:atom-id:x-machine;
+ p=EuFUFSWtl7zjxjD7799uToFhohRkcmYIKLInJ5IIUqY=;
+ b=U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgmn8BxxaYqsxu3NiwTjLVHtshGWTG
+ ns5uRHAWpWHkUbAAAAAYc2Vzc2lvbi1tYWlsQGV4YW1wbGUuY29tAAAAAAAAAAZzaGE1MTIA
+ AABTAAAAC3NzaC1lZDI1NTE5AAAAQNiE5uu/soELtVgHWO/5xMcJqL35e4vPl7nuPuzWQ8fe
+ qES9+cg1/32VsZhxfVqK2b/KSN4xgo/RZOz9AcrFJA4=
+
+Atom headers on a single part.

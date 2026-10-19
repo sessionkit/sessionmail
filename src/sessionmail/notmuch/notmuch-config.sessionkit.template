@@ -1,0 +1,54 @@
+# notmuch profile "sessionkit": sessionmail's own index of this host's mail,
+# written by `message setup` from sessionmail's
+# notmuch/notmuch-config.sessionkit.template. It is never written over: edit
+# it as you like.
+#
+# sessionmail reads this file, and no other notmuch config, in host mode
+# (`--config=<this file>`). A notmuch config of your own, ~/.notmuch-config
+# included, is never read, written or moved. To use it by hand:
+# `notmuch --config=<this file> ...`.
+
+[database]
+path=${database_path}
+# No hook_dir: notmuch's default, <path>/.notmuch/hooks, where `message
+# setup` links sessionmail's post-new hook.
+
+[new]
+tags=unread;inbox;
+ignore=.DS_Store;/^sent$/
+
+[search]
+exclude_tags=deleted;spam;
+
+[maildir]
+synchronize_flags=true
+
+[index]
+header.Task=Task
+header.Project=Project
+header.Supersedes=Supersedes
+header.XSupersedes=X-Supersedes
+header.XProject=X-Project
+header.Type=Type
+header.Store=Store
+header.Status=Status
+header.Session=X-Session-From
+header.DeliveredTo=Delivered-To
+header.XTask=X-Task
+header.Refs=References
+header.Verb=Verb
+header.Noun=Noun
+header.Asker=Asker
+header.Askee=Askee
+header.Channel=Channel
+header.Name=Name
+header.Parent=Parent
+
+[query]
+# This profile's root IS the mail root, so `path:agents/**` matches here.
+memory=tag:memory and not tag:superseded
+paper=path:agents/** and tag:unread
+atoms=Type:requirement or Type:decision or Type:idea or Type:finding or Type:question or Type:note
+
+# No [sessionmail] section: the post-new hook's own defaults,
+# path:agents/** and path:agents/memory/**, are right for the mail root.
