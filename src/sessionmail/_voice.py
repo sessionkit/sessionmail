@@ -111,7 +111,7 @@ def host_forms(env: Mapping[str, str] | None = None) -> tuple[str, ...]:
     found, _why = _magicdns.lookup(env)
     if found is None:
         _magicdns.warn_unknown(f"this host's forms are the short host only ({short!r}), so a "
-                               f"keeper or call address at the FQDN is not recognised")
+                               f"keeper or call address at the FQDN is not recognised", env)
         return (short,)
     return short, f"{short}.{found}"
 

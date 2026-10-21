@@ -358,8 +358,10 @@ def test_python_lookup_with_neither_never_raises(tmp_path):
 
 
 def test_host_forms_with_neither_are_the_short_host_only_and_say_so(tmp_path, capsys):
-    """The review bar, 5b: no FQDN form, and it says so (once a process)."""
-    env = {**env_of(tmp_path), "SESSIONMAIL_HOST": "HQ"}
+    """The review bar, 5b: no FQDN form, and it says so (once a process).
+    On an MTA carrier, whose maps need the suffix (the conftest's)."""
+    env = {**env_of(tmp_path), "SESSIONMAIL_HOST": "HQ",
+           "SESSIONMAIL_SENDMAIL": os.environ["SESSIONMAIL_SENDMAIL"]}
     assert _voice.host_forms(env) == ("hq",)
     assert _voice.host_forms(env) == ("hq",)
     err = capsys.readouterr().err
@@ -454,3 +456,91 @@ def test_no_literal_tailnet_suffix_in_src():
     assert hits == []
     # CONTROL: the same pattern does hit a suffix, so empty means empty.
     assert TAILNET.search("mail for eve@hq.example.ts.net")
+
+
+# -- a mail-drop host with no tailnet: the short host is right, not a fault --
+
+def test_drop_without_tailnet_decides_what_is_said_from_what_is_there(tmp_path):
+    """No operator word, no tailscale CLI, and the drop: True. Any one of
+    them there, or an MTA carrier: False (those hosts keep their warning)."""
+    drop = {**env_of(tmp_path), "SESSIONMAIL_SENDMAIL": "drop"}
+    assert _magicdns.drop_without_tailnet(drop) is True
+    assert _magicdns.drop_without_tailnet(
+        {**drop, "SESSIONMAIL_SENDMAIL": os.environ["SESSIONMAIL_SENDMAIL"]}) is False
+    assert _magicdns.drop_without_tailnet({**drop, "MAGICDNS_SUFFIX": "env.example"}) is False
+    assert _magicdns.drop_without_tailnet({**drop, "MAGICDNS_SUFFIX": "Not A Suffix"}) is False
+    assert _magicdns.drop_without_tailnet({**drop, "MAGICDNS_SUFFIX": " . "}) is True   # blank
+    bins = tmp_path / "bins"
+    fake_tailscale(bins / "tailscale", fail=True)
+    assert _magicdns.drop_without_tailnet(env_of(tmp_path, path_dir=bins)
+                                          | {"SESSIONMAIL_SENDMAIL": "drop"}) is False
+    bundle = fake_tailscale(tmp_path / "app" / "Tailscale", fail=True)
+    assert _magicdns.drop_without_tailnet(env_of(tmp_path, bundle=bundle)
+                                          | {"SESSIONMAIL_SENDMAIL": "drop"}) is False
+
+
+def test_drop_without_tailnet_reads_the_settings_files_suffix(tmp_path):
+    import json
+    from conftest import write_mail_settings
+    from sessionmail import _operator
+    write_mail_settings(_operator.settings_home(),
+                        json.dumps({"version": 1, _magicdns.FILE_KEY: "file.example"}))
+    drop = {**env_of(tmp_path), "SESSIONMAIL_SENDMAIL": "drop"}
+    assert _magicdns.drop_without_tailnet(drop) is False
+
+
+def test_the_bundle_default_is_the_helpers_own(helper):
+    """The presence check looks where the helper looks: one default path."""
+    line = next(l for l in helper.read_text().splitlines() if l.startswith("BUNDLE_DEFAULT="))
+    assert line == f'BUNDLE_DEFAULT="{_magicdns.BUNDLE_DEFAULT}"'
+
+
+@pytest.mark.parametrize("where", ["none", "path", "bundle", "bundle-off"])
+def test_tailscale_present_agrees_with_the_helpers_trace(tmp_path, helper, where):
+    """On the same seams, `tailscale_present` is True exactly when the
+    helper's --trace says it ASKED a CLI (not "no tailscale", not "not
+    installed", not "not looked for")."""
+    bins = tmp_path / "bins"
+    bins.mkdir()
+    bundle: Path | str = tmp_path / "no-app" / "Tailscale"
+    if where == "path":
+        fake_tailscale(bins / "tailscale", fail=True)
+    elif where == "bundle":
+        bundle = fake_tailscale(tmp_path / "app" / "Tailscale", fail=True)
+    elif where == "bundle-off":
+        bundle = ""
+    env = env_of(tmp_path, path_dir=bins, bundle=bundle)
+    err = run([str(helper), "--trace"], env).stderr
+    asked = [l for l in err.splitlines() if l.strip().startswith("looked:")
+             and not l.rstrip().endswith(("PATH: no tailscale", "not installed",
+                                          "(MAGICDNS_TAILSCALE_BUNDLE is empty)"))]
+    assert _magicdns.tailscale_present(env) is bool(asked), err
+    assert _magicdns.tailscale_present(env) is (where in ("path", "bundle"))
+
+
+def test_host_forms_on_a_drop_host_with_no_tailnet_say_nothing(tmp_path, capsys):
+    """The pager status and PostToolBatch hook sites: the same short host,
+    and nothing on stderr."""
+    env = {**env_of(tmp_path), "SESSIONMAIL_HOST": "HQ", "SESSIONMAIL_SENDMAIL": "drop"}
+    assert _voice.host_forms(env) == ("hq",)
+    assert _voice.host_forms(env) == ("hq",)
+    assert capsys.readouterr().err == ""
+
+
+def test_host_forms_on_a_drop_host_whose_tailscale_fails_still_warn(tmp_path, capsys):
+    bins = tmp_path / "bins"
+    fake_tailscale(bins / "tailscale", fail=True)
+    env = {**env_of(tmp_path, path_dir=bins), "SESSIONMAIL_HOST": "HQ",
+           "SESSIONMAIL_SENDMAIL": "drop"}
+    assert _voice.host_forms(env) == ("hq",)
+    assert _voice.host_forms(env) == ("hq",)
+    err = capsys.readouterr().err
+    assert err.count(_magicdns.UNKNOWN) == 1
+    assert "short host only ('hq')" in err
+
+
+def test_no_tailnet_says_no_advice_and_names_nothing():
+    """The INFO words: nothing to install or set, no product named."""
+    words = _magicdns.NO_TAILNET.lower()
+    for advice in ("install", "start", "set ", "tailscale", "magicdns_suffix"):
+        assert advice not in words

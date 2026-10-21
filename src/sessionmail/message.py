@@ -1995,8 +1995,9 @@ SEAT_RESTORE = ("SIGPIPE", "SIGXFSZ")
         """A seat with no Claude session (a bot, a bridge) signs its mail
 with a key of its own, held by its own ssh-agent. `init` mints the key
 and its birth cert into a registry you name; `agent` runs that agent in
-the foreground, for launchd. Neither runs launchctl, and neither blesses
-a seat: a blessing is the registry owner's own act.
+the foreground, for launchd, and `agent --install` loads it with
+launchctl so it comes back after a reboot. And neither blesses a seat: a
+blessing is the registry owner's own act.
 
 Exit: 0 ok · 2 usage (each verb's own exits are on its page)"""
     ),
@@ -2037,29 +2038,40 @@ def seat_init(args: tuple[str, ...]) -> None:
     "agent",
     cls=PageCommand,
     context_settings=dict(CONTEXT_SETTINGS, ignore_unknown_options=True),
-    usage="ADDRESS [SOCKET] | --template",
+    usage="ADDRESS [SOCKET] | --install ADDRESS [SOCKET] | --uninstall ADDRESS | --template",
     short_help="ADDRESS [SOCKET]          run the seat's ssh-agent, for launchd",
     epilog=unwrapped(
         """Runs the seat's own ssh-agent in the foreground, for launchd's
-KeepAlive. This process BECOMES the packaged seat-agent script (an exec,
-so launchd's TERM reaches it): it loads $SESSIONMAIL_HOME/seat-keys/
-ADDRESS/id_ed25519 and checks it against seat.pub. SOCKET defaults to
-agent.sock beside the key, 103 bytes at most.
+KeepAlive: this process BECOMES the packaged seat-agent script (an exec).
+It loads $SESSIONMAIL_HOME/seat-keys/ADDRESS/id_ed25519 and checks it
+against seat.pub. SOCKET defaults to agent.sock beside the key.
 
---template prints the LaunchAgent template, byte for byte, for you to
-render: ProgramArguments is `@MESSAGE@ seat agent @ADDRESS@ @SOCKET@`,
-with @MESSAGE@ what `command -v message` prints. Nothing here renders
-or loads it, or runs launchctl.
-
-Exit: 0 stopped by a signal · 1 the agent failed or died · 2 usage or refused, nothing started"""
+--install loads it as a LaunchAgent (launchctl bootstrap) and waits until
+the agent answers. stdout is SEAT_LABEL, SEAT_PLIST, SEAT_SOCKET, SEAT_PUB
+and SEAT_LOG, shell-quoted. A re-run checks; another job is refused.
+--uninstall boots it out. --template prints the plist, for a hand render.
+launchctl is $SESSIONMAIL_LAUNCHCTL, else /bin/launchctl."""
     ),
+    sections="""Exit: 0 done, or stopped by a signal · 1 the agent or launchctl failed (--install rolls back) · 2 usage or refused, nothing started or written
+
+Capability: install""",
 )
+@click.option("--install", "install", is_flag=True,
+              help="load it as a LaunchAgent; prints KEY=VALUE lines")
+@click.option("--uninstall", "uninstall", is_flag=True,
+              help="boot it out and remove its plist")
 @click.option("--template", is_flag=True,
               help="print the LaunchAgent template, verbatim; takes no ADDRESS")
 @click.argument("args", nargs=-1, type=click.UNPROCESSED, metavar="")
-def seat_agent(template: bool, args: tuple[str, ...]) -> None:
+def seat_agent(install: bool, uninstall: bool, template: bool, args: tuple[str, ...]) -> None:
     """message seat agent - the seat's own ssh-agent, in the foreground, for launchd"""
     ctx = click.get_current_context()
+    chosen = [flag for flag, on in (("--install", install), ("--uninstall", uninstall),
+                                    ("--template", template)) if on]
+    if len(chosen) > 1:
+        click.echo(f"message seat agent: REFUSED - {' and '.join(chosen)} are one each, never "
+                   "together. Nothing was written.", err=True)
+        ctx.exit(EX_REFUSED)
     if template:
         if args:
             click.echo("message seat agent: REFUSED - --template prints the template and takes "
@@ -2069,6 +2081,19 @@ def seat_agent(template: bool, args: tuple[str, ...]) -> None:
         with open(SEAT_TEMPLATE, "rb") as f:
             _mhs._emit(sys.stdout, f.read())        # the bytes, as the oracle's are
         return
+    if install or uninstall:
+        from . import _launchd
+        if install and not 1 <= len(args) <= 2:
+            click.echo("message seat agent: REFUSED - usage: message seat agent --install "
+                       "ADDRESS [SOCKET]. Nothing was written.", err=True)
+            ctx.exit(EX_REFUSED)
+        if uninstall and len(args) != 1:
+            click.echo("message seat agent: REFUSED - usage: message seat agent --uninstall "
+                       "ADDRESS. Nothing was changed.", err=True)
+            ctx.exit(EX_REFUSED)
+        if install:
+            ctx.exit(_launchd.install(args[0], args[1] if len(args) == 2 else None))
+        ctx.exit(_launchd.uninstall(args[0]))
     _exec_seat_agent(list(args))
 
 

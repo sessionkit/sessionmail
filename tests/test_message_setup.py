@@ -604,3 +604,23 @@ def test_on_a_fresh_root_setup_then_send_lands_with_no_suffix(env, tmp_path, mai
     rc, out, err = _sender.run(argv, real)
     assert rc == 0, err
     assert [p.parent.name for p in (mailroot / "agents" / "alpha").glob("*/*")] == ["new"]
+
+
+# ── the carrier row is a contract: a downstream parser reads it ──────────────
+
+@pytest.mark.parametrize("argv", [["--dry-run"], []], ids=["dry-run", "applied"])
+@pytest.mark.parametrize("carrier", ["drop", "mta"])
+def test_the_carrier_row_is_byte_for_byte(env, tmp_path, carrier, argv):
+    """`message setup`'s carrier row, dry-run and applied, exactly: a reader
+    outside this package parses it (the row's id, its state, then a detail
+    that starts "the mail drop" or "the MTA at"). Any change to it is a
+    change to that contract, never a tidy-up."""
+    mta = write_fake(tmp_path / "sendmail", "#!/bin/sh\ncat >/dev/null\n")
+    run = ({**env, "SESSIONMAIL_SENDMAIL": "drop"} if carrier == "drop" else
+           {**env, "SESSIONMAIL_SENDMAIL": str(mta), "MAGICDNS_SUFFIX": "example.invalid"})
+    _rc, out, _ = setup(run, *argv)
+    rows = [ln for ln in out.splitlines() if ln.startswith("  carrier ")]
+    want = ("  carrier                   DONE     the mail drop (from $SESSIONMAIL_SENDMAIL); "
+            "no suffix is needed" if carrier == "drop" else
+            f"  carrier                   DONE     the MTA at {mta} (from $SESSIONMAIL_SENDMAIL)")
+    assert rows == [want], out

@@ -590,21 +590,24 @@ def test_trust_env_is_one_definition_shared_with_message_verify():
     assert _mhs.REGISTRY_VAR == "SESSION_REGISTRY"
 
 
-# ── SM-853: the no-registry banner says what a registry is, and that we do not make one ──
+# ── SM-853: the no-registry banner says what a ledger is, and that we do not make one ──
 # A stranger who follows the OFF text to `--list` lands on this banner. It must say what
-# SESSION_REGISTRY points at, say plainly that sessionmail does not create a registry, and
-# name the page that says how to build one by hand. Each phrase sits on ONE banner line, so
-# it survives every renderer (the header, `--list` commenting each line out, `--json`).
+# SESSION_REGISTRY points at, say plainly that sessionmail does not create a ledger and that
+# memory run reads only SESSION_REGISTRY or the "registry" key with no default to fall back
+# to, and name the page that says how to build one by hand. Each phrase sits on ONE banner
+# line, so it survives every renderer (the header, `--list` commenting each line out, `--json`).
 
 BANNER_MUST_SAY = (
     "memory run: NO TRUST REGISTRY",
     'set SESSION_REGISTRY, or "registry" in ~/.sessionkit/mail/settings/mail.json',
-    "a git work tree holding a committed allowed_signers file",
+    "Point it at a trust ledger: a git work tree holding a committed allowed_signers file",
     '`<sid>@session namespaces="..." <public key>` line',
     "certs/ directory",
-    "sessionmail does not create a registry today",
+    "sessionmail does not create a ledger",
+    "memory run reads only SESSION_REGISTRY",
+    'or the "registry" settings key, by design: there is no default ledger to fall back to.',
     "`message seat init --registry DIR`",
-    "only adds a seat to a registry that is already seeded",
+    "only adds a seat to a ledger that is already seeded",
     'docs/message-seat.md, "The trust registry"',
 )
 SEAT_DOC = REPO / "docs" / "message-seat.md"
@@ -628,6 +631,8 @@ def test_the_banner_says_what_a_registry_is_and_that_none_is_made(executor):
     # The headline did not move: it is what every existing reader keys on.
     assert lines[0].startswith("memory run: NO TRUST REGISTRY (set SESSION_REGISTRY")
     assert lines[0].endswith("Fix the environment, not the mail.")
+    # No line promises a ledger sessionmail will make later: there is no default.
+    assert not any("today" in ln for ln in lines), banner
 
 
 def test_the_page_the_banner_names_exists_and_says_the_same():
@@ -637,7 +642,15 @@ def test_the_page_the_banner_names_exists_and_says_the_same():
     assert "\n## The trust registry\n" in text
     section = text.split("\n## The trust registry\n", 1)[1]
     flat = " ".join(section.split())
-    assert "sessionmail does not create a registry today" in flat
+    assert "sessionmail does not create a ledger" in flat
+    assert "today" not in flat.split("## ", 1)[0], flat
+    assert ("reads only `SESSION_REGISTRY` or the `\"registry\"` key, by design: with "
+            "neither set there is no default ledger to fall back to") in flat
+    # The hole is written down: the blessing keys live inside the ledger, and
+    # memory run runs an UNBLESSED item by policy.
+    assert "blessing key in the ledger's own `allowed_signers`" in flat
+    assert "can add a blessing key of their own: a new root of trust" in flat
+    assert "by policy runs an UNBLESSED item" in flat
     for word in ("allowed_signers", "certs/", "git work tree", "SESSION_REGISTRY",
                  '"registry"', "namespaces="):
         assert word in flat, word

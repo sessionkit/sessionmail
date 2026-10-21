@@ -1247,3 +1247,43 @@ def test_the_reason_hint_goes_before_any_box_name_is_cut():
                 assert len(line) <= TAIL_LINE_MAX, (len(line), line)
                 if line.endswith(NOT_DONE_DOORS[0]):
                     assert f"({a} {c + 1}, {b} {c})" in line, line
+
+
+# ── a mail-drop host with no tailnet: said once, as INFO, not as a fault ──
+
+def _no_suffix(tmp_path, monkeypatch, *, carrier="drop", tailscale=False):
+    from test_magicdns_suffix import fake_tailscale
+    bins = tmp_path / "no-tailscale-bin"
+    bins.mkdir(exist_ok=True)
+    if tailscale:
+        fake_tailscale(bins / "tailscale", fail=True)
+    monkeypatch.setenv("PATH", f"{bins}:/usr/bin:/bin")
+    monkeypatch.delenv("MAGICDNS_SUFFIX", raising=False)
+    monkeypatch.setenv("MAGICDNS_TAILSCALE_BUNDLE", "")
+    if carrier == "drop":
+        monkeypatch.setenv("SESSIONMAIL_SENDMAIL", "drop")
+
+
+def test_on_a_drop_host_with_no_tailnet_status_says_it_once_as_info(seat, tmp_path, monkeypatch):
+    from sessionmail import _magicdns
+    _no_suffix(tmp_path, monkeypatch)
+    result = run()
+    assert result.stderr.count(f"suffix: none - {_magicdns.NO_TAILNET}") == 1
+    assert _magicdns.UNKNOWN not in result.stderr
+
+
+def test_on_a_drop_host_whose_tailscale_fails_status_still_warns(seat, tmp_path, monkeypatch):
+    from sessionmail import _magicdns
+    _no_suffix(tmp_path, monkeypatch, tailscale=True)
+    result = run()
+    assert result.stderr.count(_magicdns.UNKNOWN) == 1
+    assert "suffix: none" not in result.stderr
+
+
+def test_on_an_mta_host_with_no_tailnet_status_warns_as_before(seat, tmp_path, monkeypatch):
+    """Its maps need the suffix: the warning, unchanged, and no INFO line."""
+    from sessionmail import _magicdns
+    _no_suffix(tmp_path, monkeypatch, carrier="mta")
+    result = run()
+    assert result.stderr.count(_magicdns.UNKNOWN) == 1
+    assert "suffix: none" not in result.stderr

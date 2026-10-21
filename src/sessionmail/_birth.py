@@ -68,6 +68,19 @@ SUBSCRIBE_VAR = "SESSIONMAIL_SUBSCRIBE"
 #: one: the detached generator's line.
 BORN_FILE = "born"
 
+#: What a generator line says on a mail-drop host, suffix or none: the drop
+#: builds no maps, so no generator runs there (`_seat._run_generator`'s own
+#: words for it; `tests/test_birth.py` holds the two equal).
+DROP_REGEN = "generator not run: the carrier is the mail drop; it reads the maps per send"
+
+
+def _on_drop(env: Mapping[str, str] | None) -> bool:
+    """Whether the carrier is the mail drop. Decides what a generator line
+    SAYS, never what runs."""
+    from . import _settings
+    return _settings.carrier(env).kind == "drop"
+
+
 #: Who births when the caller does not say: the subscription journal's `argv`.
 VIA_LISTEN = "pager listen"
 
@@ -350,13 +363,19 @@ def ensure_session_box(session: str, seat: "Seat | None", *,
                                   f"{stale}, left by an earlier run of this session; its row "
                                   f"goes at the next regen")
     if has_session and seat is not None:
-        live, why = _seat.doorbell(seat.address, session, env)
+        if detach and _settings.carrier(env).kind == "drop":
+            # The drop's doorbell runs the generator (`_drop.prepare`), and a
+            # detaching call never waits on it; the listen asks instead.
+            live, why = None, "not measured at session start; the first pager listen measures it"
+        else:
+            live, why = _seat.doorbell(seat.address, session, env)
         regen_said = ""
         if (birth.born or live is False) and detach:
             _detach(birth, session, env, root, record_source)
             regen_said = birth.regen_line
         elif (birth.born or live is False) and birth.suffix_unknown:
-            regen_said = "generator NOT run (MagicDNS suffix unknown)"
+            regen_said = (DROP_REGEN if _on_drop(env)
+                          else "generator NOT run (MagicDNS suffix unknown)")
         elif birth.born or live is False:
             regen_said = _seat.regen_maps(root, env=env)
             birth.regen, birth.regen_line = "ran", regen_said
@@ -384,7 +403,8 @@ def ensure_session_box(session: str, seat: "Seat | None", *,
         # included: the whole generator, detached, routes the boxes too.
         _detach(birth, session, env, root, record_source)
     elif owed and birth.suffix_unknown:
-        birth.sub_lines.append("  map        : NOT rebuilt - MagicDNS suffix unknown; the "
+        birth.sub_lines.append(f"  map        : {DROP_REGEN}" if _on_drop(env) else
+                               "  map        : NOT rebuilt - MagicDNS suffix unknown; the "
                                "subscriptions stand, and the next rebuild with a suffix "
                                "routes them")
     elif owed:
@@ -429,8 +449,11 @@ def _main(argv: list[str] | None = None) -> int:
         # The hook did not ask for the suffix (it costs the hook's
         # budget), so the child asks, and never runs the generator without
         # one: the record's line 2 says so instead.
+        # On a mail-drop host no generator runs either way, so the line
+        # names the carrier, not the suffix.
         suffix, why = _magicdns.lookup()
         line = (_seat.regen_maps(Path(args.regen)) if suffix is not None
+                else DROP_REGEN if _on_drop(None)
                 else f"generator NOT run (MagicDNS suffix unknown: {why})")
     except Exception as exc:  # noqa: BLE001 - regen_maps never raises; a child that dies says why
         line = f"generator failed in the background: {exc}"
@@ -443,8 +466,8 @@ def _main(argv: list[str] | None = None) -> int:
     return 0
 
 
-__all__ = ["BORN_FILE", "SUBSCRIBE_VAR", "Birth", "BornRecord", "birth_subscriptions", "born_record",
-           "detach_regen", "ensure_session_box", "read_born"]
+__all__ = ["BORN_FILE", "DROP_REGEN", "SUBSCRIBE_VAR", "Birth", "BornRecord", "birth_subscriptions",
+           "born_record", "detach_regen", "ensure_session_box", "read_born"]
 
 
 if __name__ == "__main__":

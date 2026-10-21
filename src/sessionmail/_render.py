@@ -2,10 +2,12 @@
 
 Task 4b of openspec/changes/send-in-python (decision 2: built in,
 overridable, switchable off, `--raw` per mail). COPIED from the earlier
-bash renderer, session-mail-render (551 lines): the CSS, the extension set and the o03 mail profile below are
+bash renderer, session-mail-render (551 lines): the CSS, the extension set and the o03 mail profile below were
 that file's lines 166-377 BYTE FOR BYTE, and `render_page` is its main()
-without the file handling. The parity test renders a corpus through both
-and compares the pages whole.
+without the file handling. No parity test runs any more: the one that held
+the two pages equal retired with the bash renderer (see the note in
+tests/test_render.py), so this is the only renderer and it has moved on
+(the extension set now carries `nl2br`).
 
 What the sender relies on, and what a later edit must not "restore":
 
@@ -163,6 +165,7 @@ details.admonition summary {
 EXTENSIONS = [
     "admonition",
     "footnotes",
+    "nl2br",  # a newline in the body is a line break in the mail
     "sane_lists",
     "smarty",
     "tables",

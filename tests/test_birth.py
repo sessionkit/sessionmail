@@ -47,8 +47,14 @@ class Rig:
         # SM-674 (merged at land-prep): a "wait" birth asks for the MagicDNS
         # suffix in ENV and skips every regen without one; the conftest's
         # hermetic suffix, so these rigs regenerate as they did.
+        # The conftest's carrier too (an MTA path): a generator line names
+        # the suffix there, and the faked doorbell and regen are an MTA
+        # host's. A hand-built env with none falls to the drop, whose
+        # detaching birth rings no doorbell; a test of the mail drop sets
+        # "drop" itself.
         self.env = {"SESSION_MAIL_ROOT": str(self.root), "SESSIONMAIL_HOME": str(self.home),
-                    "MAGICDNS_SUFFIX": os.environ["MAGICDNS_SUFFIX"]}
+                    "MAGICDNS_SUFFIX": os.environ["MAGICDNS_SUFFIX"],
+                    "SESSIONMAIL_SENDMAIL": os.environ["SESSIONMAIL_SENDMAIL"]}
         self.rings = list(rings)
         self.calls: list[str] = []
         self.address_at_regen: list[bool] = []
@@ -434,6 +440,48 @@ def test_the_detached_child_without_a_suffix_runs_no_generator_and_records_why(t
     assert _birth._main(["--regen", str(tmp_path), "--record", str(record)]) == 0
     assert record.read_text().splitlines()[1] == ("generator NOT run (MagicDNS suffix unknown: "
                                                   "no tailscale here)")
+
+
+# ── on the mail drop no generator runs, suffix or none: the line says why ──
+
+def test_on_the_drop_a_waiting_birth_without_a_suffix_names_the_carrier(tmp_path, monkeypatch):
+    _no_suffix(monkeypatch)
+    rig = Rig(tmp_path, monkeypatch, rings=(NOT_COPIED, LIVE))
+    rig.env["SESSIONMAIL_SENDMAIL"] = "drop"
+    birth = rig.ensure()
+    assert birth.suffix_unknown is True
+    assert rig.calls == ["doorbell"] and birth.regen == ""         # the same branch, the same state
+    # ONLY the generator's clause, at the line's end: the rest of the line is
+    # the doorbell's verdict, not this test's.
+    assert birth.bell_lines[-1].endswith(f"; {_birth.DROP_REGEN}")
+
+
+def test_on_the_drop_a_seatless_birth_that_subscribed_names_the_carrier(tmp_path, monkeypatch):
+    from sessionmail import _subscribe
+    _no_suffix(monkeypatch)
+    rig = Rig(tmp_path, monkeypatch)
+    rig.env["SESSIONMAIL_SENDMAIL"] = "drop"
+    monkeypatch.setattr(_birth, "birth_subscriptions",
+                        lambda session, env=None, via=None: (["  subscribe  : x"], True))
+    monkeypatch.setattr(_subscribe, "rebuild", lambda env=None: pytest.fail("rebuilt"))
+    birth = rig.ensure(seat=None)
+    assert birth.sub_lines == ["  subscribe  : x", f"  map        : {_birth.DROP_REGEN}"]
+
+
+def test_on_the_drop_the_detached_child_without_a_suffix_names_the_carrier(tmp_path, monkeypatch):
+    _no_suffix(monkeypatch)
+    monkeypatch.setenv("SESSIONMAIL_SENDMAIL", "drop")
+    monkeypatch.setattr(_seat, "regen_maps", lambda *a, **kw: pytest.fail("generator ran"))
+    record = tmp_path / "born"
+    record.write_text("2030-12-17T23:34:56+11:00 startup regen=detached\n")
+    assert _birth._main(["--regen", str(tmp_path), "--record", str(record)]) == 0
+    assert record.read_text().splitlines()[1] == _birth.DROP_REGEN
+
+
+def test_drop_regen_is_what_the_generator_runner_says_on_the_drop(tmp_path):
+    """One set of words: the birth's copy is the runner's own answer."""
+    assert _seat.regen_maps(tmp_path / "agents", env={"SESSIONMAIL_SENDMAIL": "drop"}) == \
+        _birth.DROP_REGEN
 
 
 def test_the_detached_child_with_a_suffix_runs_the_generator(tmp_path, monkeypatch):

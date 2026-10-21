@@ -22,8 +22,9 @@ from pathlib import Path
 
 import pytest
 
+from fake_launchctl import FakeLaunchctl
 from fakes import write_fake
-from sessionmail import _magicdns, _maildir, _mhs, _notmuch, _operator, _seat, _sig, _voice, pager, rules
+from sessionmail import _launchd, _magicdns, _maildir, _mhs, _notmuch, _operator, _seat, _sig, _voice, pager, rules
 from sessionmail import _settings
 
 #: The operator block hq and nas carry after SM-727 deploys (design §f): the
@@ -343,6 +344,23 @@ def hermetic(tmp_path_factory, monkeypatch):
     # ever read the runner's real `~/.claude/sessions`.
     monkeypatch.setattr(_seat, "claude_for", _claude_up)
     monkeypatch.setenv("SESSION_SIDECAR_DIR", str(sandbox / "no-sidecars-here"))
+
+
+@pytest.fixture(autouse=True)
+def launchctl_fake(hermetic, tmp_path_factory, monkeypatch):
+    """No test ever reaches the real launchd. `message seat agent
+    --install` runs `$SESSIONMAIL_LAUNCHCTL`, else /bin/launchctl: every test
+    gets the recording fake in tests/fake_launchctl.py through the variable,
+    and the in-process fallback is pointed at a path that does not exist, so
+    an env that lost the variable fails CLOSED instead of loading a job. A
+    test that builds an env from nothing adds `launchctl_fake.env` to it.
+    Teardown stops every agent the fake started, by pid."""
+    fake = FakeLaunchctl(tmp_path_factory.mktemp("launchctl"))
+    monkeypatch.setenv(_launchd.LAUNCHCTL_VAR, str(fake.path))
+    monkeypatch.setattr(_launchd, "DEFAULT_LAUNCHCTL",
+                        str(fake.path.parent / "no-launchctl-here"))
+    yield fake
+    fake.stop_all()
 
 
 #: The real `_seat.claude_for`, captured before any test patches it.

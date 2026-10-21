@@ -873,16 +873,54 @@ def test_without_the_fix_the_same_send_is_not_the_keeper(sender, env, tmp_path, 
     assert _voice.keeper_sent(message_from_bytes(raw), env) is False
 
 
-def test_with_no_suffix_the_drop_qualifies_with_the_short_host_and_says_so(sender, env, tmp_path):
-    """No MAGICDNS_SUFFIX and no tailscale (both seams pointed at nothing): the
-    short host, which is host_forms' one form there, so keeper_sent holds."""
-    env = {**env, "MAGICDNS_TAILSCALE_BUNDLE": ""}
+def _no_suffix(env, bin_dir, *, tailscale: str = "none"):
+    """No MAGICDNS_SUFFIX, the app-bundle seam off, and the system dirs on
+    PATH (they carry no tailscale), so the helper runs and asks only what is
+    put in BIN_DIR: TAILSCALE `none`, `fail` (a CLI that exits 1) or `ok`."""
+    from test_magicdns_suffix import fake_tailscale
+    if tailscale != "none":
+        fake_tailscale(bin_dir / "tailscale", SUFFIX, fail=tailscale == "fail")
+    env = {**env, "MAGICDNS_TAILSCALE_BUNDLE": "", "PATH": f"{env['PATH']}:/usr/bin:/bin"}
     env.pop("MAGICDNS_SUFFIX", None)
+    return env
+
+
+def test_with_no_tailnet_the_drop_qualifies_with_the_short_host_and_says_nothing(sender, env,
+                                                                                tmp_path, bin_dir):
+    """No MAGICDNS_SUFFIX and no tailscale at all, on the drop: the short host,
+    which is host_forms' one form there, so keeper_sent holds - and that is
+    the right answer there, so the send says nothing of a suffix."""
+    env = _no_suffix(env, bin_dir)
+    raw, err = heard(sender, env, tmp_path)
+    assert head_field(raw, "From") == [f"From: Ears <heard+airpods@{HOST}>"]
+    assert raw.startswith(f"Return-Path: <heard+airpods@{HOST}>\n".encode())
+    assert _voice.keeper_sent(message_from_bytes(raw), env) is True
+    assert "magicdns" not in err.lower() and "tailscale" not in err.lower()
+
+
+def test_with_a_tailscale_that_fails_the_drop_qualifies_with_the_short_host_and_says_so(
+        sender, env, tmp_path, bin_dir):
+    """A tailscale that is there and does not answer: the same short host, and
+    the warning, once."""
+    env = _no_suffix(env, bin_dir, tailscale="fail")
     raw, err = heard(sender, env, tmp_path)
     assert head_field(raw, "From") == [f"From: Ears <heard+airpods@{HOST}>"]
     assert raw.startswith(f"Return-Path: <heard+airpods@{HOST}>\n".encode())
     assert _voice.keeper_sent(message_from_bytes(raw), env) is True
     assert "MagicDNS suffix unknown" in err and f"short host only (@{HOST})" in err
+    assert err.count(_magicdns_unknown()) == 1
+
+
+@pytest.mark.parametrize("tailscale, want", [("none", HOST), ("fail", HOST),
+                                             ("ok", f"{HOST}.{SUFFIX}")])
+def test_what_is_said_never_moves_the_origin(env, bin_dir, tailscale, want):
+    """The origin a bare From gets is the same whether the no-suffix case is
+    said or not: only the notes differ."""
+    env = {k: v for k, v in _no_suffix(env, bin_dir, tailscale=tailscale).items()
+           if k != "SESSIONMAIL_ORIGIN"}
+    notes: list[str] = []
+    assert _drop.origin(env, HOST, notes) == want
+    assert len(notes) == (1 if tailscale == "fail" else 0)
 
 
 def test_an_already_qualified_from_is_left_as_given(sender, env, tmp_path):
@@ -912,6 +950,11 @@ def test_origin_resolution_order(env):
                         HOST) == f"{HOST}.{SUFFIX}"                 # blank is unset
     notes: list[str] = []
     assert _drop.origin(base, HOST, notes) == HOST
+    assert notes == []                                        # no tailnet: nothing to say
+    from test_magicdns_suffix import fake_tailscale
+    fake_tailscale(Path(base["PATH"].split(":")[0]) / "tailscale", fail=True)
+    notes = []
+    assert _drop.origin(base, HOST, notes) == HOST            # there, and failing: said
     assert len(notes) == 1 and _magicdns_unknown() in notes[0]
 
 

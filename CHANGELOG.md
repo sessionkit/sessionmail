@@ -9,99 +9,78 @@ is its only writer and the build reads it from there.
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-10-21
+
+### Added
+
+- **`message seat agent --install` and `--uninstall` load and remove the
+  seat's LaunchAgent** (SM-898), so a seat's signer comes back after a
+  reboot.
+  - `--install ADDRESS [SOCKET]` renders the packaged template into
+    `~/Library/LaunchAgents`, runs `launchctl bootstrap`, and exits 0 only
+    once the agent answers on the socket holding `seat.pub`'s key. stdout
+    is five shell-quoted `KEY=VALUE` lines, for `eval`.
+  - A re-run is idempotent. A different plist or job under the label is
+    refused, never overwritten. A failed load, or an agent that does not
+    answer, is rolled back.
+  - `--uninstall ADDRESS` boots the job out and removes the plist when its
+    `Label` is the seat agent's.
+  - A plist that cannot be written or removed is a `FAILED - ...` line on
+    stderr, exit 1, that says what was done and what was kept.
+  - `launchctl` is `$SESSIONMAIL_LAUNCHCTL`, else `/bin/launchctl`.
+    `message seat agent --help` carries `Capability: install` as a whole
+    line.
+
 ### Changed
 
-- **The seat agent's launchd label is `dev.sessionkit.mail.seat-agent.<address>`**
-  in the template `message seat agent --template` prints. Every launchd label
-  the kit ships is `dev.sessionkit.<package>.<job>`; mail's package is `mail`.
-  - **Upgrading:** a job rendered from the old template still runs under the
-    old label, `com.failmode.seat-agent.<address>`. Boot it out
-    (`launchctl bootout gui/$(id -u)/<old label>`) and remove its plist, then
-    render the new template, `plutil -lint` it and bootstrap it.
-- **The operator block is read from `~/.sessionkit/tools/settings/session.json`**,
-  the `session` tool's folder in the kit's home, where sessiontools writes
-  it. Its drop-ins (`session.d/`) and template are read from the same
-  folder. Nothing is read from `~/.settings/session/` any more, and nothing
-  there is used as a fallback. sessionmail now requires `sessiontools>=0.1.0`.
-  - **Upgrading:** move the files in `~/.settings/session/` to
-    `~/.sessionkit/tools/settings/` first. Until you do, no operator is
-    configured: the operator defaults to your account, which privileges no
-    seat, so every privileged verb refuses and names the new file.
-- **The file drop is the default carrier.** With no `sendmail` key and no
-  `SESSIONMAIL_SENDMAIL`, `message send` writes into this host's maildirs
-  and runs no sendmail. postfix is opt-in: the `sendmail` key (or the
-  variable) names its `sendmail` by an absolute path. Any value other than
-  exactly `drop` or an absolute path refuses the send by name, exit 3,
-  nothing sent. The postfix maps are written only when the carrier is a
-  mail server.
-  - **Upgrading a postfix host:** write `"sendmail": "/usr/sbin/sendmail"`
-    in `~/.sessionkit/mail/settings/mail.json` first. Without it, every
-    send is delivered locally and mail to other hosts is refused.
-- **mail's settings are keys in `mail.json`**, read whatever the
-  environment, so a launchd job needs nothing copied into its plist:
-  `sendmail`, `root`, `host`, `magicdns_suffix`, `notmuch.command`,
-  `notmuch.timeout`, `notmuch.profile`, `postfix.generator`,
-  `postfix.relay_domain` and `postfix.origin`. Each has one variable;
-  when it is set and not empty, it wins over every layer. They are read
-  from the template and host layers only.
-- **notmuch: sessionmail reads its own profile, never yours.** In host mode
-  every notmuch call names the `sessionkit` profile
-  (`$XDG_CONFIG_HOME/notmuch/sessionkit/config`; `notmuch.profile` names
-  another) with `--config`, and drops `NOTMUCH_CONFIG`, `NOTMUCH_DATABASE`
-  and `NOTMUCH_PROFILE` from notmuch's environment. `~/.notmuch-config` is
-  never read or written. With no profile, a notmuch call refuses by name
-  (the send's parent lookup falls back to its walk). Store mode is
-  unchanged.
-  - **Upgrading a host that already has an index:** before upgrading,
-    COPY your existing notmuch config to the profile, byte for byte,
-    making the profile's folder first:
-    `d="${XDG_CONFIG_HOME:-$HOME/.config}/notmuch/sessionkit"; mkdir -p "$d" && cp ~/.notmuch-config "$d/config"`.
-    The database stays where it is. A profile written by hand with only
-    `database.path` keeps the count but loses the header fields, the
-    named queries and `new.ignore`. `message setup` adopts no database.
-- **`message setup` is listed on `message --help`**, under that name. It
-  is not an MCP tool: it changes this host.
-  - It writes the notmuch profile from a packaged template when there is
-    none and no database is in the mail root, and it links the post-new
-    hook into that profile's hook folder only. With no profile, the hook
-    step is BLOCKED and nothing is linked anywhere.
-  - On a postfix host with no maps it writes none unless `--write-maps`
-    asks. It never edits postfix's configuration.
-  - It writes no settings key. The carrier step names the carrier and
-    where its value came from; each MANUAL line names the key to write.
-- `message --help` drops its own `-h, --help` row and the blank line
-  before `Options:`, so every verb, `mcp` last, stays in its first 20
-  lines. Each verb's page keeps its `-h` row, and `-h` still answers.
+- **A newline in a message's body is a line break in its HTML part**
+  (SM-913). Lines written under each other stay under each other, and a
+  bold line followed straight by a numbered list no longer runs into one
+  paragraph. A fenced code block and a table carry no added breaks.
 
 ### Fixed
 
-- **`message setup` plans the operator's box from the operator `sessionkit
-  setup` wrote**, in `~/.sessionkit/tools/settings/session.d/`, and never
-  from an old `~/.settings/session/session.json` that names someone else.
-- **docs/settings.md says which home `~` is for each key.** It said
-  `$HOME` for every key but `registry` and `alert_runner`. In fact every key
-  read from the template and the host (`sendmail`, `root`, `host`,
-  `magicdns_suffix`, `notmuch`, `postfix`, `registry`, `alert_runner`) is
-  read under the account's home in the password database, so a `mail.json`
-  under another `$HOME` is not read for them. `hooks`, `monitor`,
-  `pager_required` and `capture` are read under `$HOME`.
-- **A user's global git config can no longer refuse sessionmail's own
-  commits.** `message seat init`'s registry commit and the
-  `memory init --record` commit run the repo's OWN hooks (its local
-  `core.hooksPath`, else `.git/hooks`), never a global or system
-  `core.hooksPath`, so the repo's owner can still gate them. The registry
-  commit signs with the seat key through `ssh-keygen` whatever
-  `gpg.ssh.program` the user configured, and is authored by the seat even
-  when `GIT_AUTHOR_*`/`GIT_COMMITTER_*` are set. The record commit is
-  never signed (`commit.gpgsign=false`); it is still authored by the
-  user's own git identity. Before, a global pre-commit hook or a signer
-  stopped seat birth.
-- **The test suite ignores the runner's git config.** It clears
-  `GIT_CONFIG_COUNT` and its `GIT_CONFIG_KEY_n`/`GIT_CONFIG_VALUE_n`, and
-  reads no global or system config, so a run from a shell that forces
-  commit signing, or has a refusing global hook, is no longer red.
+- **`message verify` no longer fails on a bare address when
+  `SESSIONMAIL_ORIGIN` is unset** (SM-898). The bundled verifier is loaded
+  by path, where reading the settings file raised, so it exited 1 (read as
+  a bad signature) and `--trust` printed no `TRUST:` line.
+  - Loaded by path, it takes the variable, then `postconf`, then leaves
+    the address bare.
+  - A script the package starts is given `SESSIONMAIL_ORIGIN` from the
+    `postfix.origin` key when the variable is unset, so the verifier reads
+    the origin the signer used.
+- **A mail-drop host with no tailnet is not told to install tailscale**
+  (SM-892). With the drop as carrier and no MagicDNS suffix (no
+  `MAGICDNS_SUFFIX`, no `magicdns_suffix` key, no tailscale CLI), the short
+  host is the right origin, not a fault.
+  - Sends, the session's born record and the PostToolBatch hook no longer
+    warn. The `pager listen` banner and `pager status` say it once, as
+    INFO, with nothing to install or set.
+  - A tailscale that is installed but does not answer still warns. What
+    the origin resolves to, and every line on an MTA carrier, are
+    unchanged.
+- **On a mail-drop host, the doorbell reads the drop's own maps**
+  (SM-908). It read postfix's compiled maps on every host, so a drop host
+  with postfix installed beside it said `NOT COPIED: no alias map postfix
+  reads ...` while the drop did copy the seat's mail to the session's box.
+  - Under the drop it resolves the seat's address the way a drop send
+    does. It is LIVE only when every box the address expands to exists,
+    the session's included; otherwise `NOT COPIED` or `NOT DELIVERABLE`
+    names the drop's maps and the box that stops delivery.
+  - A refused carrier is reported as not measured, with the carrier's
+    reason. An MTA host is unchanged.
+  - The session-start birth on the drop does not run the map generator:
+    it says the first `pager listen` measures the doorbell.
+- **`memory run`'s no-ledger banner says what holds** (SM-905).
+  sessionmail creates no trust ledger, and `memory run` reads only
+  `SESSION_REGISTRY` or the `registry` settings key, with no default. The
+  headline line, the gate and the exit codes are unchanged.
+  - docs/message-seat.md, "The trust registry", says the same, and says
+    that the blessing keys are read from `allowed_signers` inside the
+    ledger: whoever can write or push the ledger can add a root of trust.
+    `memory run` runs an unblessed item by policy.
 
-## [0.2.0] - 2026-10-18
+## [0.2.0] - 2026-10-20
 
 ### Added
 
@@ -235,6 +214,67 @@ is its only writer and the build reads it from there.
 
 ### Changed
 
+- **The seat agent's launchd label is `dev.sessionkit.mail.seat-agent.<address>`**
+  in the template `message seat agent --template` prints. Every launchd label
+  the kit ships is `dev.sessionkit.<package>.<job>`; mail's package is `mail`.
+  - **Upgrading:** a job rendered from the old template still runs under the
+    old label, `com.failmode.seat-agent.<address>`. Boot it out
+    (`launchctl bootout gui/$(id -u)/<old label>`) and remove its plist, then
+    render the new template, `plutil -lint` it and bootstrap it.
+- **The operator block is read from `~/.sessionkit/tools/settings/session.json`**,
+  the `session` tool's folder in the kit's home, where sessiontools writes
+  it. Its drop-ins (`session.d/`) and template are read from the same
+  folder. Nothing is read from `~/.settings/session/` any more, and nothing
+  there is used as a fallback. sessionmail now requires `sessiontools>=0.1.0`.
+  - **Upgrading:** move the files in `~/.settings/session/` to
+    `~/.sessionkit/tools/settings/` first. Until you do, no operator is
+    configured: the operator defaults to your account, which privileges no
+    seat, so every privileged verb refuses and names the new file.
+- **The file drop is the default carrier.** With no `sendmail` key and no
+  `SESSIONMAIL_SENDMAIL`, `message send` writes into this host's maildirs
+  and runs no sendmail. postfix is opt-in: the `sendmail` key (or the
+  variable) names its `sendmail` by an absolute path. Any value other than
+  exactly `drop` or an absolute path refuses the send by name, exit 3,
+  nothing sent. The postfix maps are written only when the carrier is a
+  mail server.
+  - **Upgrading a postfix host:** write `"sendmail": "/usr/sbin/sendmail"`
+    in `~/.sessionkit/mail/settings/mail.json` first. Without it, every
+    send is delivered locally and mail to other hosts is refused.
+- **mail's settings are keys in `mail.json`**, read whatever the
+  environment, so a launchd job needs nothing copied into its plist:
+  `sendmail`, `root`, `host`, `magicdns_suffix`, `notmuch.command`,
+  `notmuch.timeout`, `notmuch.profile`, `postfix.generator`,
+  `postfix.relay_domain` and `postfix.origin`. Each has one variable;
+  when it is set and not empty, it wins over every layer. They are read
+  from the template and host layers only.
+- **notmuch: sessionmail reads its own profile, never yours.** In host mode
+  every notmuch call names the `sessionkit` profile
+  (`$XDG_CONFIG_HOME/notmuch/sessionkit/config`; `notmuch.profile` names
+  another) with `--config`, and drops `NOTMUCH_CONFIG`, `NOTMUCH_DATABASE`
+  and `NOTMUCH_PROFILE` from notmuch's environment. `~/.notmuch-config` is
+  never read or written. With no profile, a notmuch call refuses by name
+  (the send's parent lookup falls back to its walk). Store mode is
+  unchanged.
+  - **Upgrading a host that already has an index:** before upgrading,
+    COPY your existing notmuch config to the profile, byte for byte,
+    making the profile's folder first:
+    `d="${XDG_CONFIG_HOME:-$HOME/.config}/notmuch/sessionkit"; mkdir -p "$d" && cp ~/.notmuch-config "$d/config"`.
+    The database stays where it is. A profile written by hand with only
+    `database.path` keeps the count but loses the header fields, the
+    named queries and `new.ignore`. `message setup` adopts no database.
+- **`message setup` is listed on `message --help`**, under that name. It
+  is not an MCP tool: it changes this host.
+  - It writes the notmuch profile from a packaged template when there is
+    none and no database is in the mail root, and it links the post-new
+    hook into that profile's hook folder only. With no profile, the hook
+    step is BLOCKED and nothing is linked anywhere.
+  - On a postfix host with no maps it writes none unless `--write-maps`
+    asks. It never edits postfix's configuration.
+  - It writes no settings key. The carrier step names the carrier and
+    where its value came from; each MANUAL line names the key to write.
+- `message --help` drops its own `-h, --help` row and the blank line
+  before `Options:`, so every verb, `mcp` last, stays in its first 20
+  lines. Each verb's page keeps its `-h` row, and `-h` still answers.
 - **Requires Python 3.11 to 3.14.** Python 3.15 is not yet supported.
 - **A script-mail's subject never executes** (SM-771, the memory spec).
   When a wake item's body is a placeholder (empty, whitespace or `x`),
@@ -340,6 +380,31 @@ is its only writer and the build reads it from there.
 
 ### Fixed
 
+- **`message setup` plans the operator's box from the operator `sessionkit
+  setup` wrote**, in `~/.sessionkit/tools/settings/session.d/`, and never
+  from an old `~/.settings/session/session.json` that names someone else.
+- **docs/settings.md says which home `~` is for each key.** It said
+  `$HOME` for every key but `registry` and `alert_runner`. In fact every key
+  read from the template and the host (`sendmail`, `root`, `host`,
+  `magicdns_suffix`, `notmuch`, `postfix`, `registry`, `alert_runner`) is
+  read under the account's home in the password database, so a `mail.json`
+  under another `$HOME` is not read for them. `hooks`, `monitor`,
+  `pager_required` and `capture` are read under `$HOME`.
+- **A user's global git config can no longer refuse sessionmail's own
+  commits.** `message seat init`'s registry commit and the
+  `memory init --record` commit run the repo's OWN hooks (its local
+  `core.hooksPath`, else `.git/hooks`), never a global or system
+  `core.hooksPath`, so the repo's owner can still gate them. The registry
+  commit signs with the seat key through `ssh-keygen` whatever
+  `gpg.ssh.program` the user configured, and is authored by the seat even
+  when `GIT_AUTHOR_*`/`GIT_COMMITTER_*` are set. The record commit is
+  never signed (`commit.gpgsign=false`); it is still authored by the
+  user's own git identity. Before, a global pre-commit hook or a signer
+  stopped seat birth.
+- **The test suite ignores the runner's git config.** It clears
+  `GIT_CONFIG_COUNT` and its `GIT_CONFIG_KEY_n`/`GIT_CONFIG_VALUE_n`, and
+  reads no global or system config, so a run from a shell that forces
+  commit signing, or has a refusing global hook, is no longer red.
 - **An unreadable box or folder is reported as unreadable**, not as empty
   or as a missing file.
 - **The bundled scripts run on the package's own Python** (SM-878). The

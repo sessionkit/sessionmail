@@ -18,6 +18,7 @@ and nothing reads ~/.mail, ~/.sessionmail or notmuch.
 
 from __future__ import annotations
 
+import os
 from email.parser import BytesParser
 from email.policy import default as default_policy
 
@@ -77,8 +78,11 @@ def test_host_forms_with_no_suffix_have_no_fqdn_form_and_say_so(tmp_path, capsys
     # SM-674: no MAGICDNS_SUFFIX and no tailscale (an empty
     # PATH dir, the app bundle seam pointed at nothing) never invents an FQDN
     # and never raises: the short host alone, said once on stderr.
+    # On an MTA carrier (the conftest's), whose maps need the suffix; a
+    # mail-drop host with no tailnet says nothing (test_magicdns_suffix.py).
     env = {"SESSIONMAIL_HOST": "hq", "PATH": f"{tmp_path}:/usr/bin:/bin",
-           "MAGICDNS_TAILSCALE_BUNDLE": str(tmp_path / "no-bundle")}
+           "MAGICDNS_TAILSCALE_BUNDLE": str(tmp_path / "no-bundle"),
+           "SESSIONMAIL_SENDMAIL": os.environ["SESSIONMAIL_SENDMAIL"]}
     assert host_forms(env) == ("hq",)
     assert host_forms(env) == ("hq",)
     err = capsys.readouterr().err

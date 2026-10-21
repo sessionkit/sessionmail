@@ -557,14 +557,22 @@ def below_floor(raw: bytes, h: list[str]) -> list[str]:
 def origin_of(env=None) -> str:
     """The domain postfix appends to a bare address: $SESSIONMAIL_ORIGIN, else
     the settings file's `postfix.origin`, else `postconf -xh myorigin` (PATH,
-    then POSTCONF_FALLBACK), else "" (leave bare)."""
+    then POSTCONF_FALLBACK), else "" (leave bare). Never raises.
+
+    The settings file is read only when this module is the package's. The
+    verifier loads it BY PATH, as a module with no package and on purpose
+    (`session-mail-verify`'s `load_sig`), where the file layer cannot be
+    imported: there it reads the variable, then postconf. A bundled script
+    still sees the file's value, as the variable: `_mhs.child_env` pins
+    $SESSIONMAIL_ORIGIN from the file for every child it starts."""
     env = os.environ if env is None else env
     if env.get("SESSIONMAIL_ORIGIN"):
         return env["SESSIONMAIL_ORIGIN"].strip()
-    from . import _settings              # here, not at import: `_sig` stays light
-    given = _settings.file_text("postfix.origin", env)
-    if given:
-        return given
+    if __package__:                      # loaded by path (the verifier): no file layer
+        from . import _settings          # here, not at import: `_sig` stays light
+        given = _settings.file_text("postfix.origin", env)
+        if given:
+            return given
     tool = shutil.which("postconf", path=env.get("PATH", ""))
     for cand in ([tool] if tool else []) + [c for c in POSTCONF_FALLBACK if os.access(c, os.X_OK)]:
         try:

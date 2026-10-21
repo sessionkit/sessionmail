@@ -132,6 +132,11 @@ class Maps:
     #: The domain a bare From is qualified with (`origin`); set by the
     #: sender's drop pre-flight, empty when nothing asked.
     origin: str = ""
+    #: Why the generator refused the alias print (`generator exit N: its
+    #: last stderr line`), set by `prepare`; empty when it printed. The
+    #: alias map is then empty, and a reader that must tell "no row" from
+    #: "no map" (the doorbell) reads this.
+    alias_refused: str = ""
 
 
 def selected(env: Mapping[str, str]) -> bool:
@@ -183,16 +188,18 @@ def origin(env: Mapping[str, str], host: str, notes: list[str] | None = None) ->
     - Else the FQDN from the ONE suffix definition (`_magicdns`), the form
       postfix writes when `myorigin = $myhostname`, and a form
       `_voice.host_forms` accepts.
-    - Else the short host, said in NOTES: the real generator refuses with
-      no suffix before the drop gets here, so only a generator that asks
-      for none (a test's fake) reaches it."""
+    - Else the short host. A host with no tailnet gets here on every send
+      (the generator's no-fqdn rows), and there the short host is right, so
+      nothing is said (`_magicdns.drop_without_tailnet`). Any other host
+      (a malformed operator suffix, or a tailscale that is there but does
+      not answer) is said in NOTES."""
     given = (env.get(ORIGIN_VAR) or "").strip() or _settings.file_text("postfix.origin", env)
     if given:
         return given
     found, _why = _magicdns.lookup(env)
     if found:
         return f"{host}.{found}"
-    if notes is not None:
+    if notes is not None and not _magicdns.drop_without_tailnet(env):
         notes.append(f"⚠  {_magicdns.UNKNOWN} - a bare From is qualified with the short "
                      f"host only (@{host})")
     return host
@@ -308,9 +315,9 @@ def prepare(env: Mapping[str, str]) -> Maps:
     if done.returncode == 0:
         maps.alias = _rows(done.stdout)
     else:
-        maps.notes.append(f"⚠  no alias map (generator exit {done.returncode}: "
-                          f"{_last(done.stderr)}) - seat mail lands in the seat's own box "
-                          "only; no session box gets its doorbell copy")
+        maps.alias_refused = f"generator exit {done.returncode}: {_last(done.stderr)}"
+        maps.notes.append(f"⚠  no alias map ({maps.alias_refused}) - seat mail lands in the "
+                          "seat's own box only; no session box gets its doorbell copy")
     return maps
 
 

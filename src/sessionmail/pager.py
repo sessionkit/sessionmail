@@ -597,6 +597,11 @@ def status(show_all: bool, quiet: bool, new_only: bool, stopped: bool) -> None:
     # A reading, like D7's line: STDERR, so stdout stays one line per
     # message, and it never changes the exit code.
     readings = status_readings(seat, session, ps=ps) if not quiet else []
+    # A mail-drop host with no tailnet: said once a run, as INFO, in place
+    # of the suffix warning `host_forms` keeps for every other host.
+    from . import _magicdns
+    if not quiet and _magicdns.drop_without_tailnet():
+        readings.append(f"suffix: none - {_magicdns.NO_TAILNET}")
 
     if not lines:
         if not quiet:
@@ -2348,10 +2353,15 @@ def _listen(box: str | None, timeout: float | None, quiet: bool,
     # this listen does NOT refuse: the birth skipped every regen, and it is
     # said here and in the banner, and the listen goes on with the maps as
     # they are. A deaf fleet cannot be told what is wrong. A success is
-    # memoised for the process, so `$me` below costs nothing more.
+    # memoised for the process, so `$me` below costs nothing more. A
+    # mail-drop host with no tailnet needs no suffix: there it is said once,
+    # here, as INFO, with no advice to act on (`drop_without_tailnet`).
     from . import _magicdns
     suffix_lines: list[str] = []
-    if birth.suffix_unknown:
+    if birth.suffix_unknown and _magicdns.drop_without_tailnet():
+        suffix_lines.append(f"  suffix     : none - {_magicdns.NO_TAILNET}")
+        _magicdns.said()
+    elif birth.suffix_unknown:
         click.echo(f"pager listen: {_magicdns.UNKNOWN}; maps NOT regenerated", err=True)
         suffix_lines.append(f"  suffix     : {_magicdns.UNKNOWN}; maps NOT regenerated - "
                             "listening on the existing maps; $me and the keeper test use "

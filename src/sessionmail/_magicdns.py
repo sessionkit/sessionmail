@@ -38,6 +38,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import shutil
 import string
 import subprocess
 import sys
@@ -63,6 +64,14 @@ FIX = "set MAGICDNS_SUFFIX, or install/start tailscale"
 
 #: What every degraded path says first, word for word (the review bar).
 UNKNOWN = "MagicDNS suffix unknown: set MAGICDNS_SUFFIX or start Tailscale"
+
+#: What a mail-drop host with no tailnet is told instead, once, as INFO: there
+#: the short host is the right answer, not a fault (`drop_without_tailnet`).
+NO_TAILNET = "no tailnet on this host, so addresses use the short host - all the mail drop needs"
+
+#: The helper's own default for the app bundle's CLI (its BUNDLE_DEFAULT);
+#: `tests/test_magicdns_suffix.py` holds the two equal.
+BUNDLE_DEFAULT = "/Applications/Tailscale.app/Contents/MacOS/Tailscale"
 
 _LABELS = re.compile(r"[a-z0-9-]+(\.[a-z0-9-]+)*")
 
@@ -149,14 +158,52 @@ def lookup(env: Mapping[str, str] | None = None) -> tuple[str | None, str]:
         return None, str(exc)
 
 
-def warn_unknown(consequence: str) -> None:
+def tailscale_present(env: Mapping[str, str] | None = None) -> bool:
+    """Whether a tailscale CLI EXISTS where the helper looks (its step 2):
+    `tailscale` on ENV's PATH, else the app bundle's CLI at
+    `$MAGICDNS_TAILSCALE_BUNDLE` (default BUNDLE_DEFAULT; empty: not looked
+    for). Presence only: whether it answers is the helper's question."""
+    env = os.environ if env is None else env
+    if shutil.which("tailscale", path=env.get("PATH", os.defpath)):
+        return True
+    bundle = env.get("MAGICDNS_TAILSCALE_BUNDLE", BUNDLE_DEFAULT)
+    return bool(bundle) and os.path.isfile(bundle) and os.access(bundle, os.X_OK)
+
+
+def drop_without_tailnet(env: Mapping[str, str] | None = None) -> bool:
+    """True when no suffix is wanted here, so its absence is no fault: no
+    operator word (the variable, even a malformed one, or the settings file's
+    key), no tailscale CLI (`tailscale_present`), and the carrier is the mail
+    drop, which builds no maps. The short host is then the right origin.
+
+    False on every other host: a tailscale that is there but does not answer,
+    and a host whose MTA needs the suffix for its maps, keep their warnings.
+    True implies a lookup fails (no source is there to answer). It decides
+    what is SAID, never what anything resolves to."""
+    env = os.environ if env is None else env
+    if normalise(env.get(SUFFIX_VAR) or ""):
+        return False
+    from . import _settings              # here, not at import: _settings is the higher layer
+    if _settings.file_text(FILE_KEY, env) is not None:
+        return False
+    if tailscale_present(env):
+        return False
+    return _settings.carrier(env).kind == "drop"
+
+
+def warn_unknown(consequence: str, env: Mapping[str, str] | None = None) -> None:
     """Say, once per process, on stderr, that the suffix is unknown and what
     that costs here (CONSEQUENCE). A caller that has already said it in its
-    own words (the `pager listen` banner) calls `said()` instead."""
+    own words (the `pager listen` banner) calls `said()` instead. On a
+    mail-drop host with no tailnet (`drop_without_tailnet(ENV)`) it says
+    nothing: the short host is right there, and the banner and `pager status`
+    say so once, as INFO."""
     global _said
     if _said:
         return
     _said = True
+    if drop_without_tailnet(env):
+        return
     print(f"sessionmail: {UNKNOWN} - {consequence} (`{HELPER} --trace` shows where it looked)",
           file=sys.stderr)
 
@@ -175,5 +222,6 @@ def forget() -> None:
     _said = False
 
 
-__all__ = ["FIX", "HELPER", "SUFFIX_VAR", "UNKNOWN", "SuffixUnknown", "forget", "lookup",
-           "normalise", "said", "suffix", "warn_unknown"]
+__all__ = ["BUNDLE_DEFAULT", "FIX", "HELPER", "NO_TAILNET", "SUFFIX_VAR", "UNKNOWN",
+           "SuffixUnknown", "drop_without_tailnet", "forget", "lookup", "normalise", "said",
+           "suffix", "tailscale_present", "warn_unknown"]

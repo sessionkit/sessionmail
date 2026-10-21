@@ -379,20 +379,23 @@ TRUST_ARGV = ["--trust", "--quiet"] + (["--require-blessing"] if REQUIRE_BLESSIN
 TRUST_RUNS = {0: "FULL"} if REQUIRE_BLESSING else {0: "FULL", 4: "UNBLESSED"}
 # `memory`'s exit for "an item refused" (memory.py's run page); outranks 2.
 TRUST_REFUSED_EXIT = 3
-# The banner when there is no registry. Its first line is the headline; the
-# lines under it say what the registry is, that nothing here makes one, and
-# where the page that says how to build one by hand lives. Every renderer
-# keeps the lines: `--list` comments each one out, the header prints them
-# under its rule, `--json` carries them in trust_banner.
+# The banner when no trust ledger is set. Its first line is the headline; the
+# lines under it say what the trust ledger is, that sessionmail does not
+# create one, that memory run reads only SESSION_REGISTRY or the "registry"
+# key and never falls back to a default (by design), and where the page that
+# says how to build one by hand lives. Every renderer keeps the lines:
+# `--list` comments each one out, the header prints them under its rule,
+# `--json` carries them in trust_banner.
 NO_REGISTRY = "\n".join([
     "memory run: NO TRUST REGISTRY (set SESSION_REGISTRY, or \"registry\" in "
     "~/.sessionkit/mail/settings/mail.json): --trust cannot be run, so every "
     "mail item is REFUSED. Fix the environment, not the mail.",
-    "  Point it at a registry: a git work tree holding a committed allowed_signers file",
+    "  Point it at a trust ledger: a git work tree holding a committed allowed_signers file",
     "  with at least one seeded `<sid>@session namespaces=\"...\" <public key>` line, and a",
     "  certs/ directory (one <sid>.cert per signer).",
-    "  sessionmail does not create a registry today: `message seat init --registry DIR`",
-    "  only adds a seat to a registry that is already seeded.",
+    "  sessionmail does not create a ledger, and memory run reads only SESSION_REGISTRY",
+    "  or the \"registry\" settings key, by design: there is no default ledger to fall back to.",
+    "  `message seat init --registry DIR` only adds a seat to a ledger that is already seeded.",
     "  How to build one by hand: docs/message-seat.md, \"The trust registry\".",
 ])
 

@@ -9,6 +9,8 @@ through `message`, which keeps the package at three commands:
 
     message seat init --registry DIR ADDRESS     mint the seat's key (was scripts/seat-init)
     message seat agent ADDRESS [SOCKET]          run its agent (was scripts/seat-agent/seat-agent)
+    message seat agent --install ADDRESS [SOCKET]   render and load the LaunchAgent
+    message seat agent --uninstall ADDRESS           unload it and remove its plist
     message seat agent --template                print the LaunchAgent template
 
 The `seat` noun is hidden from `message --help` and from the MCP tools; `message
@@ -48,8 +50,14 @@ seat --help` answers when typed.
 
 ## The template
 
+`message seat agent --install ADDRESS [SOCKET]` renders it, writes it into
+`~/Library/LaunchAgents`, loads it with `launchctl bootstrap`, and checks that the agent
+answers. `--uninstall ADDRESS` boots it out and removes the plist. Their contract
+(output, exits, the `Capability: install` marker) is in
+[`docs/message-seat.md`](../../docs/message-seat.md).
+
 `message seat agent --template` prints it, and nothing else: it never renders it, loads
-it or runs launchctl. Render it by replacing each `@PLACEHOLDER@`, then lint it:
+it or runs launchctl. To render it by hand, replace each `@PLACEHOLDER@`, then lint it:
 
     message seat agent --template |
       sed -e 's|@ADDRESS@|bot.alice|g' -e "s|@MESSAGE@|$(command -v message)|g" \
@@ -68,9 +76,9 @@ ProgramArguments renders to `message seat agent ADDRESS SOCKET`. The placeholder
 On a host that runs `message` from an editable checkout, merging there changes the
 seat's agent at its next start.
 
-**Installing it is not done here.** Writing the plist into `~/Library/LaunchAgents` and
-running `launchctl bootstrap` is the host operator's act, by hand. No
-test and no make target in this repo does either.
+**No test and no make target loads a job on the real launchd.** The suite runs
+`--install` against a fake `launchctl` (`SESSIONMAIL_LAUNCHCTL`). A live install is the
+host operator's act: `message seat agent --install`, or the hand render above.
 
 ## The adapter's env (an example; the adapter owns it)
 

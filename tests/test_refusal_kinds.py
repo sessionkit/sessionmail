@@ -22,9 +22,10 @@ PACKAGE = Path(_sender.__file__).parent
 
 #: Modules whose `Refused` is their OWN exception, not the sender's. seat_init.py is
 #: SM-590's stdlib-only mint script, moved verbatim into the package by SM-715 do-001;
-#: its refusals are exit 2 with "Nothing was written", outside the send door's
+#: _launchd.py loads and unloads the seat agent's LaunchAgent, seat init's sibling.
+#: Their refusals are exit 2 with "Nothing was written", outside the send door's
 #: vocabulary. Named, never inferred: the pin below proves each still is its own.
-OWN_REFUSED = ("seat_init.py",)
+OWN_REFUSED = ("seat_init.py", "_launchd.py")
 
 
 def refusal_sites() -> list[tuple[str, int, ast.Call]]:

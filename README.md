@@ -85,16 +85,6 @@ message setup                    # again: it links the notmuch hook
 - **Nothing runs `notmuch new` for you.** `message mark` and `memory`
   read an empty index until something does: launchd, cron, or by hand.
 
-**Status.** `sessionmail` 0.0.1 on PyPI is a name reservation, not this
-code - a 1.3 KB placeholder with no dependencies.
-Until 0.2.0 ships, install from source instead of the `uv tool install
-sessionmail` line above:
-
-```sh
-uv tool install git+https://github.com/sessionkit/sessionmail   # from the repo
-make install                                                    # from a clone
-```
-
 `message`, `pager` and `memory` all run; the specs, in the git repository
 (the release archive leaves them out), say what each verb is meant to do
 and `make progress` counts how much of it is built.

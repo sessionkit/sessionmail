@@ -37,9 +37,11 @@ MESSAGE = Path(sys.executable).parent / "message"
 
 
 @pytest.fixture
-def bare(tmp_path):
-    """An env built from nothing, with a scratch HOME and SESSIONMAIL_HOME (launchd's shape)."""
-    return {"PATH": "/usr/bin:/bin", "HOME": str(tmp_path), "SESSIONMAIL_HOME": str(tmp_path / "sm")}
+def bare(tmp_path, launchctl_fake):
+    """An env built from nothing, with a scratch HOME and SESSIONMAIL_HOME (launchd's shape).
+    Built from nothing, it would drop the conftest's fake launchctl, so it carries it."""
+    return {"PATH": "/usr/bin:/bin", "HOME": str(tmp_path), "SESSIONMAIL_HOME": str(tmp_path / "sm"),
+            **launchctl_fake.env}
 
 
 def message(*args: str, env: dict[str, str], timeout: float = 30) -> subprocess.CompletedProcess:
@@ -75,8 +77,8 @@ def test_seat_is_on_no_page_and_no_mcp_tool():
 @pytest.mark.parametrize("argv, usage", [
     (["seat", "--help"], "Usage: message seat init|agent"),
     (["seat", "-h"], "Usage: message seat init|agent"),
-    (["seat", "agent", "--help"], "Usage: message seat agent ADDRESS [SOCKET] | --template"),
-    (["seat", "agent", "-h"], "Usage: message seat agent ADDRESS [SOCKET] | --template"),
+    (["seat", "agent", "--help"], "Usage: message seat agent ADDRESS [SOCKET] | --install ADDRESS [SOCKET] |"),
+    (["seat", "agent", "-h"], "Usage: message seat agent ADDRESS [SOCKET] | --install ADDRESS [SOCKET] |"),
     (["seat", "init", "--help"], "Usage: message seat init --registry DIR ADDRESS"),
 ])
 def test_the_hidden_pages_answer_when_typed(bare, argv, usage):

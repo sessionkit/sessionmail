@@ -196,3 +196,60 @@ def test_no_top_level_h2_means_no_fold_and_no_fold_css():
 
 def test_the_fold_css_rides_only_with_a_fold():
     assert "details.fold > summary" in render_page(FOLD_BODY)
+
+
+# ── SM-913: a newline in the body is a line break (nl2br) ───────────────────
+# Python-Markdown joins a single newline into a space, so lines written one
+# under another collapsed into one line. `nl2br` in EXTENSIONS keeps them:
+# each line ends in `<br />`. It still does not start a list straight after a
+# line (that is a separate change); here the lines only stay apart.
+
+class BreaksInside(HTMLParser):
+    """Counts `<br>` elements by the nearest enclosing pre / table / p."""
+
+    WATCHED = ("pre", "table", "p")
+
+    def __init__(self, page: str):
+        super().__init__()
+        self.open: list[str] = []
+        self.breaks = dict.fromkeys(self.WATCHED, 0)
+        self.feed(page)
+
+    def handle_starttag(self, tag, attrs):
+        if tag == "br":
+            if self.open:
+                self.breaks[self.open[-1]] += 1
+        elif tag in self.WATCHED:
+            self.open.append(tag)
+
+    def handle_startendtag(self, tag, attrs):
+        self.handle_starttag(tag, attrs)
+
+    def handle_endtag(self, tag):
+        if tag in self.WATCHED and self.open and self.open[-1] == tag:
+            self.open.pop()
+
+
+NL2BR_BODY = "**Fixes, cheapest first**\n1. one\n2. two\n"
+
+
+def test_nl2br_is_in_the_extension_set():
+    assert "nl2br" in EXTENSIONS
+
+
+def test_lines_under_each_other_keep_their_breaks():
+    body = render_page(NL2BR_BODY).split("<body>", 1)[1]
+    assert ("<p><strong>Fixes, cheapest first</strong><br />\n"
+            "1. one<br />\n2. two</p>") in body
+    assert BreaksInside(body).breaks["p"] == 2
+
+
+def test_a_fence_and_a_table_carry_no_break():
+    text = (NL2BR_BODY + "\n```sh\nfirst\n\nsecond\nthird\n```\n\n"
+            "| h | i |\n|---|---|\n| x | y |\n| z | w |\n")
+    page = render_page(text)
+    seen = BreaksInside(page)
+    assert seen.breaks["p"] == 2                       # nl2br is live on this page
+    assert seen.breaks["pre"] == 0 and seen.breaks["table"] == 0
+    assert "<code class=\"language-sh\">first\n\nsecond\nthird</code>" in page
+    assert len(Elements(page).named("td")) == 4

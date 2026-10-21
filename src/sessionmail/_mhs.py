@@ -58,6 +58,11 @@ ORACLE_VAR = "SESSIONMAIL_MHS_ORACLE"
 #: with PYTHON, so the verifier's `python3 -I` leaves it alone.
 PYTHON_VAR = "SESSIONMAIL_PYTHON"
 
+#: The origin a v2 signature canonicalises a bare address with, and the
+#: settings key that names it (`_sig.origin_of`). `child_env` pins the
+#: variable from the key, so a bundled verifier reads what the signer read.
+ORIGIN_VAR, ORIGIN_KEY = "SESSIONMAIL_ORIGIN", "postfix.origin"
+
 #: The verbs whose bundled `session-mail-VERB` is a Python script: these run
 #: as `[sys.executable, script]`. The rest are bash. A test checks this set
 #: against the scripts' own shebangs.
@@ -161,9 +166,22 @@ MHS_DIR = os.path.join(os.path.dirname(os.path.realpath(__file__)), "mhs")
 
 def child_env(env: dict[str, str] | None = None) -> dict[str, str]:
     """ENV (else this process's environment) plus $SESSIONMAIL_PYTHON set to
-    this interpreter: the environment every bundled script is started with."""
+    this interpreter: the environment every bundled script is started with.
+
+    When $SESSIONMAIL_ORIGIN is unset and the settings file sets
+    `postfix.origin`, the child also gets $SESSIONMAIL_ORIGIN set to that
+    value: the key's own variable, which every reader takes before the file.
+    The verifier loads `_sig` by path and cannot read the file itself, so
+    without it a mail signed in the package with the file's origin would be
+    checked against postconf's (`_sig.origin_of`), and read BAD."""
     base = os.environ if env is None else env
-    return {**base, PYTHON_VAR: sys.executable}
+    out = {**base, PYTHON_VAR: sys.executable}
+    if not base.get(ORIGIN_VAR):
+        from . import _settings          # here, not at import: `_mhs` stays light
+        given = _settings.file_text(ORIGIN_KEY, base)
+        if given:
+            out[ORIGIN_VAR] = given
+    return out
 
 
 def oracle(verb: str, env: dict[str, str] | None = None) -> list[str]:

@@ -2055,3 +2055,36 @@ def test_a_carried_verdict_says_carry_in_the_line_why_and_the_record(seat):
     assert pager.record_verdict(s, SESSION, "<w1@x.invalid>", plain, pager.LISTEN_BY)
     (rec,) = pager.verdicts_for(s, SESSION, "w1@x.invalid")
     assert "carry" not in rec and pager.verdict_of(rec).carry is False
+
+
+# ── a mail-drop host with no tailnet: the batch says nothing of a suffix ──
+
+def _no_suffix(tmp_path, monkeypatch, *, tailscale=False):
+    from test_magicdns_suffix import fake_tailscale
+    bins = tmp_path / "no-tailscale-bin"
+    bins.mkdir(exist_ok=True)
+    if tailscale:
+        fake_tailscale(bins / "tailscale", fail=True)
+    monkeypatch.setenv("PATH", f"{bins}:/usr/bin:/bin")
+    monkeypatch.delenv("MAGICDNS_SUFFIX", raising=False)
+    monkeypatch.setenv("MAGICDNS_TAILSCALE_BUNDLE", "")
+    monkeypatch.setenv("SESSIONMAIL_SENDMAIL", "drop")
+
+
+def test_batch_on_a_drop_host_with_no_tailnet_says_nothing_of_a_suffix(seat, tmp_path,
+                                                                       monkeypatch):
+    _no_suffix(tmp_path, monkeypatch)
+    r = CliRunner().invoke(cli, ["hook", "batch"], input="{}")
+    assert r.exit_code == 0
+    assert "magicdns" not in r.stderr.lower() and "magicdns" not in r.stdout.lower()
+
+
+def test_batch_on_a_drop_host_whose_tailscale_fails_still_warns_on_stderr(seat, tmp_path,
+                                                                          monkeypatch):
+    """The control: the same batch reaches the warning when tailscale is
+    there and does not answer - so the test above measures a live site."""
+    from sessionmail import _magicdns
+    _no_suffix(tmp_path, monkeypatch, tailscale=True)
+    r = CliRunner().invoke(cli, ["hook", "batch"], input="{}")
+    assert r.exit_code == 0
+    assert r.stderr.count(_magicdns.UNKNOWN) == 1

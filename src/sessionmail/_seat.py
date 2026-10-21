@@ -2388,9 +2388,21 @@ def doorbell(address: str, session: str, env: dict[str, str] | None = None
     into the session's, AND the mailbox map must resolve the session's
     address to a box - the alias half alone bounces 5.1.1.
     (True, why) / (False, "NOT COPIED: why" | "NOT DELIVERABLE: why") /
-    (None, why) when it cannot be measured."""
+    (None, why) when it cannot be measured.
+
+    The maps asked are the CARRIER's. An MTA carrier: postfix's compiled
+    maps, as above. The mail drop: the drop's own rows (`_drop_doorbell`),
+    because a drop host has no compiled maps and postfix's, where postfix is
+    installed anyway, say nothing about where the drop delivers. A refused
+    carrier delivers nothing, so it is not measured, and says why."""
     import shutil, socket
+    from . import _settings
     env = os.environ if env is None else env
+    carrier = _settings.carrier(env)
+    if carrier.kind == "drop":
+        return _drop_doorbell(address, session, env)
+    if carrier.kind == "refused":
+        return None, f"the carrier is refused: {carrier.why}"
     if not shutil.which("postconf") or not shutil.which("postmap"):
         return None, "no postconf/postmap on PATH to read the alias maps"
     alias_maps = _postfix_maps("virtual_alias_maps")
@@ -2410,6 +2422,56 @@ def doorbell(address: str, session: str, env: dict[str, str] | None = None
         return False, (f"NOT DELIVERABLE: {key} -> this box in {copied[0]}, but no mailbox line for "
                        f"{box_key} in virtual_mailbox_maps - the copy would bounce 5.1.1 (F21)")
     return True, f"{key} -> this box, in {copied[0]}; {box_key} -> {landed[1]}, in {landed[0]}"
+
+
+def _drop_doorbell(address: str, session: str, env: dict[str, str]) -> tuple[bool | None, str]:
+    """`doorbell` under the mail drop: the two maps a drop send resolves with
+    (`_drop.prepare`, the generator's print modes), read the way the drop
+    reads them (`qualify`, `expand`, `box_for`). LIVE only when the seat's
+    address expands to include the session's AND the session's address
+    resolves to its existing maildir: the two halves of F21, asked of the
+    drop. And every other address it expands to resolves too, because the
+    drop delivers a send whole or not at all. Never asks postfix, and never
+    names it."""
+    from . import _drop
+    try:
+        maps = _drop.prepare(env)
+    except _drop.NotDelivered as exc:
+        return None, f"the mail drop could not read its maps: {exc}"
+    key = _drop.qualify(address, maps.host)
+    box_key = _drop.qualify(session, maps.host) if session else None
+    if key is None or box_key is None:
+        return None, (f"the mail drop delivers on this host only, and {address!r} or the "
+                      f"session {session!r} is not an address here")
+    if maps.alias_refused:
+        return False, (f"NOT COPIED: the mail drop has no alias map ({maps.alias_refused}), "
+                       f"so it copies {key} into no session's box")
+    try:
+        finals = _drop.expand(key, maps)
+    except _drop.NotDelivered as exc:
+        return False, f"NOT DELIVERABLE: the mail drop refuses {key}: {exc}"
+    if box_key not in finals:
+        return False, (f"NOT COPIED: no row in the mail drop's alias map (the map generator's "
+                       f"--print-valias) copies {key} into this box")
+    box = _drop.box_for(box_key, maps)
+    if box is None:
+        return False, (f"NOT DELIVERABLE: {key} -> this box in the mail drop's alias map, but "
+                       f"no row in its mailbox map (the map generator's --print) delivers "
+                       f"{box_key} to an existing maildir under {maps.root} - the drop never "
+                       f"makes a box")
+    # The drop writes a send to all of its boxes or to none (`_drop.plan`),
+    # so one final with no box stops the session's copy too. A seat row's
+    # first destination is a box by the generator's rule; a plus row's base
+    # is not asked to be one.
+    missing = [final for final in dict.fromkeys(finals) if _drop.box_for(final, maps) is None]
+    if missing:
+        return False, (f"NOT DELIVERABLE: {key} -> this box in the mail drop's alias map, but "
+                       f"the drop delivers to all of a send's boxes or none, and no row in its "
+                       f"mailbox map delivers {', '.join(missing)} to an existing maildir under "
+                       f"{maps.root} - the drop never makes a box")
+    value = maps.mailbox.get(box_key) or str(box)
+    return True, (f"{key} -> this box, in the mail drop's alias map; {box_key} -> {value}, "
+                  f"in its mailbox map")
 
 
 def regen_maps(root: Path, env: dict[str, str] | None = None) -> str:

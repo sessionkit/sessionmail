@@ -3,9 +3,10 @@
 <!--
   The seat agent's LaunchAgent, a TEMPLATE. `message seat agent`
   prints this file byte for byte, given its template flag (an XML comment
-  cannot hold the flag's two hyphens). Nothing in sessionmail
-  renders it into ~/Library/LaunchAgents or bootstraps it; the live install is
-  the runbook's, and the operator's. See scripts/seat-agent/README.md.
+  cannot hold the flag's two hyphens). Given its install flag, it renders
+  it into ~/Library/LaunchAgents and loads it with launchctl bootstrap;
+  its uninstall flag boots the job out and removes the plist. See
+  scripts/seat-agent/README.md.
 
   Placeholders:
     @ADDRESS@           the seat, as seat-init minted it (desk.alice)

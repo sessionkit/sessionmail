@@ -1746,6 +1746,42 @@ def test_with_no_suffix_the_listener_still_pages(rig, tmp_path, monkeypatch):
     assert not log.exists()
 
 
+def test_on_a_drop_host_with_no_tailnet_the_listen_says_it_once_as_info(rig, tmp_path,
+                                                                       monkeypatch):
+    """The mail drop needs no suffix: no warning line, and the banner's
+    suffix line is INFO with nothing to install or set."""
+    from sessionmail import _birth, _magicdns
+    log = _no_suffix(tmp_path, monkeypatch)
+    monkeypatch.setenv("SESSIONMAIL_SENDMAIL", "drop")
+    result = run("--timeout", "0.1")
+    assert result.exit_code == EX_TIMEOUT, result.stderr
+    assert "MagicDNS suffix unknown" not in result.stderr
+    suffix = [ln for ln in result.stderr.splitlines() if ln.startswith("  suffix     :")]
+    assert suffix == [f"  suffix     : none - {_magicdns.NO_TAILNET}"]
+    for advice in ("install", "Tailscale", "MAGICDNS_SUFFIX"):
+        assert advice not in suffix[0]
+    assert f"; {_birth.DROP_REGEN}" in result.stderr               # the doorbell's clause only
+    # No regen. The drop's doorbell (SM-908) reads the drop's own maps
+    # through the generator's read-only modes, the same ones a drop send
+    # runs; any other call would be a regen.
+    from sessionmail import _drop
+    read_only = {"--capabilities", *_drop.PRINT_MODES.values()}
+    calls = log.read_text().splitlines() if log.exists() else []
+    assert all(call.split()[-1] in read_only for call in calls), calls
+    assert (rig.root / "sess-a" / "new").is_dir()
+
+
+def test_on_a_drop_host_whose_tailscale_fails_the_listen_still_warns(rig, tmp_path, monkeypatch):
+    from test_magicdns_suffix import fake_tailscale
+    _no_suffix(tmp_path, monkeypatch)
+    fake_tailscale(tmp_path / "nothing-here" / "tailscale", fail=True)
+    monkeypatch.setenv("SESSIONMAIL_SENDMAIL", "drop")
+    result = run("--timeout", "0.1")
+    assert result.exit_code == EX_TIMEOUT, result.stderr
+    assert f"pager listen: {UNKNOWN_LINE}" in result.stderr
+    assert f"  suffix     : {UNKNOWN_LINE} - listening on the existing maps" in result.stderr
+
+
 def test_with_a_suffix_the_birth_listen_still_regenerates(rig, tmp_path, monkeypatch):
     """The control: the same birth with MAGICDNS_SUFFIX set runs the generator
     and says nothing of an unknown suffix."""
