@@ -314,7 +314,7 @@ mail_ext_map() {
 # THREE live spellings of ONE concept, plus a FOURTH inside a comment in
 # the retired `wait` verb.
 #
-# ⚠ That count is MEASURED (grep, 2030-08-24), not carried over from notes.
+# ⚠ That count is MEASURED (grep, 2030-06-09), not carried over from notes.
 # This line read "two spellings of ONE concept today" until a review grepped
 # it, though three documents agreed on "two". Three documents agreeing is ONE
 # unchecked claim with three copies; it is not a measurement. Re-grep before you quote this number.

@@ -150,7 +150,7 @@ def sent(body: bytes = BODY, page=PAGE, mid="<honest-alt@sm823.invalid>") -> byt
     """What an honest send writes: the sender's own `build`, unchanged."""
     req = _sender.Request(to="bob@sm823.invalid", from_="alice@sm823.invalid",
                           subject="SM-823 relay")
-    return _sender.build(req, body, host="sm823.invalid", date="Wed, 02 Jan 2030 11:00:00 +0000",
+    return _sender.build(req, body, host="sm823.invalid", date="Sun, 08 Dec 2030 11:00:00 +0000",
                          message_id=mid, references=[], session="", signature=None, page=page,
                          boundary=BOUNDARY if page else "")
 
@@ -415,7 +415,9 @@ def test_an_honest_crlf_mail_verifies(rig, honest, py):
 #: Re-pinned at SM-855's merge of origin/master 88a6e10: SM-862 re-minted the 13 signed
 #: controls (sm822 x7, sm823 x6) and SM-855 fix-005 moved the Dates of 24 unsigned files
 #: (18 mua, 6 sm819) to synthetic values; the sets are disjoint. Re-pinned by SM-869: javamail-folded's boundary epoch.
-HONEST_SHA256 = "394382a3f2567a386d11922dca9862705a1a6023d519e625e54c50b55cdb6dae"
+#: Re-pinned by SM-917 (two-Sunday rule): the 13 signed controls re-minted at Sun 08 Dec 2030, and
+#: the 24 unsigned files' Dates moved from a January weekday to Sun 08 Dec 2030 (clocks kept).
+HONEST_SHA256 = "8726065b373284569909cc3bda2fcb65ff35cb6fe174223bf83952726f234aaf"
 
 
 def honest_files() -> list:

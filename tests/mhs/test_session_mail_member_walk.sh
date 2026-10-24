@@ -170,7 +170,7 @@ def build(variant):
                 "headers": {"Subject": subject,
                             "From": "%s <%s@%s>" % (agent, agent, host),
                             "To": to,
-                            "Date": "Tue, 01 Jan 2030 12:00:00 +0000"},
+                            "Date": "Sun, 09 Jun 2030 12:00:00 +0000"},
                 "body": [{"id": 1, "content-type": "text/plain", "content": text}]}
     def node(subject, local, children=(), **kw):
         return [msg(subject, local, **kw), list(children)]

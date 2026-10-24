@@ -248,7 +248,7 @@ def live_sessions() -> set[str]:
     """The sessions this host counts live: a harness sidecar
     (`sessiontools.sessions`) whose pid is alive - `session list`'s rule,
     which the generator applies itself, from the same sidecars and `ps`
-    (`live_sessions_json`, since master 2030-09-30). Its procStart check is
+    (`live_sessions_json`, since master 2030-12-08). Its procStart check is
     not repeated here: a recycled pid can at worst name one extra subscriber
     in a listing, and routes nothing. `sessiontools` also skips a sidecar
     with no `status`/`updatedAt`, which the generator does not need; every

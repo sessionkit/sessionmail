@@ -377,6 +377,28 @@ KEYS: dict[str, Key] = {k.name: k for k in (
     Key("postfix.generator", "SESSIONMAIL_VMAILBOX_GEN"),
     Key("postfix.relay_domain", "SESSIONMAIL_RELAY_DOMAIN", "relay.home"),
     Key("postfix.origin", "SESSIONMAIL_ORIGIN"),
+    # The host-to-host pull (`python -m sessionmail._puller`). No row names a
+    # private value: a required key has no default, and `_puller.config`
+    # refuses, naming each one that is unset.
+    Key("pull.imap_host", "SESSIONMAIL_PULL_IMAP_HOST"),
+    Key("pull.imap_port", "SESSIONMAIL_PULL_IMAP_PORT", 993),
+    Key("pull.login", "SESSIONMAIL_PULL_LOGIN"),
+    Key("pull.secret_command", "SESSIONMAIL_PULL_SECRET_COMMAND"),
+    Key("pull.relay_domain", "SESSIONMAIL_PULL_RELAY_DOMAIN"),
+    Key("pull.listener", "SESSIONMAIL_PULL_LISTENER"),
+    Key("pull.vmailbox", "SESSIONMAIL_PULL_VMAILBOX"),
+    Key("pull.boxes_file", "SESSIONMAIL_PULL_BOXES_FILE", "~/.sessionkit/mail/settings/pull.boxes"),
+    Key("pull.state_dir", "SESSIONMAIL_PULL_STATE_DIR", "~/.sessionmail/puller"),
+    Key("pull.local_domain", "SESSIONMAIL_PULL_LOCAL_DOMAIN"),
+    Key("pull.own_ips", "SESSIONMAIL_PULL_OWN_IPS"),
+    Key("pull.unsorted_box", "SESSIONMAIL_PULL_UNSORTED_BOX"),
+    Key("pull.audit_box", "SESSIONMAIL_PULL_AUDIT_BOX"),
+    Key("pull.audit_to", "SESSIONMAIL_PULL_AUDIT_TO"),
+    Key("pull.audit_sendmail", "SESSIONMAIL_PULL_AUDIT_SENDMAIL", "/usr/sbin/sendmail"),
+    Key("pull.label", "SESSIONMAIL_PULL_LABEL", "dev.sessionkit.mail.puller"),
+    Key("pull.backfill_seconds", "SESSIONMAIL_PULL_BACKFILL_SECONDS", 86400),
+    Key("pull.reissue_seconds", "SESSIONMAIL_PULL_REISSUE_SECONDS", 300),
+    Key("pull.login_gate", "SESSIONMAIL_PULL_LOGIN_GATE", 4),
 )}
 
 #: Where a value came from: `Setting.source`.

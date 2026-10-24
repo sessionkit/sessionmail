@@ -9,6 +9,7 @@ so it runs from a shell. The kit's installer calls it by its argv.
 message setup --dry-run              # print the plan; change nothing
 message setup --box NAME [--box ..]  # apply it, making box NAME too
 message setup --write-maps           # on a postfix host with no maps: write them
+message setup --pull                 # also install the mail puller's LaunchAgent
 ```
 
 - **It prints first.** The whole plan is printed before anything is
@@ -71,6 +72,15 @@ message setup --write-maps           # on a postfix host with no maps: write the
   a `MANUAL` line naming the key to write.
 - **The MagicDNS suffix**, on a postfix host only: a `MANUAL` line, naming
   the `magicdns_suffix` key, when none is found.
+- **The mail puller**, with `--pull` only (`pull-agent`, the last step). It
+  installs the LaunchAgent that pulls a mail host's boxes down into this
+  host's postfix (macOS only). With the pull config incomplete, the plan is
+  refused (exit 2) before any step is read, naming each missing key and its
+  variable. The step writes the plist, lints it with `plutil -lint`, boots
+  out the old job and bootstraps the new one. A second run on an unchanged
+  host reports it `DONE` and writes nothing. It never replaces a job that
+  is not a sessionmail puller. Without `--pull`, setup has no pull step and
+  never reads the pull config. More: [the pull][pull].
 
 ## What it does not do
 
@@ -87,9 +97,12 @@ message setup --write-maps           # on a postfix host with no maps: write the
   something runs it (launchd, cron, or by hand), `message mark` and
   `memory` read an empty index.
 - It never makes a session box, and it never touches another host.
+- It does not install the puller unless you pass `--pull`, and it never
+  boots out a puller job it did not write.
 
 [file-drop]: file-drop.md
 [notmuch-settings]: notmuch-settings.md
 [post-new-hook]: notmuch-settings.md#the-post-new-hook
 [postfix-configuration]: postfix-configuration.md
+[pull]: pull.md
 [settings]: settings.md

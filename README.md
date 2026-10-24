@@ -159,7 +159,8 @@ Everything else is in `docs/`, one subject per file:
 - [Gating on `message verify --json`][verify-json-verdict]: the verdict as
   one JSON object.
 - Delivery: [where mail comes from][mail-delivery-paths], [postfix
-  configuration][postfix-configuration], [the file drop][file-drop].
+  configuration][postfix-configuration], [the file drop][file-drop],
+  [pulling a mail host's boxes][pull].
 - [Configuration][configuration]: the files you set up, by component;
   [settings][settings], the keys of `mail.json`.
 - Index: [notmuch][], [notmuch settings][notmuch-settings], [the post-new
@@ -181,6 +182,7 @@ Everything else is in `docs/`, one subject per file:
 [configuration]: docs/configuration.md
 [settings]: docs/settings.md
 [file-drop]: docs/file-drop.md
+[pull]: docs/pull.md
 [notmuch]: docs/notmuch.md
 [notmuch-settings]: docs/notmuch-settings.md
 [post-new-hook]: docs/notmuch-settings.md#the-post-new-hook

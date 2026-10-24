@@ -45,14 +45,14 @@ RUPERT = f"rupert@{HOST}"
 KEEPER = f"heard+airpods@{HOST}"
 
 #: One ride-along stamp, and later ones.
-T0 = "2030-01-01T12:00:00+00:00"
-T1 = "2030-01-01T12:01:00+00:00"
-T2 = "2030-01-01T12:02:00+00:00"
+T0 = "2030-06-09T12:00:00+00:00"
+T1 = "2030-06-09T12:01:00+00:00"
+T2 = "2030-06-09T12:02:00+00:00"
 
 
 def turn(mid: str, *, speaker: str = JUDY, rule: str | None = None, sender: str = KEEPER,
-         start: str | None = "2030-01-01T11:59:52+00:00",
-         date: str | None = "Tue, 01 Jan 2030 12:00:00 +0000",
+         start: str | None = "2030-06-09T11:59:52+00:00",
+         date: str | None = "Sun, 09 Jun 2030 12:00:00 +0000",
          words: str | None = None, prefixed: bool = False, kind: bool = True):
     """A FINISHED turn as the keeper mails it (the spec's headers, as
     test_genie_finished_turn.turn writes them), parsed."""
@@ -86,8 +86,8 @@ def latest(box, events, session=EVE):
 def test_replying_to_the_latest_turn_heard_not_the_latest_call():
     """Spec: GIVEN turn T1 called eve, and a later turn T2, which called only
     ivan, was also given to Eve's session; THEN `In-Reply-To` is T2."""
-    t1 = turn("t1@hq", rule=f"eve@{HOST}=eve", start="2030-01-01T11:59:00+00:00")
-    t2 = turn("t2@hq", rule=f"ivan@{HOST}=ivan", start="2030-01-01T12:01:00+00:00")
+    t1 = turn("t1@hq", rule=f"eve@{HOST}=eve", start="2030-06-09T11:59:00+00:00")
+    t2 = turn("t2@hq", rule=f"ivan@{HOST}=ivan", start="2030-06-09T12:01:00+00:00")
     heard = _say.latest_heard([t1, t2], [mark("t1@hq", T0), mark("t2@hq", T1)], EVE, ENV, signed=KEEPER_SIGNED)
     assert heard is not None
     assert heard.turn.message_id == "t2@hq"
@@ -98,8 +98,8 @@ def test_replying_to_the_latest_turn_heard_not_the_latest_call():
 def test_latest_is_by_when_given_not_by_when_spoken():
     """N9's "latest heard" is the turn GIVEN most recently: an older turn
     given later (a catch-up) is the one replied to."""
-    old = turn("old@hq", start="2030-01-01T10:50:00+00:00")
-    new = turn("new@hq", start="2030-01-01T11:50:00+00:00")
+    old = turn("old@hq", start="2030-06-09T10:50:00+00:00")
+    new = turn("new@hq", start="2030-06-09T11:50:00+00:00")
     assert latest([old, new], [mark("new@hq", T0), mark("old@hq", T1)]) == "old@hq"
 
 
@@ -112,23 +112,23 @@ def test_nothing_heard_means_no_in_reply_to():
 
 
 def test_a_tie_in_one_ride_along_goes_to_the_later_ears_start():
-    early = turn("early@hq", start="2030-01-01T11:59:00+00:00",
-                 date="Tue, 01 Jan 2030 12:10:00 +0000")      # a later Date: loses to Start
-    late = turn("late@hq", start="2030-01-01T11:59:30+00:00",
-                date="Tue, 01 Jan 2030 12:00:00 +0000")
+    early = turn("early@hq", start="2030-06-09T11:59:00+00:00",
+                 date="Sun, 09 Jun 2030 12:10:00 +0000")      # a later Date: loses to Start
+    late = turn("late@hq", start="2030-06-09T11:59:30+00:00",
+                date="Sun, 09 Jun 2030 12:00:00 +0000")
     events = [mark("late@hq", T0), mark("early@hq", T0)]       # the file order favours early
     assert latest([early, late], events) == "late@hq"
 
 
 def test_a_tie_with_the_same_start_goes_to_the_later_date():
-    a = turn("a@hq", date="Tue, 01 Jan 2030 12:00:05 +0000")
-    b = turn("b@hq", date="Tue, 01 Jan 2030 12:00:01 +0000")
+    a = turn("a@hq", date="Sun, 09 Jun 2030 12:00:05 +0000")
+    b = turn("b@hq", date="Sun, 09 Jun 2030 12:00:01 +0000")
     assert latest([a, b], [mark("a@hq", T0), mark("b@hq", T0)]) == "a@hq"
     assert latest([a, b], [mark("b@hq", T0), mark("a@hq", T0)]) == "a@hq"
 
 
 def test_a_turn_with_no_ears_start_loses_the_tie():
-    bare = turn("bare@hq", start=None, date="Tue, 01 Jan 2030 12:50:00 +0000")
+    bare = turn("bare@hq", start=None, date="Sun, 09 Jun 2030 12:50:00 +0000")
     timed = turn("timed@hq")
     assert latest([bare, timed], [mark("bare@hq", T0), mark("timed@hq", T0)]) == "timed@hq"
 
@@ -184,8 +184,8 @@ def test_an_unverified_turn_of_the_operators_holds_nothing():
 
 def test_the_x_spelling_is_read_too():
     """3.22's reader: the keeper as built writes `X-Ears-*` (D16)."""
-    early = turn("early@hq", prefixed=True, start="2030-01-01T11:59:00+00:00")
-    late = turn("late@hq", prefixed=True, start="2030-01-01T11:59:30+00:00")
+    early = turn("early@hq", prefixed=True, start="2030-06-09T11:59:00+00:00")
+    late = turn("late@hq", prefixed=True, start="2030-06-09T11:59:30+00:00")
     assert latest([early, late], [mark("early@hq", T0), mark("late@hq", T0)]) == "late@hq"
 
 
@@ -225,8 +225,8 @@ def test_a_turn_of_the_ruperts_does_not_hold():
 
 
 def test_every_unread_turn_of_the_operators_is_printed_oldest_first():
-    late = turn("late@hq", start="2030-01-01T12:02:00+00:00", words="second")
-    early = turn("early@hq", start="2030-01-01T12:01:00+00:00", words="first")
+    late = turn("late@hq", start="2030-06-09T12:02:00+00:00", words="second")
+    early = turn("early@hq", start="2030-06-09T12:01:00+00:00", words="first")
     seen = turn("seen@hq", words="already heard")
     doc = turn("doc@hq", speaker=RUPERT, words="not the operator's")
     hold = _say.operator_unread([late, seen, doc, early], [mark("seen@hq")], EVE, ENV,

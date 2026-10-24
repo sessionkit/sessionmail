@@ -195,16 +195,21 @@ def test_the_not_yet_line_is_a_teller_and_moves_with_the_file(monkeypatch):
     assert old in pager.LINE_NOT_YET
 
 
-def test_the_instruction_points_at_the_seats_own_listen_line_not_bare_for_everyone():
-    """A42 (receipts F36/F38): the instruction
-    said bare `pager listen` for every seat. For a legacy `role.scope` seat
-    (no `+`) bare listens on the SESSION box - not where its mail lands - and
-    BIRTHS that box; the TM-5106 foreman followed it and ran two listeners.
-    The boot instruction already carries the right line per seat (TM-5102's
-    three forms), so the re-arm points at THAT line instead of restating it."""
+def test_the_instruction_stands_alone_and_names_bare_pager_listen():
+    """SM-891 (walk-145), REWRITTEN ON PURPOSE: this test used to assert
+    "your boot" (A42, 95d49d6, receipts F36/F38), pointing the re-arm at the
+    seat's own boot-brief line. A stranger - a kit seat, no taskmaster brief -
+    never had one, and could not act on the words as printed. The
+    instruction now names bare `pager listen`, the design SM-891 carries.
+
+    The A42 residual is ACCEPTED in SM-891: a legacy `role.scope` seat on a
+    host failing the plus-v1/subscribe gate still gets its named
+    `pager listen <box>` from its taskmaster kick brief, which outranks
+    generic advice. The ratified background clause (specs/pager/spec.md
+    "The arm instruction has one source") stays."""
     text = _arm.instruction()
-    assert "your boot" in text, text
-    assert "line" in text, text
+    assert "boot instruction" not in text and "your boot" not in text, text
+    assert text.startswith("re-arm with `pager listen`,"), text
     assert "run_in_background: true" in text and "never a trailing" in text, text
 
 

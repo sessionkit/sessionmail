@@ -275,7 +275,7 @@ def test_a_map_dir_it_cannot_make_names_the_setup_step_and_its_command_runs(
 # Hermetic like the rest: `--print-valias` writes nothing, the live sessions
 # are sidecars under tmp_path (SESSION_SIDECAR_DIR) beside a fake `ps` on PATH
 # answering from a fixture, and SESSIONMAIL_HOME is under tmp_path. A fake
-# `session` is on PATH too, and it FAILS and leaves a mark: since 2030-09-30
+# `session` is on PATH too, and it FAILS and leaves a mark: since 2030-12-08
 # the generator must not need the session package at all.
 
 FAKE_PS = """#!/bin/sh
@@ -293,7 +293,7 @@ exit 1
 """
 
 #: procStart as Claude Code writes it (UTC ctime), and `ps` in UTC agreeing.
-STARTED = "Tue Jan 01 12:00:00 2030"
+STARTED = "Sun Jun 09 12:00:00 2030"
 
 PLUS = "sessionmail+sm-122.foreman"
 
@@ -564,7 +564,7 @@ def test_plus_rows_never_splits_the_extension(generator: Path, tmp_path: Path) -
 SEAT_NOTE = (f"# added by ivan {time.strftime('%H:%M %a %Y-%m-%d', time.gmtime(0))} "
              "(message subscription add atomnote --seat)\n")
 # The OLD saved-query files share the folder (seats/<seat>/subscriptions/,
-# 192 on hq on Sun 2030-09-29, retired only at tasks 6.3). Their bodies
+# 192 on hq on Sun 2030-12-08, retired only at tasks 6.3). Their bodies
 # carry `query:`; read by name each would become a routing row. The shape is
 # copied from hq's seats/ivan/subscriptions/seat, measured by `head` only.
 OLD_QUERY = (
@@ -812,7 +812,7 @@ def test_an_unreadable_subscription_file_is_skipped_since_it_could_be_a_saved_qu
     old saved query, so it is counted, never written. An unreadable folder
     is counted too, and does not stop the other folders' rows."""
     # builds the dirs; one live session, since an empty `ps` is "could not
-    # look" under the sidecar reader (master 2030-09-30, merged at do-015)
+    # look" under the sidecar reader (master 2030-12-08, merged at do-015)
     done_setup = _valias(generator, tmp_path, [{"session_id": "s1", "agent": "eve"}], {}, [])
     assert done_setup.returncode == 0, done_setup.stderr
     home = tmp_path / "sessionmail"
@@ -1260,7 +1260,7 @@ def test_a_directory_that_is_not_a_maildir_does_not_resolve(
     assert "does not resolve" in done.stderr
 
 
-# ── live sessions come from the sidecars, not from `session` (2030-09-30) ──
+# ── live sessions come from the sidecars, not from `session` (2030-12-08) ──
 #
 # The session package goes. The doorbell
 # read `session list --json`; with session gone it would refuse and every NEW
@@ -1299,10 +1299,10 @@ def test_a_dead_session_has_no_line(generator: Path, tmp_path: Path) -> None:
 
 @needs_jq
 @pytest.mark.parametrize("ps_start, live", [
-    ("Tue Jan 01 12:00:00 2030", True),     # the same process
-    ("Tue Jan 01 12:00:02 2030", True),     # 2 s: session list's tolerance
-    ("Tue Jan 01 12:00:03 2030", False),    # 3 s: a reused pid, not the session
-    ("Wed Jan 02 01:00:00 2030", False),
+    ("Sun Jun 09 12:00:00 2030", True),     # the same process
+    ("Sun Jun 09 12:00:02 2030", True),     # 2 s: session list's tolerance
+    ("Sun Jun 09 12:00:03 2030", False),    # 3 s: a reused pid, not the session
+    ("Sun Dec 08 01:00:00 2030", False),
 ])
 def test_a_reused_pid_is_not_the_session(generator: Path, tmp_path: Path,
                                          ps_start: str, live: bool) -> None:
@@ -1323,10 +1323,10 @@ def test_ps_single_digit_day_padding_still_matches(generator: Path, tmp_path: Pa
     # SM-218 re-key: the seat is the persona `eve`, which owns its box, so a
     # missing row below can only mean "not live", never "withheld".
     car = {"pid": 40000, "sessionId": "s1", "agent": "eve",
-           "procStart": "Tue Jun  4 01:02:03 2030"}
+           "procStart": "Sun Jun  9 01:02:03 2030"}
     done = _valias(generator, tmp_path,
                    [{"session_id": "s1", "agent": "eve", "raw": json.dumps(car),
-                     "ps_start": "Tue Jun  4 01:02:03 2030"}], {}, ["s1", "eve"])
+                     "ps_start": "Sun Jun  9 01:02:03 2030"}], {}, ["s1", "eve"])
     assert done.returncode == 0, done.stderr
     assert "s1@" in done.stdout
 
@@ -1528,7 +1528,7 @@ def _rows_naming(text: str, word: str, sids: list[str]) -> list[str]:
 
 def test_the_role_word_fan_out_check_can_fail() -> None:
     """The SM-218 assertion is only worth something if it catches the row
-    measured live on 2030-10-03 (and leaves a lookalike key alone)."""
+    measured live on 2030-12-08 (and leaves a lookalike key alone)."""
     live = (f"worker@{HOST}\tworker@{HOST}, w1@{HOST}, w2@{HOST}\n"
             f"worker@{FQDN}\tworker@{FQDN}, w1@{FQDN}, w2@{FQDN}\n")
     assert len(_rows_naming(live, "worker", ["w1", "w2"])) == 2

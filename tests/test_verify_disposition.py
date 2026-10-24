@@ -143,7 +143,7 @@ def bases(rig):
                           subject="SM-831 amend", supersedes=OLD)
 
     def amend(page):
-        w = _sender.build(req, BODY, host="sm831.invalid", date="Wed, 02 Jan 2030 14:00:00 +0000",
+        w = _sender.build(req, BODY, host="sm831.invalid", date="Sun, 08 Dec 2030 14:00:00 +0000",
                           message_id="<amend@sm831.invalid>", references=[], session="",
                           signature=None, page=page,
                           boundary=("=_sesh890_" + "1" * 32) if page else "")

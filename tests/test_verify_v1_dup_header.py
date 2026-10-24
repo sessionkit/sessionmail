@@ -182,7 +182,7 @@ def test_other_headers_twice_stay_good_and_unchanged(rig, py):
     base = rig.run(one, py)
     assert base.returncode == 0, base.stdout
     delivered = (b"Return-Path: <alice@example.com>\nDelivered-To: uma@example.com\n"
-                 b"Received: by a.example (Postfix)\n\tid 1; Wed, 02 Jan 2030 08:00:00 +0000\n"
+                 b"Received: by a.example (Postfix)\n\tid 1; Sun, 08 Dec 2030 08:00:00 +0000\n"
                  b"Received: from b.example by a.example\nReceived: by b.example\n")
     cases = {
         "two-cc": dup(dup(one, "Message-ID", b"Cc: a@x\n"), "Cc", b"Cc: b@x\n"),

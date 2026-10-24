@@ -130,7 +130,7 @@ def tool_use_ids(payload: Mapping[str, Any]) -> list[str]:
     """The tool calls a hook run answers: `tool_calls[].tool_use_id`, then a
     top-level `tool_use_id` (PreToolUse), the missing ones dropped; `[]`
     when there are none. The inner key is Claude Code's hooks reference,
-    "PostToolBatch input" (code.claude.com/docs/en/hooks, read 2030-10-16):
+    "PostToolBatch input" (code.claude.com/docs/en/hooks, read 2030-06-09):
     each `tool_calls` element carries `tool_name`, `tool_input`,
     `tool_use_id` and `tool_response`. Never anything else of the call:
     its input and response are not ours to log."""

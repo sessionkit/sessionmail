@@ -90,7 +90,7 @@
 #                    listen (its own regen fast-path skips this generator once
 #                    the box is routable, and the alias lines must follow the
 #                    live session list, not the box list). Was `session mail
-#                    arm`'s until that verb was retired 2030-09-14.
+#                    arm`'s until that verb was retired 2030-06-09.
 #     --valias-static FILE  the hand-kept standing-alias file folded into valias
 #                    (default: $MAIL_ROOT/.postfix/valias.static; absent = none).
 #     --subscription-box STORED  print the box a subscription file named STORED

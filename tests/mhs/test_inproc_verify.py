@@ -90,7 +90,7 @@ def header(b64, ns=NS):
 
 def mail(body="the body\n", subject="[ASKS] 10 an item", extra="", ctype=None):
     head = ("From: ivan@hq\nTo: ivan+asks@hq\nSubject: %s\n"
-            "Date: Tue, 01 Jan 2030 12:00:00 +0000\nMessage-ID: <x1@hq>\n%s" % (subject, extra))
+            "Date: Sun, 09 Jun 2030 12:00:00 +0000\nMessage-ID: <x1@hq>\n%s" % (subject, extra))
     if ctype:
         head += "MIME-Version: 1.0\nContent-Type: %s\n" % ctype
     return head + "\n" + body
@@ -159,7 +159,7 @@ def s_plus_l(b64):
 # and it never produces a weak-key or malleated Ed25519 signature. Both are
 # built here: the namespace edges with cryptography's Ed25519PrivateKey, the
 # weak keys with RFC 8032 arithmetic in python (they are forgeries: there is
-# no private key). Ported from reviews/2030-10-15T1215-optimize-002/
+# no private key). Ported from reviews/2030-12-08T1215-optimize-002/
 # ed25519_adversarial.py in the SM-668 task store.
 
 def _sstr(b):
@@ -561,8 +561,8 @@ def build_corpus(d):
                                                "Subject: [ASKS] 10 an item\nSubject: [ASKS] 99 EVIL\n", 1), "defer")
     c["sm832-to-flip-after"] = (sender.replace("To: ivan+asks@hq\n",
                                                "To: ivan+asks@hq\nTo: bob+asks@example.net\n", 1), "defer")
-    c["sm832-date-after"] = (sender.replace("Date: Tue, 01 Jan 2030 12:00:00 +0000\n",
-                                            "Date: Tue, 01 Jan 2030 12:00:00 +0000\n"
+    c["sm832-date-after"] = (sender.replace("Date: Sun, 09 Jun 2030 12:00:00 +0000\n",
+                                            "Date: Sun, 09 Jun 2030 12:00:00 +0000\n"
                                             "Date: Sun, 09 Jun 2030 12:34:56 +0000\n", 1), "defer")
     # ── namespaces ssh-keygen will not sign (review F1 of optimize-002) ──
     # Signed with cryptography, over the namespace the header names, so only
@@ -671,7 +671,7 @@ def test_the_corpus_means_what_it_says(corpus):
             assert rcs[name] == 2, name
         elif name.startswith("weak-"):
             # forgeries on weak keys: whether the reference takes them is the
-            # build's ssh-keygen's to say (both on this host did, 2030-10-15);
+            # build's ssh-keygen's to say (both on this host did, 2030-12-08);
             # the differential only asks the port to agree or defer
             continue
         elif name not in ("ed25519-s-plus-l", "non-canonical-base64-bits"):

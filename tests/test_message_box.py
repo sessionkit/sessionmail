@@ -294,7 +294,7 @@ def test_a_subscription_the_generator_refuses_is_named_nowhere(fleet, home):
     tag, a second `+`, a `+` beside a `/`, or a character postfix would not
     keep is no address. A listing that named them would promise a copy the
     map never makes - and for `+memory`, someone else reading an owner's
-    memory writes. (Review of do-005, 2030-09-29.)"""
+    memory writes. (Review of do-005, 2030-12-08.)"""
     for stored in ("ivan+memory", "ivan+MEMORY", "atomnote+", "atomnote+a+b",
                    "acmecorp--sessionmail+kaizen", "ivan+a:b"):
         subscribe(home, "seats/eve", stored)

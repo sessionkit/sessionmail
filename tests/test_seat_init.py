@@ -146,15 +146,10 @@ def test_uncommitted_allowed_signers_is_refused(git_env, registry):
     nothing_written(git_env, registry, before)
 
 
-@pytest.mark.parametrize("address", ["uma+desk", "desk.uma+x"])
-def test_a_plus_address_is_refused(git_env, registry, address):
-    before = head(registry, git_env)
-    rc, _, err = seat_init(git_env, "--registry", registry, address)
-    assert rc == EX_REFUSED and "'+'" in err and "the cert could never match" in err
-    nothing_written(git_env, registry, before)
-
-
-@pytest.mark.parametrize("address", ["Desk.uma", "../uma", "desk/uma", ".uma", "", "desk uma"])
+# A plus address (heard+airpods) is a seat address now: tests/test_seat_plus.py
+# mints one and pins what the '+' does. A malformed one is still refused, here.
+@pytest.mark.parametrize("address", ["Desk.uma", "../uma", "desk/uma", ".uma", "", "desk uma",
+                                     "uma+", "+desk", "uma++desk", "uma+desk+x", "uma+Desk"])
 def test_an_address_that_is_not_a_seat_name_is_refused(git_env, registry, address):
     before = head(registry, git_env)
     rc, _, err = seat_init(git_env, "--registry", registry, address)

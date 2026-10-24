@@ -478,7 +478,7 @@ def test_the_default_page_has_no_sender_no_subject_and_carries_the_four_things(r
     why = [g for g in groups if g.startswith("pager: wake by ")]
     groups = [g for g in groups if g not in why]
     assert why == ["pager: wake by `wake *` (env)"], why
-    # THE FOUR THINGS ARE STILL FOUR. What changed on 2030-09-17 is that
+    # THE FOUR THINGS ARE STILL FOUR. What changed on 2030-06-09 is that
     # item 2 - "how many messages are waiting" - is now said per envelope
     # recipient as well as in total, so the page is 4 lines PLUS one per
     # address (and, since D7, one per deciding rule). The items themselves,
@@ -742,7 +742,7 @@ def test_the_ride_along_line_changes_with_the_stamps_mtime(rig):
     assert "Wait rather than act." in fresh
 
     # STALE: the same stamp, its mtime pushed past the REMINDER window.
-    # (It was the busy TTL until 2030-09-17; stopped-means-idle retired
+    # (It was the busy TTL until 2030-06-09; stopped-means-idle retired
     # `_seat.busy_ttl`, and ride_along_line now reads `remind_minutes()`.
     # Same instrument - the mtime - different sentence, and it still says
     # the age it read. ttl + 600 keeps that age at 70m, as before.)
@@ -803,7 +803,7 @@ def test_a_seatless_session_gets_the_same_page_a_seated_one_gets(rig, monkeypatc
     difference in what the two runs READ. Two such differences are what
     this pins, and both are the slice's subject:
 
-    ⚠️ ONE EXCEPTION, added 2030-09-17 with the `X-Original-To` grouping,
+    ⚠️ ONE EXCEPTION, added 2030-06-09 with the `X-Original-To` grouping,
     and named rather than quietly absorbed: item 2 now carries the ROW
     RANGE of each group, and the two runs page about DIFFERENT messages
     (k1, then k2), which sit at different rows. That difference is a
@@ -860,7 +860,7 @@ def test_the_queue_the_stamps_and_the_marks_are_found_under_the_session_id(rig, 
     under = _seat.session_root("sess-a")
     assert under == _mail("sess-a")   # 3.3a: the session dir, not SESSIONMAIL_HOME
     assert (under / _seat.RIDE_DIR / _seat.QUEUE_NEW).is_dir()          # the queue
-    # The stamps. The witness was the `stopped` stamp until 2030-09-17;
+    # The stamps. The witness was the `stopped` stamp until 2030-06-09;
     # stopped-means-idle stopped writing it (idle is now Claude Code's own
     # verdict, never a stamp), so it can no longer witness WHERE a stamp
     # lands. The ride-along stamp is the one stamp still written, and it is
@@ -1030,7 +1030,7 @@ def test_another_sessions_seen_does_not_silence_this_one(rig):
     rig.box()
     rig.deliver("sess-a", "o1@example.invalid")
     rig.stopped()
-    stamp = "2030-06-22T22:34:56+10:00"
+    stamp = "2030-06-09T22:34:56+10:00"
     _seat.write_mark(rig.seat, "o1@example.invalid", "seen", "sess-b", stamp, "pager wake")
     assert run("--timeout", "3").exit_code == EX_PAGE
 
@@ -1534,7 +1534,7 @@ def test_nobody_scooped_so_it_pages_at_the_crossing_and_moves_nothing(rig):
     setting, and not before the delivery is T old (read off its mtime, the
     pager's own clock); the page moves nothing. How SOON after the crossing
     is the latency twin's: it went red under load with no product change
-    (a full-suite run of 637888d, 2030-10-20)."""
+    (a full-suite run of 637888d, 2030-12-08)."""
     rig.box()
     rig.running()
     name = rig.deliver("sess-a", "n1@example.invalid", "nobody scooped")
@@ -1688,7 +1688,7 @@ def _gen(tmp_path, monkeypatch):
 
 
 def test_a_fresh_sessions_box_is_born_by_its_first_listen_and_the_generator_runs_once(rig, tmp_path, monkeypatch):
-    """F19 (SM-70, Sat 2030-09-14): after G4 the retired arm was the
+    """F19 (SM-70, Sun 2030-06-09): after G4 the retired arm was the
     only mkdir and the only regen. The first listen births the box and mints
     the line; a re-arm on an existing box runs no generator."""
     log = _gen(tmp_path, monkeypatch)
@@ -2131,7 +2131,7 @@ def test_with_no_session_the_grace_line_names_MAIL_not_subscription_add(rig, mon
     assert "BOX is going away" not in result.stdout
 
 
-# ── do-012: two banner nits from the do-010 review (reviews/2030-09-29T1749-
+# ── do-012: two banner nits from the do-010 review (reviews/2030-12-08T1749-
 # do-010-peer-review-2.md:100-113), folded in where HEARS retires ──────
 
 def test_with_no_session_a_relative_BOX_gives_an_absolute_MAIL(rig, monkeypatch):

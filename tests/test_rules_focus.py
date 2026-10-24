@@ -52,10 +52,21 @@ ME = Me.of(session=SID, seat="ivan", host=HOST)
 JUDY = f"Judy <judy@{HOST}>"
 
 #: The evening the mode is set, and the times the tests' mails arrive.
-SET_AT = datetime(2030, 6, 12, 23, 0)
-NIGHT = datetime(2030, 6, 13, 2, 0)
-BEFORE_SEVEN = datetime(2030, 6, 13, 6, 55)
-AFTER_SEVEN = datetime(2030, 6, 13, 7, 5)
+#: The evening is a Sunday (SM-917, the two-Sunday rule). The morning after
+#: it is DERIVED from that Sunday, never written as a date: `after(7)` is
+#: 07:00 the next day, so `until 07:00` set at 23:00 still runs overnight.
+SET_AT = datetime(2030, 6, 9, 23, 0)
+MORNING_AFTER = datetime(2030, 6, 9) + timedelta(days=1)
+
+
+def after(hh: int, mm: int = 0) -> datetime:
+    """HH:MM on the morning after SET_AT, local and naive like SET_AT."""
+    return MORNING_AFTER + timedelta(hours=hh, minutes=mm)
+
+
+NIGHT = after(2)
+BEFORE_SEVEN = after(6, 55)
+AFTER_SEVEN = after(7, 5)
 
 
 def _mail(sid: str) -> Path:
@@ -225,7 +236,7 @@ def test_sleep_until_seven_and_a_direct_mail_at_seven_oh_five_wakes(roots):
 def test_at_the_end_time_exactly_the_mode_has_ended(roots):
     roots.write(roots.session_focus(), "sleep until 07:00\n")
     layers = roots.load()
-    assert judge(DIRECT, layers, ME, datetime(2030, 6, 13, 7, 0)).action == "wake"
+    assert judge(DIRECT, layers, ME, after(7)).action == "wake"
 
 
 def test_hh_mm_is_the_first_such_time_after_the_mode_was_set(roots):
@@ -233,22 +244,23 @@ def test_hh_mm_is_the_first_such_time_after_the_mode_was_set(roots):
     file was written (its mtime): set at 23:00 it runs overnight; set at
     05:00 it ends the same morning; set at 08:00 it runs to tomorrow."""
     path = roots.session_focus()
-    roots.write(path, "sleep until 07:00\n", at=datetime(2030, 6, 13, 5, 0))
-    assert roots.load().focus(BEFORE_SEVEN).until == datetime(2030, 6, 13, 7, 0).astimezone()
-    roots.write(path, "sleep until 07:00\n", at=datetime(2030, 6, 13, 8, 0))
+    roots.write(path, "sleep until 07:00\n", at=after(5))
+    assert roots.load().focus(BEFORE_SEVEN).until == after(7).astimezone()
+    roots.write(path, "sleep until 07:00\n", at=after(8))
     layers = roots.load()
-    assert layers.focus(datetime(2030, 6, 13, 23, 0)).until == \
-        datetime(2030, 6, 14, 7, 0).astimezone()
+    assert layers.focus(after(23)).until == \
+        (after(7) + timedelta(days=1)).astimezone()
     # An old file's end is long gone: the mode is not on, whatever the hour.
-    roots.write(path, "sleep until 07:00\n", at=datetime(2030, 5, 14, 23, 0))
-    assert roots.load().focus(NIGHT) is None
+    # Written on the June Sunday, read on a night in December (the other Sunday).
+    roots.write(path, "sleep until 07:00\n", at=datetime(2030, 6, 9, 23, 0))
+    assert roots.load().focus(datetime(2030, 12, 8, 2, 0)) is None
 
 
 @pytest.mark.parametrize("until, ended_at_705", [
-    ("2030-06-13T07:00", True),
-    ("2030-06-13 07:00", True),
-    ("2030-06-13T07:10", False),
-    ("2030-06-14T07:00", False),
+    (after(7).isoformat(timespec="minutes"), True),        # the `T` form
+    (after(7).isoformat(" ", timespec="minutes"), True),   # the space form
+    (after(7, 10).isoformat(timespec="minutes"), False),
+    ("2030-12-08T07:00", False),            # a later day
 ])
 def test_an_iso_end_time_is_that_moment_local_when_no_zone_is_written(
         roots, until, ended_at_705):
@@ -258,8 +270,8 @@ def test_an_iso_end_time_is_that_moment_local_when_no_zone_is_written(
 
 
 def test_an_iso_end_time_with_a_zone_is_that_instant():
-    at = datetime(2030, 6, 13, 7, 0, tzinfo=timezone.utc)
-    focus, errors = parse_focus("sleep until 2030-06-13T07:00+00:00\n", "f", SET_AT)
+    at = datetime(2030, 6, 9, 7, 0, tzinfo=timezone.utc)
+    focus, errors = parse_focus("sleep until 2030-06-09T07:00+00:00\n", "f", SET_AT)
     assert errors == ()
     assert focus.until == at
     assert focus.ended(at + timedelta(minutes=5))
@@ -352,7 +364,7 @@ def test_a_session_or_seat_focus_file_sets_the_mode(roots, where):
     layers = roots.load()
     focus = layers.focus(NIGHT)
     assert (focus.mode, focus.where, focus.source, focus.line) == ("sleep", where, str(path), 1)
-    assert focus.until == datetime(2030, 6, 13, 7, 0).astimezone()
+    assert focus.until == after(7).astimezone()
 
 
 def test_the_seat_focus_file_follows_a_seat_object_root(roots, tmp_path):
@@ -379,9 +391,9 @@ def test_fleet_wide_then_session_then_seat(roots):
     layers = roots.load()
     assert [m.where for m in layers.modes] == ["fleet", "session", "seat"]
     assert layers.focus(NIGHT).where == "fleet"
-    assert layers.focus(datetime(2030, 6, 13, 4, 0)).where == "session"
-    assert layers.focus(datetime(2030, 6, 13, 6, 0)).where == "seat"
-    assert layers.focus(datetime(2030, 6, 13, 9, 30)) is None
+    assert layers.focus(after(4)).where == "session"
+    assert layers.focus(after(6)).where == "seat"
+    assert layers.focus(after(9, 30)) is None
 
 
 def test_one_focus_layer_decides_the_rest_are_not_read():
@@ -397,7 +409,7 @@ def test_one_focus_layer_decides_the_rest_are_not_read():
     assert (got.action, got.layer) == ("wake", "built-in")
     # With the fleet's mode over, the session's is the one in effect.
     ended = Layer("focus: kith-off", fleet.rules, focus="fleet",
-                  until=datetime(2030, 6, 13, 1, 0).astimezone())
+                  until=after(1).astimezone())
     got = judge(DIRECT, [ended, session, builtin], ME, NIGHT)
     assert (got.action, got.layer) == ("ride", "focus: sleep")
 
@@ -405,7 +417,7 @@ def test_one_focus_layer_decides_the_rest_are_not_read():
 def test_an_ended_focus_layer_is_passed_over_in_the_breakthrough_pass_too():
     """An ended mode is not there at all: not even a `wake!` of its own."""
     gone = Layer("focus: odd", parse("wake! from:eve@*", "f")[0], focus="session",
-                 until=datetime(2030, 6, 13, 1, 0).astimezone())
+                 until=after(1).astimezone())
     builtin = rules.built_in()
     got = judge(mail(("From", "eve@hq"), ("X-Original-To", "atomnote")),
                 [gone, builtin], ME, NIGHT)
@@ -423,10 +435,10 @@ def test_a_layer_that_is_not_a_focus_layer_never_ends():
 
 @pytest.mark.parametrize("text, mode, until", [
     ("sleep\n", "sleep", None),
-    ("sleep until 07:00\n", "sleep", datetime(2030, 6, 13, 7, 0)),
-    ("  sleep   until   7:00  # back at seven\n", "sleep", datetime(2030, 6, 13, 7, 0)),
-    ("# set by ivan\n\nsleep until 23:30\n", "sleep", datetime(2030, 6, 12, 23, 30)),
-    ("sleep until 2030-06-15T06:00\r\n", "sleep", datetime(2030, 6, 15, 6, 0)),
+    ("sleep until 07:00\n", "sleep", after(7)),
+    ("  sleep   until   7:00  # back at seven\n", "sleep", after(7)),
+    ("# set by ivan\n\nsleep until 23:30\n", "sleep", datetime(2030, 6, 9, 23, 30)),
+    ("sleep until 2030-12-08T06:00\r\n", "sleep", datetime(2030, 12, 8, 6, 0)),
 ])
 def test_the_focus_file_form(text, mode, until):
     focus, errors = parse_focus(text, "focus", SET_AT)

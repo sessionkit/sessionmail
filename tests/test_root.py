@@ -33,7 +33,7 @@ pytestmark = pytest.mark.skipif(shutil.which("ssh-keygen") is None,
 
 BOX = "alpha"
 NS = "session-mail@example.com"
-DATE = "Tue, 01 Jan 2030 12:00:00 +0000"
+DATE = "Sun, 09 Jun 2030 12:00:00 +0000"
 
 
 # ── the fake key ─────────────────────────────────────────────────────────

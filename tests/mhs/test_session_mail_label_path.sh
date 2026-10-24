@@ -163,7 +163,7 @@ ROOTID="mhs-root@$HOSTN"
 # all three — each is written to a file the `session mail-verify` stub below
 # passes — so a hidden node means a resolver/render bug and never a
 # membership accident. (Before the signature was part of the path walk,
-# 2030-09-30, this fixture carried no files at all; test_session_mail_member_walk.sh
+# 2030-12-08, this fixture carried no files at all; test_session_mail_member_walk.sh
 # is where an UNSIGNED node is the point.)
 DAYID="convo-day@$HOSTN"
 FORK_LOWER="fork-lower@$HOSTN"
@@ -195,7 +195,7 @@ def msg(subject, local):
             "Subject": subject,
             "From": "%s <%s@%s>" % (agent, agent, host),
             "To": "%s+memory@%s" % (agent, host),
-            "Date": "Tue, 01 Jan 2030 12:00:00 +0000",
+            "Date": "Sun, 09 Jun 2030 12:00:00 +0000",
         },
         "body": [{"id": 1, "content-type": "text/plain", "content": subject}],
     }

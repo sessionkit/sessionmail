@@ -9,7 +9,7 @@ Stop hook) says the turn is over. The ruling drops stopped-means-idle's "SHALL
 NOT infer idleness from the Stop hook" (openspec/changes/idle-with-children).
 
 The two rules this file pins (the task's design note,
-designs/2030-10-14-idle-with-children-consumer.md in the store):
+designs/2030-12-08-idle-with-children-consumer.md in the store):
 
 - WAKE: for the pager, `idle with children` is IDLE, measured from the turn
   end. It pages at T = 0, and the burst window does not hold it (a held line

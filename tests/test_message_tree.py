@@ -70,7 +70,7 @@ def test_all_keeps_the_superseded_and_depth_cuts(thread):
 
 def test_dates_shows_sender_and_date(thread):
     r = run(thread, "--dates")
-    assert "root  [alpha Wed 12 Jun 09:00]" in r.output  # 1923171201 % 24 = 9
+    assert "root  [alpha Sun 09 Jun 09:00]" in r.output  # 1923171201 % 24 = 9
 
 
 def test_no_such_id_is_exit_2_and_by_index_works(thread):

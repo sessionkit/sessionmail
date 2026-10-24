@@ -109,7 +109,7 @@ def test_an_indexed_mail_marks_by_index(lagging):
 
 def test_read_by_index_finds_the_unindexed_mail(lagging):
     """Contrast: `read` walks the maildir and records its own `read` mark, so
-    it works where `mark` refuses (card log 2030-10-17, #66a: "worked after a
+    it works where `mark` refuses (card log 2030-12-08, #66a: "worked after a
     `message read`")."""
     r = message("read", "2")
     assert r.exit_code == EX_OK, r.output + r.stderr

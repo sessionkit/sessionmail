@@ -14,8 +14,10 @@ plugin's SessionStart hook births the box (design.md 2.4), and:
   birth file there (task 3.4, merged at land-prep: the launcher applies it,
   the birth reports it), and the listen that later finds the box neither
   reports it again nor regenerates a LIVE doorbell (success criterion 3);
-- on a REQUIRED seat (SM-726) the state line is the deaf check's: silence in
-  claude's grace, never an arm order at a fresh SessionStart.
+- it says the BOX LINE ONLY, never a state line, on any seat (SM-891, SK-104
+  F8): the pager monitor starts in parallel with this hook, so a state line
+  read here told a seat about to be heard "not listening", and it armed a
+  second listener. The first `hook batch` says the state instead.
 
 The doorbell is faked in-process where postfix is not the question; the
 detached child is a REAL process, so it runs a fake generator (GEN_VAR) that
@@ -156,11 +158,13 @@ def test_hook_start_is_listed_after_batch():
 
 # ── a fresh session ─────────────────────────────────────────────────────────
 
-def test_a_fresh_session_is_born_told_its_box_and_told_to_listen(rig):
+def test_a_fresh_session_is_born_and_told_its_box_only(rig):
+    """SM-891 (SK-104 F8): no state line at start - not "not listening",
+    which raced the pager monitor and armed a second listener."""
     result = start()
     assert result.exit_code == 0, result.output
     assert all((rig.box() / d).is_dir() for d in ("cur", "new", "tmp"))
-    assert said(result) == [born_line(rig), pager.LINE_NOT_LISTENING]
+    assert said(result) == [born_line(rig)]
     record = rig.wait_for_record()
     assert re.fullmatch(r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d[+-]\d\d:\d\d startup regen=detached",
                         record[0]), record
@@ -168,29 +172,36 @@ def test_a_fresh_session_is_born_told_its_box_and_told_to_listen(rig):
     assert rig.generator_runs() == 1
 
 
-def test_the_state_line_given_at_start_is_not_repeated_by_the_first_batch(rig):
-    assert pager.LINE_NOT_LISTENING in said(start())
+def test_start_records_no_said_state_so_the_first_batch_says_not_listening(rig):
+    """SM-891: start writes no said record, so a seat that nothing hears is
+    told on its first turn, by the ride-along (was: start said it and the
+    first batch stayed silent)."""
+    assert pager.LINE_NOT_LISTENING not in said(start())
     rig.wait_for_record()
+    assert not (_seat.stamp_dir(None, SID) / _seat.SAID_STAMP).exists()
     batch = CliRunner().invoke(cli, ["hook", "batch"], input="{}", prog_name="pager")
     assert batch.exit_code == 0
-    assert pager.LINE_NOT_LISTENING not in batch.stdout
+    assert pager.LINE_NOT_LISTENING in batch.stdout
 
 
-def test_a_listening_session_is_told_it_is_listening(rig):
+def test_a_listening_session_is_told_its_box_only(rig):
+    """A `compact` or `resume` with a live listener: still the box line only;
+    the first batch says "pager is listening"."""
     d = _seat.stamp_dir(None, SID)
     d.mkdir(parents=True)
     (d / _seat.LISTENING_STAMP).write_text(str(os.getpid()))
-    assert said(start())[-1] == pager.LINE_LISTENING
+    assert said(start({"source": "compact"})) == [born_line(rig)]
+    batch = CliRunner().invoke(cli, ["hook", "batch"], input="{}", prog_name="pager")
+    assert pager.LINE_LISTENING in batch.stdout
     rig.wait_for_record()
 
 
-# ── land-prep: SM-726's required seat (the deaf check) ──────────────────────
+# ── SM-726's required seat (the deaf check) is the batch hook's, not start's ─
 
 def test_a_required_seat_at_a_fresh_start_is_told_its_box_and_no_arm_order(rig, monkeypatch):
-    """SM-726 do-005, merged at land-prep: on a REQUIRED seat the state line
-    is the deaf check's, as `hook batch` gives it. At a fresh SessionStart
-    claude is not yet running for the session (or is in its grace), so it
-    says nothing: no "not listening - arm" order racing the pager monitor."""
+    """SM-726 do-005, kept by SM-891: a REQUIRED seat at a fresh SessionStart
+    hears its box line and no "not listening - arm" order racing the pager
+    monitor. (Start says no state line on any seat now.)"""
     monkeypatch.setenv(_seat.REQUIRED_VAR, "1")
     # The premise, pinned: claude is not running for this session yet. Left
     # to `ps`, a suite run from inside a claude seat finds that seat's claude
@@ -202,26 +213,29 @@ def test_a_required_seat_at_a_fresh_start_is_told_its_box_and_no_arm_order(rig, 
     rig.wait_for_record()
 
 
-def test_a_required_seat_past_its_grace_with_nothing_listening_is_told_DEAF(rig, monkeypatch):
+def test_a_required_seat_past_its_grace_is_told_DEAF_by_the_batch_not_by_start(rig, monkeypatch):
     """A `compact` or `clear` on a seat past its grace, required, nothing
-    listening and no monitor expected: the hook gives the DEAF line the
-    batch hook would, never the plain arm line."""
+    listening and no monitor expected: start says its box only; the DEAF
+    line is the batch hook's (SM-891 moved the state off start)."""
     monkeypatch.setenv(_seat.REQUIRED_VAR, "1")
     monkeypatch.setattr(_seat, "claude_for", lambda session, ps=None, **kw: 4242)
     monkeypatch.setattr(_seat, "claude_age", lambda pid: 999.0)
     monkeypatch.setattr(_seat, "monitor_expected", lambda session, ps=None, env=None, claude=None:
                         SimpleNamespace(expected=False, why="headless (-p): no monitor runs"))
-    lines = said(start({"source": "compact"}))
-    assert lines[0] == born_line(rig)
-    assert lines[1:] == [" ".join(pager.DEAF_NOT_LISTENING.replace(
-        "{why}", "headless (-p): no monitor runs").split())]
+    assert said(start({"source": "compact"})) == [born_line(rig)]
+    batch = CliRunner().invoke(cli, ["hook", "batch"], input="{}", prog_name="pager")
+    assert batch.exit_code == 0
+    lines = json.loads(batch.stdout)["hookSpecificOutput"]["additionalContext"].splitlines()
+    assert " ".join(pager.DEAF_NOT_LISTENING.replace(
+        "{why}", "headless (-p): no monitor runs").split()) in lines
     assert pager.LINE_NOT_LISTENING not in lines
     rig.wait_for_record()
 
 
-def test_a_seat_not_required_keeps_the_plain_state_line(rig, monkeypatch):
+def test_a_seat_not_required_is_told_its_box_only(rig, monkeypatch):
+    """The F8 seat (a kit seat: not required) - was the plain state line."""
     monkeypatch.setenv(_seat.REQUIRED_VAR, "0")
-    assert said(start()) == [born_line(rig), pager.LINE_NOT_LISTENING]
+    assert said(start()) == [born_line(rig)]
     rig.wait_for_record()
 
 
@@ -236,7 +250,7 @@ def test_a_compact_finds_the_box_and_a_LIVE_doorbell_runs_no_generator_and_write
     rig.rings = [LIVE]
     result = start({"source": "compact"})
     assert result.exit_code == 0
-    assert said(result) == [born_line(rig), pager.LINE_NOT_LISTENING]
+    assert said(result) == [born_line(rig)]
     time.sleep(0.3)
     assert rig.generator_runs() == 0 and not rig.record().exists()
 
@@ -391,7 +405,7 @@ def test_no_mail_root_is_never_created_by_the_hook(rig, monkeypatch):
 def test_no_postfix_to_measure_is_no_fault_and_the_birth_still_regenerates(rig):
     rig.rings = [(None, "no postconf/postmap on PATH to read the alias maps")]
     result = start()
-    assert said(result) == [born_line(rig), pager.LINE_NOT_LISTENING]
+    assert said(result) == [born_line(rig)]
     assert rig.wait_for_record()[1].startswith("generator ran in ")
 
 

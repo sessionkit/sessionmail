@@ -1,6 +1,6 @@
 """The verbs read a rules file as the LOADER does, byte for byte: SM-474 do-016 (R1).
 
-From the do-009 review (reviews/2030-10-03T0550-do-009/code-testing.md, R1, and
+From the do-009 review (reviews/2030-12-08T0550-do-009/code-testing.md, R1, and
 the do-008 review's N1): `_rule_read` used `Path.read_text`, whose universal
 newlines turn a lone CR into a line break and fold CRLF to LF. The loader
 (`rules._read`, `_lines`) decodes the bytes and splits ONLY on LF. So for a

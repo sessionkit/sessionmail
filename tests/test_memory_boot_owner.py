@@ -34,7 +34,7 @@ PKG = Path(_sig.__file__).resolve().parent
 NS = "session-mail@example.com"
 HOST = "boot.invalid"
 AGENT = "victim"
-DATE = "Sat, 05 Jan 2030 12:00:00 +0000"
+DATE = "Sun, 08 Dec 2030 12:00:00 +0000"
 OWNER = f"{AGENT} <{AGENT}@{HOST}>"
 INTRUDER = f"intruder <intruder@{HOST}>"
 

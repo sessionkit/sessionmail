@@ -269,7 +269,7 @@ def _db(tmp: Path, name: str, msgid: str) -> Path:
         (mail / "box" / leaf).mkdir(parents=True)
     (mail / "box" / "cur" / "1.M1P1.h:2,S").write_text(
         f"From: a@example.invalid\nTo: b@example.invalid\nSubject: {name}\n"
-        f"Message-ID: <{msgid}>\nDate: Tue, 01 Jan 2030 00:00:00 +0000\n\nx\n")
+        f"Message-ID: <{msgid}>\nDate: Sun, 09 Jun 2030 00:00:00 +0000\n\nx\n")
     cfg = tmp / name / "config"
     cfg.write_text(f"[database]\npath={mail}\n[new]\ntags=unread;\n")
     clean = {"HOME": str(tmp), "PATH": os.environ.get("PATH", "")}

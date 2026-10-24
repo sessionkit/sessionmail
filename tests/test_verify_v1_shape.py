@@ -132,7 +132,7 @@ def test_both_interpreters_are_really_used(tmp_path):
 # ── honest v1 mail, in the shapes the v1 senders wrote ──────────────────────
 
 FROM, TO = "ivan@example.com", "uma@example.com"
-DATE = "Wed, 02 Jan 2030 08:00:00 +0000"
+DATE = "Sun, 08 Dec 2030 08:00:00 +0000"
 MID = "<sm822@example.com>"
 BOUNDARY = "=_sesh890_0123456789abcdef0123456789abcdef"
 PLAIN = b"Content-Type: text/plain; charset=utf-8\nContent-Transfer-Encoding: 8bit\n"
@@ -172,7 +172,7 @@ def wake(rig, body: bytes, supersedes: bool) -> bytes:
     head = ("Return-Path: <ivan@nas.example>\nX-Original-To: ivan+memory@nas.example\n"
             "Delivered-To: ivan+memory@nas.example\n"
             "Received: by nas.example (Postfix, from userid 501)\n\tid 4F00A1B2C3; "
-            "Wed, 02 Jan 2030 08:00:00 +0000 (UTC)\n"
+            "Sun, 08 Dec 2030 08:00:00 +0000 (UTC)\n"
             f"From: {frm}\nTo: {to}\nDate: {date}\nSubject: {subject}\nMessage-ID: {mid}\n"
             "In-Reply-To: <wake-label@nas.example>\n"
             "References: <root@nas.example> <boot@nas.example>\n <wake-label@nas.example>\n"

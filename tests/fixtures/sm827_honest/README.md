@@ -24,3 +24,7 @@ The one known difference after SM-827 is the invalid-UTF-8 pair (`v2-single-bad-
   `run_list`) was rewritten in place to `~/.sessionkit/mail/settings/mail.json`, the mail
   settings file's home. No other byte of `golden.json` moved; the test's `OLD_BANNER`
   carries the same path.
+- **SM-917** (two-Sunday rule): every Date in `golden.json` was rewritten in place from
+  its old January weekday date to `Sun, 08 Dec 2030`, clocks kept (08:00 from
+  `test_verify_v1_shape.DATE`, 14:00 from `sm827_rig.DATE`, both moved with it). The
+  replacement is the same length, so no `≈N tok` figure moved; no other byte did.

@@ -20,8 +20,9 @@
 #                 tracks openspec/ it stays strict.
 #   make          check, then test
 #   make build    wheel + sdist into dist/ (uv build)
-#   make release  cut a release: bump the ONE version (plugin.json, mirrored
-#                 into marketplace.json), stamp CHANGELOG.md, commit, tag.
+#   make release  cut a release: bump the ONE version (pyproject.toml, mirrored
+#                 into plugin.json and marketplace.json), stamp CHANGELOG.md,
+#                 commit, tag.
 #                 Never pushes. scripts/release.py, modelled on session's.
 
 SHELL := /usr/bin/env bash

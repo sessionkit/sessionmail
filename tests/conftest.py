@@ -300,7 +300,7 @@ def hermetic(tmp_path_factory, monkeypatch):
     monkeypatch.setenv("MAGICDNS_SUFFIX", HERMETIC_SUFFIX)
     monkeypatch.setenv("MAGICDNS_TAILSCALE_BUNDLE", "")
     _magicdns.forget()
-    # And the runner's SEAT, its mail roots and its index (review 2030-10-01,
+    # And the runner's SEAT, its mail roots and its index (review 2030-12-08,
     # H3). With the runner's `CLAUDE_CODE_AGENT` and `$<AGENT>_ROOT` left in
     # place, the scaffold sweep (`tests/invocations.py`) ran the developer's
     # real `memory run /BOOT/WAKE` through the bundled oracle, and `message

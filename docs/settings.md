@@ -38,7 +38,8 @@ reads for them are below: [sendmail][sendmail], [notmuch][notmuch-key] and
 - Which home `~` is depends on the key, as [the keys][the-keys] table
   groups them:
   - Keys read from "the template and the host" (`sendmail`, `root`, `host`,
-    `magicdns_suffix`, `notmuch`, `postfix`, `registry` and `alert_runner`):
+    `magicdns_suffix`, `notmuch`, `postfix`, `pull`, `registry` and
+    `alert_runner`):
     `~` is the account's home in the password database, never `$HOME`. A
     changed `$HOME` cannot move them, and a `mail.json` under another
     `$HOME` is not read for them.
@@ -68,6 +69,7 @@ files:
 | `magicdns_suffix`   | string           | ask tailscale      | the template and the host         |
 | `notmuch`           | map              | see below          | the template and the host         |
 | `postfix`           | map              | see below          | the template and the host         |
+| `pull`              | map              | see below          | the template and the host         |
 | `monitor`           | boolean          | on                 | the host `mail.json` only         |
 | `pager_required`    | boolean          | `false`            | host, seat and session            |
 | `capture`           | boolean          | `false`            | host, seat and session            |
@@ -193,6 +195,41 @@ The settings named for postfix. A map:
   server.
 - `relay_domain` is where a session-shaped address that misses on this host
   is relayed. `origin` is the domain a bare address is completed with.
+
+### pull
+
+The host-to-host pull, `python -m sessionmail._puller`: a mail host's IMAP
+boxes, delivered into this host's postfix. A map. Each key's variable is
+`SESSIONMAIL_PULL_` and the key in capitals (`imap_host` is
+`SESSIONMAIL_PULL_IMAP_HOST`); when set and not empty, it wins over every
+layer.
+
+| Key                | Default                                     |
+| ------------------ | ------------------------------------------- |
+| `imap_host`        | none: required                              |
+| `imap_port`        | `993`                                       |
+| `login`            | none: required, with `{box}` in it          |
+| `secret_command`   | none: required                              |
+| `relay_domain`     | none: required                              |
+| `listener`         | none: required, `HOST:PORT`                 |
+| `vmailbox`         | none: required, a postfix map (`type:path`) |
+| `boxes_file`       | `~/.sessionkit/mail/settings/pull.boxes`    |
+| `state_dir`        | `~/.sessionmail/puller`                     |
+| `local_domain`     | the `host` key, else the short host name    |
+| `own_ips`          | ask tailscale                               |
+| `unsorted_box`     | none: general delivery off                  |
+| `audit_box`        | none: the audit off                         |
+| `audit_to`         | none: required when `audit_box` is set      |
+| `audit_sendmail`   | `/usr/sbin/sendmail`                        |
+| `label`            | `dev.sessionkit.mail.puller`                |
+| `backfill_seconds` | `86400`                                     |
+| `reissue_seconds`  | `300`                                       |
+| `login_gate`       | `4`                                         |
+
+- With a required key unset, the puller refuses (exit 2) and names each
+  one with its variable.
+- `state_dir` moves only when `pull.state_dir` is set: one puller runs per
+  state dir, and a second exits 3.
 
 ### pager_required
 
@@ -328,6 +365,7 @@ read beside them, each in its own way:
 | `SESSIONMAIL_SENDMAIL`, `SESSIONMAIL_ROOT`, `SESSIONMAIL_HOST`, `MAGICDNS_SUFFIX` | `sendmail`, `root`, `host`, `magicdns_suffix` | wins over every layer when set and not empty |
 | `SESSIONMAIL_NOTMUCH`, `SESSIONMAIL_NOTMUCH_TIMEOUT`, `SESSIONMAIL_NOTMUCH_PROFILE` | `notmuch.command`, `.timeout`, `.profile` | wins over every layer when set and not empty |
 | `SESSIONMAIL_VMAILBOX_GEN`, `SESSIONMAIL_RELAY_DOMAIN`, `SESSIONMAIL_ORIGIN` | `postfix.generator`, `.relay_domain`, `.origin` | wins over every layer when set and not empty |
+| `SESSIONMAIL_PULL_*` (`SESSIONMAIL_PULL_IMAP_HOST`, ...) | `pull.*` (`pull.imap_host`, ...) | wins over every layer when set and not empty |
 | `SESSIONMAIL_SUBSCRIBE`      | `subscriptions`                       | copied once, at birth, into a session file      |
 | `EMAIL`, `TM_AGENT_ADDRESS`  | `address`                             | `pager listen` writes the key from it           |
 
@@ -341,8 +379,8 @@ Partly, and per key:
 - `hooks`, `monitor`, `registry` and `alert_runner`: host only. A seat or a
   session cannot change them in a file; for `monitor`, a seat's variable can
   only turn it off.
-- `sendmail`, `root`, `host`, `magicdns_suffix`, `notmuch` and `postfix`:
-  the template and the host only. A seat or session file cannot move them;
+- `sendmail`, `root`, `host`, `magicdns_suffix`, `notmuch`, `postfix` and
+  `pull`: the template and the host only. A seat or session file cannot move them;
   each one's variable can.
 
 [kit-settings]: https://github.com/sessionkit/sessionkit/blob/HEAD/docs/settings.md

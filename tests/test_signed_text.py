@@ -46,7 +46,7 @@ def wire(body: bytes = BODY, page: bytes | None = None) -> bytes:
     """What an honest send writes: the sender's own `build`, unchanged."""
     req = _sender.Request(to="bob@sm827.invalid", from_="alice@sm827.invalid",
                           subject="SM-827 signed text")
-    return _sender.build(req, body, host="sm827.invalid", date="Wed, 02 Jan 2030 14:00:00 +0000",
+    return _sender.build(req, body, host="sm827.invalid", date="Sun, 08 Dec 2030 14:00:00 +0000",
                          message_id="<st@sm827.invalid>", references=[], session="",
                          signature=None, page=page, boundary=BOUNDARY if page else "")
 
@@ -61,7 +61,7 @@ def seal(raw: bytes, p: list[str] | None = None) -> bytes:
 def v1(body: bytes, mime: bytes = b"Content-Type: text/plain; charset=utf-8\n"
        b"Content-Transfer-Encoding: 8bit\n") -> bytes:
     return (b"From: alice@sm827.invalid\nTo: alice@sm827.invalid\n"
-            b"Date: Wed, 02 Jan 2030 14:00:00 +0000\nSubject: 1 v1 item\n"
+            b"Date: Sun, 08 Dec 2030 14:00:00 +0000\nSubject: 1 v1 item\n"
             b"Message-ID: <v1@sm827.invalid>\nMIME-Version: 1.0\n" + mime
             + _sig.format_v1(NS, "AAAA").encode() + b"\n\n" + body)
 
@@ -69,7 +69,7 @@ def v1(body: bytes, mime: bytes = b"Content-Type: text/plain; charset=utf-8\n"
 def leaf_only(ctype: bytes, payload: bytes) -> bytes:
     """A single-part mail whose one leaf is CTYPE, sealed."""
     raw = (b"From: alice@sm827.invalid\nTo: alice@sm827.invalid\n"
-           b"Date: Wed, 02 Jan 2030 14:00:00 +0000\nSubject: 1 no text\n"
+           b"Date: Sun, 08 Dec 2030 14:00:00 +0000\nSubject: 1 no text\n"
            b"Message-ID: <nt@sm827.invalid>\nMIME-Version: 1.0\n"
            b"Content-Type: " + ctype + b"\nContent-Transfer-Encoding: 8bit\n\n" + payload)
     return seal(raw)
@@ -239,7 +239,7 @@ def test_the_golden_vector_files_are_unmoved():
         if f.name == "sessionmail-sig-TEST-VECTORS-ONLY":
             continue
         h.update(f.name.encode() + b"\0" + f.read_bytes() + b"\0")
-    assert h.hexdigest() == "59be16e9ca7be40dab811eb6b3d20f2de6f416458968798fdd5a46fcfd34f444"
+    assert h.hexdigest() == "df29c8831f3fe95fbefd77d658e23c104950a419d8c9c017048b37f27eb5526c"
 
 
 # ── both interpreters ────────────────────────────────────────────────────────

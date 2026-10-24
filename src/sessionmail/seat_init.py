@@ -3,8 +3,8 @@
 
     message seat init --registry DIR ADDRESS [--machine NAME]
 
-The adapter signs as its seat (say desk.alice), and its cert matches that
-name exactly. It:
+The adapter signs as its seat (say desk.alice, or a plus address such as
+heard+airpods), and its cert matches that name exactly, +tag and all. It:
 
 1. generates an ed25519 key at $SESSIONMAIL_HOME/seat-keys/<ADDRESS>/id_ed25519
    (dir 0700, key 0600), and publishes its pub as seat.pub. No private key sits
@@ -55,7 +55,15 @@ BIRTH_PREFIX = "session-birth@"
 #: prints names the principal verify will check. No person's name in code
 #: (the package's rule); a host sets SESSION_BLESS_PRINCIPAL.
 BLESS_PRINCIPAL = os.environ.get("SESSION_BLESS_PRINCIPAL", "alice@bless")
-ADDRESS = re.compile(r"[a-z0-9][a-z0-9._-]*\Z")
+#: A seat address: one name, or a plus address `<base>+<tag>` (heard+airpods).
+#: Each half is the dot-grammar name (lowercase letters, digits, '.', '_',
+#: '-', starting with a letter or digit), and there is at most ONE '+'. The
+#: address is used verbatim, '+' and all: the seat-keys directory name, the
+#: cert's `agent:` line (the verifier's leg 2 keeps the +tag and matches it
+#: exactly), the registry commit's author and subject, and `message seat
+#: agent`'s launchd label and socket path (_launchd.ADDRESS_RE, the wrapper's
+#: SEAT_ADDRESS: the same pattern, three copies).
+ADDRESS = re.compile(r"[a-z0-9][a-z0-9._-]*(?:\+[a-z0-9][a-z0-9._-]*)?\Z")
 SESSION_LINE = re.compile(r'^(\S+)@session\s+namespaces="([^"]+)"\s+ssh-\S+\s+\S+')
 EX_REFUSED, EX_FAILED = 2, 1
 #: Every file a mint writes in the key home. All must be absent before it
@@ -125,13 +133,10 @@ def loose(path: Path) -> bool:
 # ── checks: all of them before anything is written ───────────────────────────
 
 def check_address(address: str) -> None:
-    if "+" in address:
-        raise Refused(f"'{address}' has a '+': a plus address fails the verifier's leg 2 today "
-                      f"(it strips the tag, so the cert could never match). Name the "
-                      f"seat with a dot: desk.alice")
     if not ADDRESS.match(address):
         raise Refused(f"'{address}' is not a seat address: lowercase letters, digits, '.', '_' "
-                      f"and '-', starting with a letter or digit (it is also a directory name)")
+                      f"and '-', starting with a letter or digit, and at most one '+' between "
+                      f"two such names (heard+airpods). It is also a directory name")
 
 
 def check_registry(registry: Path) -> tuple[Path, str]:
@@ -290,7 +295,7 @@ def main(argv: list[str] | None = None) -> int:
                     help="the registry dir (allowed_signers, certs/) in its git repo; no default")
     ap.add_argument("--machine", default=socket.gethostname().split(".")[0],
                     help="the cert's machine: line (default: hostname -s)")
-    ap.add_argument("address", help="the seat's address, e.g. bot.alice")
+    ap.add_argument("address", help="the seat's address, e.g. bot.alice or heard+airpods")
     args = ap.parse_args(argv)
     os.umask(0o077)
     sm_home = Path(os.environ.get("SESSIONMAIL_HOME") or "~/.sessionmail").expanduser()

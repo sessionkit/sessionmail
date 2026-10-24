@@ -373,7 +373,7 @@ def test_the_first_hook_after_the_merge_moves_before_it_reads_the_marks(seat, tm
     mail.write_text("From: beta@example.invalid\nSubject: handled already\n"
                     "Message-ID: <2@example.invalid>\n\nbody\n")
     os.link(mail, old / "ride" / "new" / mail.name)
-    (old / "marks").write_text(_seat.Mark("2030-07-13T22:34:56+10:00", "2@example.invalid",
+    (old / "marks").write_text(_seat.Mark("2030-06-09T22:34:56+10:00", "2@example.invalid",
                                           "done", "alpha", SESSION).line + "\n")
     r = CliRunner().invoke(cli, ["hook", "batch"], input="{}")
     assert r.exit_code == 0
@@ -1802,7 +1802,7 @@ def test_a_host_on_the_old_path_is_converted_and_its_mail_rides(seat, tmp_path):
 # unlinks the stamp. A typed prompt carries only with `set carry-prompt on`
 # (E2, RULED: off by default), and `set carry off` kills both (O1, the kill
 # switch wins). A turn start that does not carry is a strict no-op (O2).
-# G1 (findings/2030-10-09-g1-midturn-notice.md, CC 2.1.291): a mid-turn
+# G1 (findings/2030-12-08-g1-midturn-notice.md, CC 2.1.291): a mid-turn
 # notice's UPS fires AFTER that boundary's PostToolBatch - pinned below.
 
 from sessionmail import rules as _rules   # noqa: E402

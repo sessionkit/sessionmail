@@ -1554,7 +1554,7 @@ def ride_along_line(seat: "_seat.Seat | None", session: str,
     - no stamp: it has not run for THIS session. It may never have been
       wired here; a session that has made no tool call yet looks the same.
     - fresh (younger than the reminder window; it was the busy TTL until
-      stopped-means-idle retired that on 2030-09-17): it is keeping up, so the entries
+      stopped-means-idle retired that on 2030-06-09): it is keeping up, so the entries
       arrive on the next tool call - wait rather than act.
     - stale (older): best reading is that nothing is scooping for this
       session now, so act. The age is printed either way.
@@ -1583,7 +1583,7 @@ def ride_along_line(seat: "_seat.Seat | None", session: str,
     now = time.time() if now is None else now
     age = _age(timedelta(seconds=max(0.0, now - ran_at)))
     # The window is the reminder interval (SESSIONMAIL_REMIND_MINUTES): the
-    # busy TTL went with the stopped stamp (stopped-means-idle, 2030-09-17).
+    # busy TTL went with the stopped stamp (stopped-means-idle, 2030-06-09).
     ttl = _seat.remind_minutes() * 60
     if (now - ran_at) < ttl:
         return (f"pager: ride-along - live, last ran {age} ago: they should arrive "
@@ -5448,15 +5448,19 @@ def hook_start() -> None:
             click.echo(" ".join(lines), err=True)    # unsaid to the model; the hook log keeps why
         ctx.exit(0)
         return
-    # The same state line as
-    # `hook batch` - on a REQUIRED seat the not-listening line is the deaf
-    # check's, which says nothing while claude is in its grace. At a fresh
-    # SessionStart that is silence, not an arm order the pager monitor is
-    # about to make moot. With "hooks" off the deaf check is the batch
-    # hook's to say (`_deaf_unsaid`), never this one's: off means off here.
-    state = ([] if failed or seat is None else
-             _state_lines(seat, session, required=_seat.pager_required(seat, session, env)))
-    text = "\n".join(lines + state)
+    # The box line ONLY - never a state line.
+    # Claude Code runs this hook and starts the pager monitor in parallel,
+    # and nothing orders the two: a state line read here meets a monitor
+    # that has not stamped `listening` yet, and says "not listening" to a
+    # seat about to be heard, which then arms a SECOND listener. The state is
+    # the ride-along's and the Stop hook's to say (ratified
+    # specs/pager/spec.md "two places"): `hook batch` says it on the first
+    # PostToolBatch (a UserPromptSubmit only when it carries; a typed prompt
+    # does not by default), and Stop at the end of the first turn, by when
+    # the monitor has had time to arm. So this hook records no said state
+    # either: a deaf seat's first batch must still find "not listening"
+    # unsaid, and say it.
+    text = "\n".join(lines)
     click.echo(json.dumps({"hookSpecificOutput": {
         "hookEventName": event, "additionalContext": text}}))
     # A row only when the string is not empty - this echo prints the
@@ -5464,10 +5468,6 @@ def hook_start() -> None:
     # born for (`-`: none, so nothing).
     _log_hook(_injectlog.VIA_START, text, seat=seat, payload=payload, event=event,
               started=started, session=session)
-    if state:
-        # After the emit, as the ride-along does: its next batch does not
-        # repeat a state line this hook just gave (D11, said once).
-        _seat.write_said(seat, session, "\n".join(state))
     ctx.exit(0)
 
 

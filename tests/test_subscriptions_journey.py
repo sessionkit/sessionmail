@@ -38,7 +38,7 @@ def alive(fresh, tmp_path, monkeypatch):
     `sessionId`, `pid` and `procStart` plus a matching `ps` row;
     `sessiontools.sessions()` (the Python readers' source) also needs
     `status` and `updatedAt`, which every real sidecar carries (17 of 17 on
-    hq, measured Tue 2030-10-01) and the fleet's thin fixture does
+    hq, measured Sun 2030-12-08) and the fleet's thin fixture does
     not. So the sidecars are given the real shape, and a pid is alive for
     the Python readers exactly when the fake `ps` table lists it."""
     for car in (tmp_path / "claude-sessions").glob("*.json"):

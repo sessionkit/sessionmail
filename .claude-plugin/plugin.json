@@ -1,6 +1,6 @@
 {
   "name": "sessionmail",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "description": "Mail for coding agents: message moves messages, pager alerts, memory is the filesystem view - three commands over one maildir.",
   "author": {
     "name": "Mike Bailey",

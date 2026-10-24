@@ -164,7 +164,7 @@ def test_after_a_fold_the_second_arm_is_moved_earlier(place):
 
 # ── the first new-code writer moves (the Rupert's (b), #9320) ─────────────────
 def _old_mark(message_id: str, mark: str) -> str:
-    return _seat.Mark("2030-06-08T21:00:00+10:00", message_id, mark, "eve", SID).line + "\n"
+    return _seat.Mark("2030-06-09T21:00:00+10:00", message_id, mark, "eve", SID).line + "\n"
 
 
 def test_a_hook_stamp_and_a_mark_before_the_first_listen_then_one_arm(place):
@@ -176,7 +176,7 @@ def test_a_hook_stamp_and_a_mark_before_the_first_listen_then_one_arm(place):
     _seat.touch(None, _seat.RIDE_ALONG_STAMP, SID)                     # the hook, new code
     assert place.old.is_symlink()                                       # the first writer moved it
     _seat.write_mark(SimpleNamespace(name="eve"), "new@test", "read", SID,
-                     "2030-06-08T22:10:00+10:00")                       # `message mark`
+                     "2030-06-09T22:10:00+10:00")                       # `message mark`
     moved = _seat.move_session_state(SID, place.env)                    # the re-arm
     assert not moved.noteworthy and "moved earlier" in moved.lines[0]
     assert _seat.read_marks(None, SID) == {"old@test": {"done"}, "new@test": {"read"}}
@@ -193,7 +193,7 @@ def test_the_same_with_no_first_writer_move_the_deep_fold_alone_keeps_both(place
     (place.old / "marks").write_text(_old_mark("old@test", "done"))
     _seat.touch(None, _seat.RIDE_ALONG_STAMP, SID)
     _seat.write_mark(SimpleNamespace(name="eve"), "new@test", "read", SID,
-                     "2030-06-08T22:10:00+10:00")
+                     "2030-06-09T22:10:00+10:00")
     assert place.old.is_dir() and not place.old.is_symlink()            # both present now
     moved = _seat.move_session_state(SID, place.env)
     assert place.old.is_symlink() and not moved.noteworthy

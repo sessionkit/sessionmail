@@ -538,7 +538,7 @@ def v1_mail(tmp_path):
     key = tmp_path / "k"
     subprocess.run(["ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-f", str(key)], check=True)
     head = {"From": "eve", "To": "uma", "Subject": "Build green",
-            "Date": "Tue, 01 Jan 2030 12:00:00 +0000", "Message-ID": "<1.2.3@hq.session-mail>"}
+            "Date": "Sun, 09 Jun 2030 12:00:00 +0000", "Message-ID": "<1.2.3@hq.session-mail>"}
     body = b"hello\n"
     data = _sender.canonical(head["From"], head["To"], head["Subject"], head["Date"],
                              head["Message-ID"], body)

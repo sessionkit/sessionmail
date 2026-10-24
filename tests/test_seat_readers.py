@@ -44,7 +44,7 @@ def _mail(sid: str) -> Path:
 
 
 def _rec(**kw) -> dict:
-    base = {"stamp": "2030-01-08T12:00:00+11:00", "message_id": MID, "action": "wake",
+    base = {"stamp": "2030-12-08T12:00:00+11:00", "message_id": MID, "action": "wake",
             "rule": None, "layer": "session", "line": None, "at_once": False,
             "by": "pager listen"}
     base.update(kw)
@@ -53,52 +53,52 @@ def _rec(**kw) -> dict:
 
 #: One record per branch of `why_text`, in the order `pager why` meets them.
 RECORDS = [
-    _rec(action="ride", layer="pager note", stamp="2030-01-08T12:00:01+11:00"),
-    _rec(action="wake", layer="unjudged", stamp="2030-01-08T12:00:02+11:00"),
-    _rec(action="ride", rule=None, layer="session", stamp="2030-01-08T12:00:03+11:00"),
+    _rec(action="ride", layer="pager note", stamp="2030-12-08T12:00:01+11:00"),
+    _rec(action="wake", layer="unjudged", stamp="2030-12-08T12:00:02+11:00"),
+    _rec(action="ride", rule=None, layer="session", stamp="2030-12-08T12:00:03+11:00"),
     _rec(action="ride", rule="ride *", layer="built-in", line=7,
-         stamp="2030-01-08T12:00:04+11:00"),
+         stamp="2030-12-08T12:00:04+11:00"),
     _rec(action="wake", rule="wake from:ivan", layer="session", line=3,
-         stamp="2030-01-08T12:00:05+11:00"),
+         stamp="2030-12-08T12:00:05+11:00"),
     _rec(action="wake", rule="wake from:eve", layer="seat", line=0,
-         stamp="2030-01-08T12:00:06+11:00"),
+         stamp="2030-12-08T12:00:06+11:00"),
     _rec(action="ride", rule="ride kith", layer="focus sleep", line=4,
-         stamp="2030-01-08T12:00:07+11:00"),
+         stamp="2030-12-08T12:00:07+11:00"),
     _rec(action="ride", rule="ride *", layer="built-in", promoted=True,
-         stamp="2030-01-08T12:00:08+11:00"),
+         stamp="2030-12-08T12:00:08+11:00"),
     _rec(action="wake", rule="wake! to:$me", layer="env", line=2, at_once=True,
-         stamp="2030-01-08T12:00:09+11:00", by="ride-along"),
+         stamp="2030-12-08T12:00:09+11:00", by="ride-along"),
     _rec(action="wake", rule="carry! from:$operator", layer="built-in", carry=True,
-         stamp="2030-01-08T12:00:10+11:00"),
+         stamp="2030-12-08T12:00:10+11:00"),
     {"message_id": MID, "action": "wake", "rule": "wake *", "layer": "locked", "line": 9},
     # The same decision again: `pager why` shows it once.
     _rec(action="wake", rule="wake from:ivan", layer="session", line=3,
-         stamp="2030-01-08T12:00:11+11:00", bad=["line 2: no such verb `wkae`",
+         stamp="2030-12-08T12:00:11+11:00", bad=["line 2: no such verb `wkae`",
                                                  "line 5: a bad variable `$who`"]),
 ]
 
 #: Captured from `pager why golden1@x.invalid` and `pager why <golden2@x.invalid>`
 #: at 5b7ec49 (before the move), by this file's own setup. Never edit to pass.
 GOLDEN_MID = """\
-pager why <golden1@x.invalid>: ride - the pager's own confirmation (Pager-Note): the rules never saw it, and it never pages; judged by pager listen at 2030-01-08T12:00:01+11:00
-pager why <golden1@x.invalid>: wake - it could not be judged, so it woke: an unknown wakes; judged by pager listen at 2030-01-08T12:00:02+11:00
-pager why <golden1@x.invalid>: ride - no rule matched (session); judged by pager listen at 2030-01-08T12:00:03+11:00
-pager why <golden1@x.invalid>: ride by `ride *` (the built-in default); judged by pager listen at 2030-01-08T12:00:04+11:00
-pager why <golden1@x.invalid>: wake by `wake from:ivan` (session, line 3); judged by pager listen at 2030-01-08T12:00:05+11:00
-pager why <golden1@x.invalid>: wake by `wake from:eve` (seat); judged by pager listen at 2030-01-08T12:00:06+11:00
-pager why <golden1@x.invalid>: ride by `ride kith` (focus sleep); judged by pager listen at 2030-01-08T12:00:07+11:00
-pager why <golden1@x.invalid>: wake, promoted from ride by `ride *` (the built-in default) - that listener had no ride-along to carry it; judged by pager listen at 2030-01-08T12:00:08+11:00
-pager why <golden1@x.invalid>: wake by `wake! to:$me` (env, line 2) - an honoured urgent, at once; judged by ride-along at 2030-01-08T12:00:09+11:00
-pager why <golden1@x.invalid>: carry by `carry! from:$operator` (the built-in default); judged by pager listen at 2030-01-08T12:00:10+11:00
+pager why <golden1@x.invalid>: ride - the pager's own confirmation (Pager-Note): the rules never saw it, and it never pages; judged by pager listen at 2030-12-08T12:00:01+11:00
+pager why <golden1@x.invalid>: wake - it could not be judged, so it woke: an unknown wakes; judged by pager listen at 2030-12-08T12:00:02+11:00
+pager why <golden1@x.invalid>: ride - no rule matched (session); judged by pager listen at 2030-12-08T12:00:03+11:00
+pager why <golden1@x.invalid>: ride by `ride *` (the built-in default); judged by pager listen at 2030-12-08T12:00:04+11:00
+pager why <golden1@x.invalid>: wake by `wake from:ivan` (session, line 3); judged by pager listen at 2030-12-08T12:00:05+11:00
+pager why <golden1@x.invalid>: wake by `wake from:eve` (seat); judged by pager listen at 2030-12-08T12:00:06+11:00
+pager why <golden1@x.invalid>: ride by `ride kith` (focus sleep); judged by pager listen at 2030-12-08T12:00:07+11:00
+pager why <golden1@x.invalid>: wake, promoted from ride by `ride *` (the built-in default) - that listener had no ride-along to carry it; judged by pager listen at 2030-12-08T12:00:08+11:00
+pager why <golden1@x.invalid>: wake by `wake! to:$me` (env, line 2) - an honoured urgent, at once; judged by ride-along at 2030-12-08T12:00:09+11:00
+pager why <golden1@x.invalid>: carry by `carry! from:$operator` (the built-in default); judged by pager listen at 2030-12-08T12:00:10+11:00
 pager why <golden1@x.invalid>: wake by `wake *` (locked, line 9); judged by ? at ?
-pager why <golden1@x.invalid>: paged at 2030-01-08T12:01:00+11:00: pager wake (idle with children T=0s)
+pager why <golden1@x.invalid>: paged at 2030-12-08T12:01:00+11:00: pager wake (idle with children T=0s)
 pager why: judged 12 times, and the rules changed between: the last line is the latest
 pager why: a bad line was skipped then: line 2: no such verb `wkae`
 pager why: a bad line was skipped then: line 5: a bad variable `$who`
 """
 
 GOLDEN_ONE = """\
-pager why <golden2@x.invalid>: ride by `ride *` (the built-in default); judged by pager listen at 2030-01-08T12:02:00+11:00
+pager why <golden2@x.invalid>: ride by `ride *` (the built-in default); judged by pager listen at 2030-12-08T12:02:00+11:00
 """
 
 
@@ -111,11 +111,11 @@ def _plant(rig) -> Path:  # noqa: F811
         _seat.write_verdict(rig.seat, SESSION, rec)
     _seat.write_verdict(rig.seat, SESSION, _rec(message_id=ONE, action="ride", rule="ride *",
                                                 layer="built-in",
-                                                stamp="2030-01-08T12:02:00+11:00"))
+                                                stamp="2030-12-08T12:02:00+11:00"))
     with (mail / "marks").open("a", encoding="utf-8") as fh:
-        fh.write(f"2030-01-08T12:01:00+11:00 {MID} seen eve {SESSION} "
+        fh.write(f"2030-12-08T12:01:00+11:00 {MID} seen eve {SESSION} "
                  "pager wake (idle with children T=0s)\n")
-        fh.write(f"2030-01-08T12:01:30+11:00 {MID} read eve {SESSION} message read\n")
+        fh.write(f"2030-12-08T12:01:30+11:00 {MID} read eve {SESSION} message read\n")
     return mail
 
 
@@ -167,8 +167,8 @@ def test_mid_is_strip_then_brackets_then_strip_and_folds_no_case(raw, want):
 
 # ── D7: one parser, path-taking, counting what it passes over ───────────────
 
-SIX = "2030-01-08T12:00:00+11:00 <a@x> read eve sid-1 message read"
-FOUR = "b@x done sid-1 2030-06-11T22:34:56+10:00"
+SIX = "2030-12-08T12:00:00+11:00 <a@x> read eve sid-1 message read"
+FOUR = "b@x done sid-1 2030-06-09T22:34:56+10:00"
 
 
 def test_read_marks_at_reads_both_forms_and_counts_the_rest(tmp_path):
@@ -178,7 +178,7 @@ def test_read_marks_at_reads_both_forms_and_counts_the_rest(tmp_path):
     assert [(m.message_id, m.mark, m.seat, m.session) for m in marks] == [
         ("a@x", "read", "eve", "sid-1"), ("b@x", "done", "-", "sid-1"),
         ("a@x", "read", "eve", "sid-1")]
-    assert marks[0].reason == "message read" and marks[1].stamp == "2030-06-11T22:34:56+10:00"
+    assert marks[0].reason == "message read" and marks[1].stamp == "2030-06-09T22:34:56+10:00"
     assert passed == 3          # the torn line, the blank one and `x y z`
 
 
@@ -253,7 +253,7 @@ def test_a_missing_marks_file_is_still_no_events(rig):  # noqa: F811
 
 # ── case 19: a byte that is not UTF-8 no longer raises ──────────────────────
 
-BAD = (b"2030-01-08T12:00:00+11:00 bad1@x.invalid read eve " + SESSION.encode()
+BAD = (b"2030-12-08T12:00:00+11:00 bad1@x.invalid read eve " + SESSION.encode()
        + b" reason with \xff\xfe in it\n")
 
 

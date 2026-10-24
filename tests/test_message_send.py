@@ -300,7 +300,7 @@ def _parent(root, box, *, mid, original_to):
     raw = ("\r\n".join([f"X-Original-To: {original_to}",
                         "From: someone@example.invalid",
                         f"To: {box}@example.invalid",
-                        "Date: Tue, 01 Jan 2030 12:00:00 +0000",
+                        "Date: Sun, 09 Jun 2030 12:00:00 +0000",
                         "Subject: parent",
                         f"Message-ID: <{mid}>"]) + "\r\n\r\nbody\r\n")
     (d / "new" / "1923171201.M1P1.host").write_text(raw)
@@ -364,7 +364,7 @@ def test_a_parent_with_no_x_original_to_falls_back_AND_SAYS_SO(replying):
         (d / sub).mkdir(parents=True, exist_ok=True)
     (d / "new" / "1923171202.M1P1.host").write_text(
         "From: someone@example.invalid\r\nSubject: no xot\r\n"
-        "Date: Tue, 01 Jan 2030 12:00:00 +0000\r\nMessage-ID: <p5@x>\r\n\r\nbody\r\n")
+        "Date: Sun, 09 Jun 2030 12:00:00 +0000\r\nMessage-ID: <p5@x>\r\n\r\nbody\r\n")
     r = run("beta", "-s", "re", "-f", str(replying.body), "-r", "<p5@x>")
     assert r.exit_code == EX_OK, r.output
     assert replying.calls()[0][:3] == ["beta", "--from", "alpha+sm-9.foreman"]

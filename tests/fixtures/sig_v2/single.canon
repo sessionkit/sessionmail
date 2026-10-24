@@ -3,7 +3,7 @@ from: acme+t-1.worker@hq.example.net
 to: acme+lead@hq.example.net
 cc: 
 subject: design done
-date: Tue, 01 Jan 2030 12:00:00 +0000
+date: Sun, 09 Jun 2030 12:00:00 +0000
 message-id: <1901000000.1.1@hq.session-mail>
 in-reply-to: 
 references: 

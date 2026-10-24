@@ -1,7 +1,7 @@
 """The notmuch post-new hook: what makes a supersede survive losing the index.
 
 notmuch tags live in a Xapian index, and the index is a derived artefact:
-delete it and `notmuch new` rebuilds it from the maildir. On 2030-07-15 that
+delete it and `notmuch new` rebuilds it from the maildir. On 2030-06-09 that
 was done for real and the `superseded` tag did not come back, so the
 current-truth query `tag:memory and not tag:superseded` served a disproved
 memory as fact (the hook's own header tells it). The hook closes that
@@ -98,7 +98,7 @@ class Db:
         self.count += 1
         (self.root / "agents" / box / "new" / f"{1908540800 + self.count}.M1P1.test").write_text(
             f"From: beta@example.invalid\nTo: alpha@example.invalid\n"
-            f"Subject: item {self.count}\nDate: Tue, 01 Jan 2030 12:00:00 +0000\n"
+            f"Subject: item {self.count}\nDate: Sun, 09 Jun 2030 12:00:00 +0000\n"
             f"Message-ID: <{msgid}>\n{headers}\nbody\n")
 
     def notmuch(self, *args: str) -> subprocess.CompletedProcess:
@@ -246,7 +246,7 @@ def test_a_failed_count_leaves_the_carrier_pending(tmp_path):
 
 
 def test_the_pre_rename_x_supersedes_spelling_is_honoured(db):
-    """Mail from the first hours of 2030-07-15 carries `X-Supersedes:`, and
+    """Mail from the first hours of 2030-06-09 carries `X-Supersedes:`, and
     it is immutable, so the hook reads both spellings forever."""
     old, new = supersede(db, header="X-Supersedes")
     assert {"agent", "superseded"} <= db.tags(old)
@@ -265,7 +265,7 @@ def test_the_memory_box_is_tagged_memory_and_a_seat_box_is_not(db):
 def test_rebuild_from_nothing_brings_the_supersede_back(db):
     """THE REASON THE HOOK EXISTS. Wipe the index and rebuild it: the
     correction must come back from the mail alone. The control first:
-    rebuilt WITHOUT the hook the tag is gone, which is the 2030-07-15 loss
+    rebuilt WITHOUT the hook the tag is gone, which is the 2030-06-09 loss
     and what shows the wipe was real."""
     old, new = supersede(db, box="memory")
     assert db.ids("tag:memory and not tag:superseded") == {new}

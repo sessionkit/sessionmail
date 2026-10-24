@@ -141,7 +141,7 @@ def test_the_door_runs_the_bundle_end_to_end_and_never_calls_session(stub_sessio
 def test_the_wake_ends_on_live_verbs_that_read_the_box_it_counted(tmp_path):
     """The wake's last line is what the agent types next, so it must name
     verbs that exist. It said `session mail list BOX · then read <n>`: a
-    retired verb (review 2030-10-01, H1), and a bare `read` that `message
+    retired verb (review 2030-12-08, H1), and a bare `read` that `message
     read` would look up in the caller's own box, not the one just counted.
     Run through the door against a sandbox box; conftest keeps the index
     and the runner's seat out of it."""

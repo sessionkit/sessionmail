@@ -82,7 +82,7 @@ def rig(tmp_path, monkeypatch):
                 f"X-Original-To: {to}@example.invalid\r\n"
                 f"From: beta@example.invalid\r\nTo: {to}@example.invalid\r\n"
                 f"Subject: {subject}\r\nMessage-ID: <{mid}>\r\n"
-                f"Date: Tue, 01 Jan 2030 12:00:{_n % 60:02d} +0000\r\n\r\nbody\r\n".encode())
+                f"Date: Sun, 09 Jun 2030 12:00:{_n % 60:02d} +0000\r\n\r\nbody\r\n".encode())
             os.rename(b / "tmp" / fname, b / "new" / fname)
 
         def plant_subscriptions(self) -> None:
@@ -105,7 +105,7 @@ def status(*argv: str):
 
 
 def mark_done(rig, mid: str) -> None:
-    _seat.write_mark(rig.seat, mid, "done", SESSION, "2030-07-07T22:34:56+10:00", "test")
+    _seat.write_mark(rig.seat, mid, "done", SESSION, "2030-06-09T22:34:56+10:00", "test")
 
 
 # ── 4.2: the four are gone ───────────────────────────────────────────────
@@ -165,7 +165,7 @@ def test_the_line_names_the_address_that_delivered_it(rig):
 def test_done_quiets_a_line_and_read_is_not_terminal(rig):
     rig.deliver("m1@example.invalid", "one")
     _seat.write_mark(rig.seat, "m1@example.invalid", "read", SESSION,
-                     "2030-07-07T22:34:56+10:00", "test")
+                     "2030-06-09T22:34:56+10:00", "test")
     assert "one" in status().output                 # read is not terminal
     mark_done(rig, "m1@example.invalid")
     result = status()

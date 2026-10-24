@@ -47,6 +47,16 @@ The steps, in this order:
   when an MTA is named and is not an executable file.
 - `suffix`: MANUAL on a postfix host that has no MagicDNS suffix. A drop host
   needs none (the drop runs the generator with `--no-fqdn`).
+- `pull-agent`, only with `--pull` (the opt-in; without it no pull config
+  is read): the puller's LaunchAgent (`_pull_agent`). The pull config is
+  resolved with setup's environment AND the job's exact one (HOME and the
+  plist's PATH); a required key unset, a key set only by a variable, or a
+  value a variable moves REFUSES the plan, naming each. DONE when the plist
+  at the target holds exactly the rendered bytes and the job is loaded. A
+  plist there that is not a sessionmail puller, or a job loaded under the
+  label with no plist, is BLOCKED: never overwritten, never booted out.
+  Otherwise the listener must answer (BLOCKED if not), then apply writes,
+  lints (`plutil -lint`), boots out our loaded job and bootstraps it.
 
 No privileged step is registered in this build: on a host with no postfix,
 nothing setup does needs root. The engine's privileged path (print first;
@@ -555,10 +565,10 @@ def carrier_steps(env: Mapping[str, str]) -> list[Step]:
     return steps
 
 
-def plan(env: Mapping[str, str], boxes: Sequence[str], *, write_maps: bool = False
-         ) -> tuple[list[Step], list[str]]:
+def plan(env: Mapping[str, str], boxes: Sequence[str], *, write_maps: bool = False,
+         pull: bool = False) -> tuple[list[Step], list[str]]:
     """Every step, in order, and the notes. Raises PlanRefused before any step
-    is read or applied."""
+    is read or applied. Only PULL reads the pull config."""
     carrier = settings(env).carrier
     if carrier.kind == "refused":
         raise PlanRefused(carrier.why)
@@ -566,6 +576,7 @@ def plan(env: Mapping[str, str], boxes: Sequence[str], *, write_maps: bool = Fal
         problem = box_name_problem(name)
         if problem:
             raise PlanRefused(f"--box {name!r}: {problem}")
+    job = pull_job(env) if pull else None
     agents = roots(env)
     steps = [mail_root_step(agents)]
     names: list[str] = []
@@ -585,7 +596,63 @@ def plan(env: Mapping[str, str], boxes: Sequence[str], *, write_maps: bool = Fal
     steps.append(profile_step(agents.parent, env))
     steps += notmuch_steps(env)
     steps += carrier_steps(env)
+    if job is not None:
+        steps.append(pull_step(job, env))
     return steps, [NOTMUCH_NEW_NOTE]
+
+
+#: The opt-in that adds the pull step.
+PULL = "--pull"
+
+
+def pull_job(env: Mapping[str, str]) -> "_pull_agent.Job":
+    """The puller's job, or PlanRefused naming every reason (`_pull_agent.resolve`)."""
+    from . import _pull_agent
+    try:
+        return _pull_agent.resolve(env)
+    except _pull_agent.Refused as exc:
+        raise PlanRefused(str(exc)) from None
+
+
+def pull_step(job: "_pull_agent.Job", env: Mapping[str, str]) -> Step:
+    """`pull-agent`: the puller's LaunchAgent. `check` reads only; the
+    listener is asked only when the step would be TODO."""
+    from . import _pull_agent
+    cfg = job.config
+    host, port = cfg.listener
+
+    def check() -> tuple[str, str]:
+        if not _pull_agent.on_macos():
+            return BLOCKED, (f"a LaunchAgent is macOS only (this is {sys.platform}): run "
+                             "`python -m sessionmail._puller` under your own service manager")
+        try:
+            seen = _pull_agent.see(job, env)
+        except _pull_agent.Failed as exc:
+            return BLOCKED, str(exc)
+        if seen.foreign:
+            return BLOCKED, (f"{seen.foreign}: pick another pull.label, or remove it by hand. "
+                             "Setup never overwrites it or boots it out")
+        if seen.current == job.body and seen.loaded:
+            return DONE, f"{job.target} loaded from {job.plist}"
+        if not _pull_agent.listening(host, port):
+            return BLOCKED, (f"nothing listens on {host}:{port}: the puller hands mail to a "
+                             "local-only smtpd (pull.listener); see docs/pull.md")
+        if seen.current is None:
+            todo = f"write {job.plist}, lint it, bootstrap {job.target}"
+        elif seen.current != job.body:
+            todo = (f"replace {job.plist} (it differs from the rendered plist), lint it, "
+                    + ("boot out and " if seen.loaded else "") + f"bootstrap {job.target}")
+        else:
+            todo = f"bootstrap {job.target} ({job.plist} is current; the job is not loaded)"
+        return TODO, todo
+
+    def apply() -> str:
+        try:
+            return _pull_agent.install(job, env)
+        except _pull_agent.Failed as exc:
+            raise Failed(f"{exc}. Re-run {COMMAND} {PULL} once the cause is fixed") from None
+    return Step("pull-agent", f"the puller's LaunchAgent, {job.label}", check=check,
+                apply=apply)
 
 
 # ── the verb ─────────────────────────────────────────────────────────────────
@@ -595,6 +662,7 @@ def parser() -> argparse.ArgumentParser:
     ap.add_argument("--box", action="append", default=[], metavar="NAME")
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument(WRITE_MAPS, dest="write_maps", action="store_true")
+    ap.add_argument(PULL, dest="pull", action="store_true")
     return ap
 
 
@@ -613,7 +681,7 @@ def main(argv: Sequence[str] | None = None, env: Mapping[str, str] | None = None
               file=err)
         return EX_USAGE
     try:
-        steps, notes = plan(env, args.box, write_maps=args.write_maps)
+        steps, notes = plan(env, args.box, write_maps=args.write_maps, pull=args.pull)
     except PlanRefused as exc:
         print(f"{COMMAND}: REFUSED - {exc}. Nothing was applied.", file=err)
         return EX_USAGE

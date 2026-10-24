@@ -1,5 +1,5 @@
 """Fold-ins from the SM-442 engineer-fitness review (task store,
-reviews/2030-10-03T0212-engineer-fitness.md), each small and pinned here.
+reviews/2030-12-08T0212-engineer-fitness.md), each small and pinned here.
 
   - F10: `pager.py` annotated `Callable` without importing it. Harmless at
     run time under `from __future__ import annotations`, but any tool that
@@ -90,7 +90,7 @@ def test_the_ride_along_prints_no_escape(ride, kind, monkeypatch):
 
 # ── do-013: F2 finished - C1 and DEL too, and the HEADER LINE ───────────
 #
-# do-005's verdict N1/N2 (task store, reviews/2030-10-03T0302-do-005): F2
+# do-005's verdict N1/N2 (task store, reviews/2030-12-08T0302-do-005): F2
 # stripped C0 from the text part only. C1 (U+0080-U+009F, the 8-bit CSI
 # U+009B among them) and DEL passed through it, and the header line -
 # `_queue_line`'s subject and sender, the part a SENDER writes most freely -

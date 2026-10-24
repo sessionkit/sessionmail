@@ -487,7 +487,7 @@ def validate(req: Request) -> None:
     check_own_msgid(req)                           # before the copy below
     if not req.to:
         raise Refused("missing <to>", kind="usage")
-    if req.supersedes and not req.in_reply_to and not req.unthreaded:   # send:1093, 2030-08-06
+    if req.supersedes and not req.in_reply_to and not req.unthreaded:   # send:1093, 2030-06-09
         req.in_reply_to = req.supersedes
 
 

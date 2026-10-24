@@ -38,7 +38,7 @@ PKG = Path(_sig.__file__).resolve().parent
 NOTMUCH = shutil.which("notmuch")
 SYS_PY = "/usr/bin/python3"
 NS = "session-mail@example.com"
-DATE = "Wed, 02 Jan 2030 14:00:00 +0000"
+DATE = "Sun, 08 Dec 2030 14:00:00 +0000"
 SESSION = "5e827a11"
 BOUNDARY = "=_sesh890_" + "0" * 32
 A = "alice@sm827.invalid"

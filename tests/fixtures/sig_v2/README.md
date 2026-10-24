@@ -27,7 +27,7 @@ ON PURPOSE so the vectors can be re-minted there, and is not shipped in release 
 re-mint from a release, generate your own ed25519 key (`make_vectors.py` says so and exits). It
 belongs to no seat, host or person, and nothing trusts it. Tests need only the
 public key, which every `b=` embeds. Domain `hq.example.net`, session `0a1b2c3d`, date
-`Tue, 01 Jan 2030 12:00:00 +0000`.
+`Sun, 09 Jun 2030 12:00:00 +0000`.
 
 `make_vectors.py` makes every file here but this README, and the 13 signed controls in
 `../mime_honest/controls/`, from constants it holds, signing with this key through the

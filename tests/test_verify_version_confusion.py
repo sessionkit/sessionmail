@@ -102,7 +102,7 @@ class Rig:
 
 def base(mid: str, body: str) -> str:
     return (f"From: ivan@example.com\nTo: uma@example.com\nSubject: s {mid}\n"
-            f"Date: Tue, 01 Jan 2030 12:00:00 +0000\nMessage-ID: <{mid}@example.com>\n"
+            f"Date: Sun, 09 Jun 2030 12:00:00 +0000\nMessage-ID: <{mid}@example.com>\n"
             f"MIME-Version: 1.0\nContent-Type: text/plain; charset=utf-8\n\n{body}")
 
 

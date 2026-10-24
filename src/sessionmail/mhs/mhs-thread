@@ -361,7 +361,7 @@ VERIFY = (shlex.split(os.environ.get("SESSION_MAIL_VERIFY") or "")
 # (`python3 -` put the cwd first on sys.path). The reference ignores both now.
 # In each case the port's GOOD is the right answer for the mail, and the
 # reference's BAD is the environment's fault.
-VERIFY_PORT_PIN = "716efa1d7881fe68c448698d02f23eae187a545f0a5eb48aaa0dffc2083e2c68"
+VERIFY_PORT_PIN = "6ac2dbf22e85f65ef2228372059504b6653bbf60b7b62a523cb27bdd9d937e8e"
 _PORT = []    # [namespace] once loaded, [None] when the port is off
 _PORT_LOCK = threading.Lock()   # prefetch() verifies from 8 threads
 
@@ -691,7 +691,7 @@ class Members:
     def header_faults(self, m):
         """The header halves m fails: [] or some of "from", "to".
         Plus-tag is NOT the test; owner-as-recipient is. The pre-standard
-        tree used +rules/+convo/… (110 of 168 mails as of 2030-08-25).
+        tree used +rules/+convo/… (110 of 168 mails as of 2030-06-09).
         Case-blind, as the verifier's local_part() is."""
         h, bad = m["headers"], []
         if not (self.shared or short_from(h).lower() == self.owner.lower()):

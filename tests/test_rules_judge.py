@@ -31,7 +31,7 @@ from sessionmail.rules import Facts, Layer, Me, Verdict, judge, parse
 SID = "5c802c34-f0da-2b67-c1f7-c062abd4433a"
 HOST = "hq.tailnet.example"
 ME = Me.of(session=SID, seat="ivan", host=HOST)
-NOW = datetime(2030, 7, 11, 12, 34, 56, tzinfo=timezone.utc)
+NOW = datetime(2030, 6, 9, 12, 34, 56, tzinfo=timezone.utc)
 
 JUDY = f"Judy <judy@{HOST}>"
 
@@ -214,7 +214,7 @@ def test_to_reads_x_original_to_first(headers, rule, matched):
 
 
 @pytest.mark.parametrize("original_to, rule, matched", [
-    # MEASURED Thu 2030-10-03: 460 of 500 X-Original-To values in
+    # MEASURED Sun 2030-12-08: 460 of 500 X-Original-To values in
     # agents/ivan/cur carry no domain at all. A bare local part is an address
     # on THIS host, so the ruled example `ride to:kith@*` must reach it.
     ("kith", "ride to:kith@*", True),
@@ -382,7 +382,7 @@ def test_me_is_the_session_and_the_seat_with_their_tags(to, matched):
     ("acmecorp+gcx", False),
 ])
 def test_a_plus_seat_is_me_in_its_plus_form_only(to, matched):
-    """D2, measured Wed 2030-09-25: the store box's copy of a mail to
+    """D2, measured Sun 2030-06-09: the store box's copy of a mail to
     the GC carries `X-Original-To: acmecorp+gc`, and the bare base is the
     store's. Otherwise `to:$me` would wake the GC on every store mail."""
     gc = Me.of(session=SID, seat="acmecorp+gc", host=HOST)
@@ -535,7 +535,7 @@ def test_the_judgement_never_raises_on_garbage_headers():
 
 #: RFC 5322 comments nest, and `email.utils` reads them recursively, so an
 #: address behind ~500 levels of `(` raised RecursionError out of `judge`.
-#: Found in the second review, Thu 2030-10-03; 1,000 is past it.
+#: Found in the second review, Sun 2030-12-08; 1,000 is past it.
 DEEP = "(" * 1000 + ")" * 1000
 
 
@@ -570,7 +570,7 @@ def test_me_on_a_nested_address_header_never_raises():
     "KNOWN GAP, not fixed in do-002: Python's strict getaddresses reads a "
     "list holding ONE malformed address as no addresses at all, so a good "
     "To/Cc beside it is lost and `wake to:$me` misses. MEASURED Thu "
-    "2030-10-03 over all 129,062 files under ~/.mail/agents: 0 recipient "
+    "2030-12-08 over all 129,062 files under ~/.mail/agents: 0 recipient "
     "lists lost this way (2 From values lost, both one multi-address test "
     "mail). Strict so that whoever fixes it sees this flip."))
 def test_a_good_recipient_beside_a_malformed_one_is_still_read():

@@ -13,7 +13,7 @@ from __future__ import annotations
 #: A verb that BLOCKS needs a bound here, or the burndown - which counts
 #: by running every verb - hangs for ever on it. `pager listen` blocks by
 #: design; `--timeout 0` makes it look once and return 124. Measured
-#: Wed 2030-09-11, the first time a built verb was a blocking one.
+#: Sun 2030-06-09, the first time a built verb was a blocking one.
 
 #: RFC 2606 reserves `.invalid` so that it can never resolve. The recipient
 #: below is in it DELIBERATELY, and `tests/test_scaffold.py` asserts it stays

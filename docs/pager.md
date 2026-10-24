@@ -3,7 +3,7 @@ name: pager
 doctype: concept
 title: Pager
 tags: [sessionmail, pager, mail, notification, ride-along]
-created: 2030-09-15
+created: 2030-06-09
 ---
 
 # Pager

@@ -45,14 +45,14 @@ print({{"virtual_alias_maps": "hash:" + maps + "/valias",
        "virtual_mailbox_base": os.environ["MAILBOX_BASE"]}}[sys.argv[2]])
 """
 
-#: The generator reads Claude Code's sidecars for LIVE (master 2030-09-30, no
+#: The generator reads Claude Code's sidecars for LIVE (master 2030-12-08, no
 #: `session` any more); `ps` answers from the fixture so the pid is "running".
 #: Ported from the `session list` stub at the SM-374 merge (do-015), the way
 #: master ported tests/test_task_address_doorbell.py.
 FAKE_PS = """#!/bin/sh
 cat "$FAKE_PS_TABLE"
 """
-STARTED = "Tue Jan 01 12:00:00 2030"
+STARTED = "Sun Jun 09 12:00:00 2030"
 
 
 def make_live(tmp_path, sid: str, agent: str) -> None:

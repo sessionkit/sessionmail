@@ -6,7 +6,7 @@ SM-122 do-018. Two halves, and neither ships without the other.
 notmuch matches an address field by WORD, not by substring, and `ivan-chat`
 tokenises to the words `ivan` and `chat` - so `not from:ivan` also excluded
 `ivan-chat@`, the Delta Chat bridge a phone's messages arrive over.
-Measured on the live index 2030-09-17: `from:ivan-chat and to:ivan` = 44,
+Measured on the live index 2030-06-09: `from:ivan-chat and to:ivan` = 44,
 and `and not from:ivan` = **0**. Every one dropped, silently, for days,
 because THE ALARM IS THE QUERY.
 
@@ -63,7 +63,7 @@ def _corpus(tmp_path: Path, senders: list[str], to: str = "ivan@hq") -> Path:
     for i, sender in enumerate(senders, 1):
         (mail / "cur" / f"{i}:2,S").write_text(
             f"From: {sender}\nTo: {to}\nX-Original-To: {to}\n"
-            f"Subject: probe {i}\nDate: Tue, 01 Jan 2030 12:00:00 +0000\n"
+            f"Subject: probe {i}\nDate: Sun, 09 Jun 2030 12:00:00 +0000\n"
             f"Message-ID: <probe{i}@test>\n\nbody\n")
     (tmp_path / "config").write_text(
         f"[database]\npath={mail}\n[user]\nname=t\nprimary_email=t@hq\n[new]\ntags=\n")
@@ -228,7 +228,7 @@ PAGED, TIMED_OUT = 0, 124
 def test_fourteen_bridge_mails_in_five_minutes_cost_at_most_one_wake(running):
     """THE GATE. Fourteen chunks of one call, to a RUNNING session, arriving
     one at a time with a re-arm between each. Before the coalescing window
-    this was fourteen wakes. (Was "to an idle seat" until Thu 2030-09-19: an
+    this was fourteen wakes. (Was "to an idle seat" until Sun 2030-06-09: an
     idle session now rings every time - see the idle pin below.)"""
     wakes = 0
     for _ in range(14):

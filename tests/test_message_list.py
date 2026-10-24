@@ -39,7 +39,7 @@ def deliver(root, box, key, *, sender="beta@example.invalid", subject="hello",
     mid = mid or f"{key}@example.invalid"
     lines = [f"X-Original-To: {to if to is not None else box}",
              f"From: {sender}", f"To: {box}@example.invalid",
-             f"Date: Wed, 12 Jun 2030 {int(key) % 24:02d}:00:00 +1000",
+             f"Date: Sun, 09 Jun 2030 {int(key) % 24:02d}:00:00 +1000",
              f"Subject: {subject}", f"Message-ID: <{mid}>"]
     if supersedes:
         lines.append(f"Supersedes: <{supersedes}>")
@@ -67,7 +67,7 @@ def bulk(root, box, n, *, first_key=1923171200):
             f"X-Original-To: {box}\r\n"
             f"From: beta@example.invalid\r\n"
             f"To: {box}@example.invalid\r\n"
-            f"Date: Wed, 12 Jun 2030 10:00:00 +1000\r\n"
+            f"Date: Sun, 09 Jun 2030 10:00:00 +1000\r\n"
             f"Subject: msg {i}\r\n"
             f"Message-ID: <{key}@example.invalid>\r\n"
             f"\r\n"
@@ -115,7 +115,7 @@ def test_unread_hides_what_this_session_marked_read_not_the_maildir_flag(box, mo
     seen = deliver(box, "alpha", "1923171201", subject="already read", new=False)
     deliver(box, "alpha", "1923171202", subject="in cur but never marked", new=False)
     seat = _seat.resolve()
-    _seat.write_mark(seat, seen, "read", "s1", "2030-06-12T16:00:00+10:00")
+    _seat.write_mark(seat, seen, "read", "s1", "2030-06-09T16:00:00+10:00")
     r = run("--unread")
     assert r.exit_code == EX_OK
     assert "already read" not in r.output
@@ -130,7 +130,7 @@ def test_unread_does_not_hide_what_ANOTHER_session_marked_read(box, monkeypatch)
     monkeypatch.setenv("CLAUDE_CODE_SESSION_ID", "s1")
     seen = deliver(box, "alpha", "1923171201", subject="read by s1", new=False)
     seat = _seat.resolve()
-    _seat.write_mark(seat, seen, "read", "s1", "2030-06-12T16:00:00+10:00")
+    _seat.write_mark(seat, seen, "read", "s1", "2030-06-09T16:00:00+10:00")
     assert "read by s1" not in run("--unread").output
 
     monkeypatch.setenv("CLAUDE_CODE_SESSION_ID", "s2")

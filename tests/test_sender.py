@@ -154,7 +154,7 @@ def deliver(root: Path, box: str, *, mid: str, sender: str, to: str, subject: st
     d = root / box
     for sub in ("new", "cur", "tmp"):
         (d / sub).mkdir(parents=True, exist_ok=True)
-    lines = [f"From: {sender}", f"To: {to}", "Date: Tue, 01 Jan 2030 12:00:00 +0000",
+    lines = [f"From: {sender}", f"To: {to}", "Date: Sun, 09 Jun 2030 12:00:00 +0000",
              f"Subject: {subject}", f"Message-ID: {mid}"]
     if in_reply_to:
         lines.append(f"In-Reply-To: {in_reply_to}")
@@ -200,7 +200,7 @@ def keyed(tmp_path, env):
 
 #: The verifier this package ships (`mhs/session-mail-verify`, byte-equal to
 #: the retired session repo's). It used to be looked up in the session repo's
-#: checkout, and when that repo was retired (Mon 2030-09-30) every
+#: checkout, and when that repo was retired (Sun 2030-12-08) every
 #: compatibility proof below began to SKIP, silently, on the one machine that
 #: had always run them (Ivan's retirement audit, R19). The bundled copy is
 #: always here, so a skip now means a broken install and nothing else.
@@ -326,10 +326,10 @@ def test_x_session_from_is_the_first_eight_of_the_session_id(sender, env, tmp_pa
 
 def test_canonical_bytes_follow_the_v1_rule(sender):
     canon = sender.canonical(from_="Eve <eve@hq>", to="ivan", subject="  a   b ",
-                             date="Tue, 01 Jan 2030 12:00:00 +0000",
+                             date="Sun, 09 Jun 2030 12:00:00 +0000",
                              message_id="<1.2.3@hq.session-mail>", body=b"body\n\n\n")
     assert canon == (b"from: eve\nto: ivan\nsubject: a b\n"
-                     b"date: Tue, 01 Jan 2030 12:00:00 +0000\n"
+                     b"date: Sun, 09 Jun 2030 12:00:00 +0000\n"
                      b"message-id: <1.2.3@hq.session-mail>\n\nbody\n")     # send:2151-2157
 
 
@@ -406,7 +406,7 @@ def test_keyed_but_dead_keyholder_sends_unsigned_and_says_so(sender, keyed, tmp_
 
 def test_an_address_that_cannot_be_canonicalised_is_refused_on_a_keyed_seat(sender, keyed, tmp_path, fake_sendmail):
     # NOT '"Last, First" <a@h>': that reduces to `a` and the bash signs it,
-    # exit 0 (measured Thu 2030-09-19). A second @ survives reduction.
+    # exit 0 (measured Sun 2030-06-09). A second @ survives reduction.
     argv = ["ivan", "--from", "eve@a@b", "--subject", "x",
             "--body-file", body_file(tmp_path, b"b\n")]
     rc, out, err = sender.run(argv, keyed)
@@ -614,7 +614,7 @@ def test_no_body_with_a_subject_sends_an_empty_single_part_body(sender, env, tmp
     assert body_of(fake_sendmail.wire) == b""                           # send:1342-1352
 
 
-# ── step 6's gate: RETIRED 2030-10-01 ───────────────────────────────────────
+# ── step 6's gate: RETIRED 2030-12-08 ───────────────────────────────────────
 # Two tests diffed the Python sender's wire against the bash
 # session-mail-send, byte for byte except the volatile headers (and the MIME
 # boundary on the 4b path). They were send-in-python step 6's gate, and it

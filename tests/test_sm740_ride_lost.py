@@ -17,7 +17,7 @@ THE SHAPE, at 5dc20f8 (`src/sessionmail/pager.py`):
 
 The scoop records the giving on having PRINTED, with no evidence that what
 it printed reached the model. Two documented Claude Code behaviours throw
-printed hook output away (code.claude.com/docs/en/hooks, read 2030-10-16):
+printed hook output away (code.claude.com/docs/en/hooks, read 2030-12-08):
 
   * the 10,000-character cap: over it, "Claude Code saves the output to a
     file in the session directory and replaces it with the file path and a
@@ -94,7 +94,7 @@ def _queue(s, tmp_path: Path, n: int, raw: str) -> str:
 def _reply(n: int, to: str) -> str:
     return (f"From: seat{n}@hq\nTo: {to}\nX-Original-To: {to}\n"
             f"Subject: Re: GO on the merge, reply {n}\nMessage-ID: <MID>\n"
-            f"Date: Tue, 01 Jan 2030 12:00:0{n % 10} +0000\n\nok - reply {n}, short.\n")
+            f"Date: Sun, 09 Jun 2030 12:00:0{n % 10} +0000\n\nok - reply {n}, short.\n")
 
 
 def _voice_turn(chars: int) -> str:
@@ -103,7 +103,7 @@ def _voice_turn(chars: int) -> str:
     words = ("and the next thing we need is " * (chars // 30 + 1))[:chars]
     return ("From: Ears <heard+airpods@hq>\nTo: alpha@hq\nSubject: a turn\n"
             "Ears-Kind: spoken\nEars-Device: airpods\nMessage-ID: <MID>\n"
-            "Date: Tue, 01 Jan 2030 12:00:00 +0000\n\n" + words + "\n")
+            "Date: Sun, 09 Jun 2030 12:00:00 +0000\n\n" + words + "\n")
 
 
 # ── 1. the scoop gives more than Claude Code hands the model ─────────────

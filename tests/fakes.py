@@ -86,7 +86,7 @@ def write_fake(path: Path, source: str = FAKE_NOTMUCH) -> Path:
     Not `#!/usr/bin/env python3`: a test may replace $PATH (the version
     -mismatch scenario does exactly that), and a fake that cannot start
     because `env` lost python3 looks exactly like the code under test
-    refusing to run. Measured Wed 2030-09-11.
+    refusing to run. Measured Sun 2030-06-09.
     """
     path.write_text(source.format(python=sys.executable))
     path.chmod(path.stat().st_mode | stat.S_IEXEC)

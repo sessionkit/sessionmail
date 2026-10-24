@@ -29,7 +29,7 @@ script `session-mail-send`:
 3. **a heredoc or pipe feeding the send with no `--body-file`** — the send does
    not read stdin, so that delivers an *empty* message at exit 0.
 
-`session mail send` is **retired** (2030-09-30): it now only prints where its
+`session mail send` is **retired** (2030-12-08): it now only prints where its
 verbs went. The rules above still match it, but every deny sends the caller to
 the live door, never back to the retired `--body-file` or MCP `mail_send`
 forms.
@@ -118,11 +118,11 @@ the rest still judged; click refuses it in its own words). Commands the guard
 does not match (`message list --anything`, a `grep` for the phrase) never
 reach this rule.
 
-Measured on 33,302 real agent Bash commands (2030-09-03): 1,645 denied, every
+Measured on 33,302 real agent Bash commands (2030-06-09): 1,645 denied, every
 one of them a genuine inline-body or damaged-subject send; **zero** denials of
 a command that merely mentioned the phrase. Scanning cost ~16µs per command (0.54s for the whole corpus); the hook process itself, python startup included, runs in ~15ms.
 
-Re-measured with the `message send` rule (2030-09-30), 30 days of transcripts:
+Re-measured with the `message send` rule (2030-12-08), 30 days of transcripts:
 168,906 Bash commands, 5,143 of them `message send` invocations. The session
 rules' decisions were identical to the pre-move hook's (1,104 denials, zero
 moved). `message send` denials: 2, both a real `$( )` in a subject; zero among

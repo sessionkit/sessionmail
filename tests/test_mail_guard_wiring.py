@@ -7,7 +7,7 @@ install with the plugin), so "is this seat behind the guard" is "did it load
 sessionmail" - and what is left to pin is the registration and the shim.
 
 The shim's one job is SM-30's rule: a hook must never be the reason a
-session cannot run. Measured before the shim (Mon 2030-09-30): with
+session cannot run. Measured before the shim (Sun 2030-12-08): with
 no python3 on PATH the bare hook exits 127, a hook error on every Bash call;
 `python3 <missing file>` exits 2, and exit 2 from a PreToolUse hook BLOCKS
 the call. Every one of those must come out as exit 0 and silence.

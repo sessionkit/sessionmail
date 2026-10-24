@@ -90,7 +90,7 @@ def build(name, shape, bad, extra=None):
             fh.write("\n".join(hdr) + "\n\n" + body + "\n")
         m = {"id": "%s@%s" % (local, host), "timestamp": 0, "filename": [fn],
              "headers": {"Subject": subject, "From": frm_h, "To": to,
-                         "Date": "Tue, 01 Jan 2030 12:00:00 +0000"},
+                         "Date": "Sun, 09 Jun 2030 12:00:00 +0000"},
              "body": [{"id": 1, "content-type": "text/plain", "content": body}]}
         order.append(m)
         return m

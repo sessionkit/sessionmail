@@ -409,7 +409,7 @@ def test_send_stays_listed_on_the_http_door():
 
 @pytest.mark.parametrize("name", list(GROUPS))
 def test_running_the_module_prints_the_commands_own_page(name):
-    """MEASURED Fri 2030-09-20: `python -m sessionmail.message send -h`
+    """MEASURED Sun 2030-06-09: `python -m sessionmail.message send -h`
     printed nothing and exited 0 - no `__main__` entry - so the spawn line
     above would have been a silent no-op on every send."""
     def run(*argv):

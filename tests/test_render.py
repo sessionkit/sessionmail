@@ -11,7 +11,7 @@ with the file-writing CLI; in memory there is no file. Element claims are
 made by an HTML PARSER, not a grep (the shell suite's own rule).
 
 The parity test against the bash renderer retired with the bash
-(2030-10-01, R19); see the note where it stood.
+(2030-12-08, R19); see the note where it stood.
 """
 
 from __future__ import annotations
@@ -156,7 +156,7 @@ def test_the_dark_palette_repaints_the_body_itself():
     assert "var(--" not in page                                         # Thunderbird resolves no var()
 
 
-# ── parity with the bash renderer: RETIRED 2030-10-01 ───────────────────────
+# ── parity with the bash renderer: RETIRED 2030-12-08 ───────────────────────
 # `_render.py` was a copy of session-mail-render, and a parametrised test
 # held it byte-equal to the bash on a corpus of hostile, folded and code-heavy
 # bodies. The bash retired with the session repo, so

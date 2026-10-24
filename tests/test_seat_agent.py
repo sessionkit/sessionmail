@@ -108,7 +108,15 @@ def seat_agent(minted, tools):  # noqa: F811
             break
         time.sleep(0.1)
     assert answers(minted["sock"]) == 0, said(log)
-    pid = int(re.search(r"agent pid (\d+)", said(log)).group(1))
+    # The key answers a beat before the wrapper prints its 'agent pid' line, and a
+    # loaded host stretches that beat: wait on the line, as long as the socket wait.
+    for _ in range(100):
+        if re.search(r"agent pid (\d+)", said(log)) or proc.poll() is not None:
+            break
+        time.sleep(0.1)
+    found = re.search(r"agent pid (\d+)", said(log))
+    assert found, said(log)
+    pid = int(found.group(1))
     yield dict(minted, proc=proc, log=log, agent=pid)
     if proc.poll() is None:
         proc.terminate()
@@ -198,7 +206,7 @@ def test_it_refuses_and_starts_nothing(minted, tools, case):  # noqa: F811
     elif case == "private-beside-pub":
         (minted["home"] / "seat").write_text("a private key where probe 8c finds it\n")
     elif case == "plus":
-        args = ["uma+desk"]
+        args = ["uma+desk+x"]      # two '+': not a seat address (one '+' is, test_seat_plus.py)
     elif case == "not-a-socket":
         Path(minted["sock"]).write_text("someone's file\n")
     done = subprocess.run([*AGENT, *args], env=minted["env"], capture_output=True, text=True,

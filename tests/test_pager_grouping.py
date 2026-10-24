@@ -42,7 +42,7 @@ def write(root, box, key, *, to=None, header_to=None, delivered_to=None,
         lines.append(f"Delivered-To: {delivered_to}")
     lines += [f"From: {sender}",
               f"To: {header_to if header_to is not None else box}@example.invalid",
-              "Date: Wed, 19 Jun 2030 22:34:56 +1000",
+              "Date: Sun, 09 Jun 2030 22:34:56 +1000",
               f"Subject: {subject}",
               f"Message-ID: <{mid}>"]
     raw = "\r\n".join(lines) + "\r\n\r\n" + "a body\n"

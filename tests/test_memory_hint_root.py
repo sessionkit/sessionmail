@@ -6,7 +6,7 @@ root outside the v1 shape (which the verifier refuses since SM-822), is a suppor
 state. fix-001 first gave every body under an owner `signed_body`, so such a root
 was WITHHELD: `memory cat /` exited 3 saying "signature refused" when the root never
 had one, and `tree / -b` and `--index -b` printed `⊘ body withheld` in place of it
-(the re-review's D1, reviews/2030-10-18T1557-fix-001/REPORT.md in the SM-827 task).
+(the re-review's D1, reviews/2030-12-08T1557-fix-001/REPORT.md in the SM-827 task).
 
 THE RULING (SM-827 D1 (b): Python leaf, unsigned label, no exit 3): a
 hint-admitted NON-member root shows the file's leaf as PYTHON reads it (`_sig.signed_text(check=False)`), never notmuch's body; it stays OUT of

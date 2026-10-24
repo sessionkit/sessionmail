@@ -446,7 +446,7 @@ def test_an_unreadable_key_is_refused_loudly_not_replaced(rig, wire):
             pytest.skip("running as a user who can read a mode-000 file")
         with pytest.raises(RuntimeError, match=str(path)):
             pager.note_proof(SESSION, pager.NOTE_FOCUS, "s", from_="alpha",
-                             date="Tue, 01 Jan 2030 12:00:00 +0000",
+                             date="Sun, 09 Jun 2030 12:00:00 +0000",
                              message_id="<m@x.invalid>")
     finally:
         path.chmod(0o600)

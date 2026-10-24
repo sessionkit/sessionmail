@@ -222,7 +222,7 @@ def test_a_tool_description_is_the_page_prose_within_budget(name, argv):
 # ── same stub, over a real client session (in-memory transport) ──────────
 
 def _stub_group():
-    """Every shipped verb has a body since Wed 2030-09-11, so the gate
+    """Every shipped verb has a body since Sun 2030-06-09, so the gate
     keeps a stub of its own: one command that names a real requirement."""
     import click
     from sessionmail._help import CONTEXT_SETTINGS, OrderedGroup
@@ -283,7 +283,7 @@ def test_the_http_door_is_stateless():
 @pytest.mark.parametrize("name", list(GROUPS))
 def test_importing_a_command_does_not_import_the_mcp_sdk(name):
     """`pager status` is the ride-along after every tool call; `X --help`
-    must work on a host without the SDK. Measured Wed 2030-09-11:
+    must work on a host without the SDK. Measured Sun 2030-06-09:
     a module-level import broke all three commands on the PATH."""
     import subprocess, sys
     code = (f"import sys, sessionmail.{name}; "

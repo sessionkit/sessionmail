@@ -107,7 +107,7 @@ def seat(tmp_path, monkeypatch):
             (box / "new" / name).write_text(
                 f"X-Original-To: {to}@example.invalid\nFrom: beta@example.invalid\n"
                 f"To: {to}@example.invalid\nSubject: {subject}\nMessage-ID: <{mid}>\n"
-                f"Date: Tue, 01 Jan 2030 12:00:00 +0000\n\nbody\n")
+                f"Date: Sun, 09 Jun 2030 12:00:00 +0000\n\nbody\n")
 
         def answer(self, *messages: dict) -> None:
             payload.write_text(json.dumps(forest(*messages)))
@@ -237,7 +237,7 @@ def test_mail_in_cur_is_still_shown(seat):
 def test_done_quiets_a_line(seat):
     seat.deliver("a@example.invalid", "handled")
     _marks().write_text(
-        "a@example.invalid done 7ed6b16b 2030-06-19T22:34:56+10:00\n"
+        "a@example.invalid done 7ed6b16b 2030-06-09T22:34:56+10:00\n"
     )
     assert run().exit_code == EX_NOTHING
 
@@ -246,8 +246,8 @@ def test_read_is_not_terminal(seat):
     """specs/pager, "Read is not terminal": a message read and not marked done is presented again."""
     seat.deliver("a@example.invalid", "unfinished")
     _marks().write_text(
-        "a@example.invalid seen 7ed6b16b 2030-06-19T22:34:56+10:00\n"
-        "a@example.invalid read 7ed6b16b 2030-06-19T22:34:56+10:00\n"
+        "a@example.invalid seen 7ed6b16b 2030-06-09T22:34:56+10:00\n"
+        "a@example.invalid read 7ed6b16b 2030-06-09T22:34:56+10:00\n"
     )
     result = run()
     assert result.exit_code == EX_PAGE
@@ -260,7 +260,7 @@ def test_a_ruled_six_field_done_line_quiets_a_line(seat):
     lines still on disk; both must quiet."""
     seat.deliver("a@example.invalid", "handled")
     _marks().write_text(
-        "2030-06-20T22:34:56+10:00 a@example.invalid done alpha 7ed6b16b created TM-99\n"
+        "2030-06-09T22:34:56+10:00 a@example.invalid done alpha 7ed6b16b created TM-99\n"
     )
     assert run().exit_code == EX_NOTHING
 
@@ -268,7 +268,7 @@ def test_a_ruled_six_field_done_line_quiets_a_line(seat):
 def test_marks_are_matched_with_or_without_angle_brackets(seat):
     seat.deliver("a@example.invalid", "handled")
     _marks().write_text(
-        "<a@example.invalid> done 7ed6b16b 2030-06-19T22:34:56+10:00\n"
+        "<a@example.invalid> done 7ed6b16b 2030-06-09T22:34:56+10:00\n"
     )
     assert run().exit_code == EX_NOTHING
 
@@ -277,7 +277,7 @@ def test_another_sessions_done_does_not_quiet_this_one(seat):
     """Marks are the SESSION's."""
     seat.deliver("a@example.invalid", "still mine")
     _marks("sess-z").write_text(
-        "2030-06-20T22:34:56+10:00 a@example.invalid done alpha sess-z fixed\n")
+        "2030-06-09T22:34:56+10:00 a@example.invalid done alpha sess-z fixed\n")
     assert "still mine" in run().output
 
 
@@ -372,7 +372,7 @@ def test_the_stop_hook_says_not_armed_and_only_that(seat, monkeypatch):
     The expected line is READ from the page text, not written out again:
     specs/pager, "The arm instruction has one source" - a test that spelled
     the arm sentence a second time would be the copy 3.5 exists to remove
-    (this file was the fifth site, measured Mon 2030-09-16). What the
+    (this file was the fifth site, measured Sun 2030-06-09). What the
     line must SAY is pinned by `arm.txt` and tests/test_arm_instruction.py;
     what this test pins is that the Stop hook prints it and nothing else.
     """
@@ -558,7 +558,7 @@ def _queued(seat, session: str, mid: str, sender: str, subject: str,
     p = q / (name or f"{1923171200 + _serial}.M{_serial}P1.host")
     p.write_text(
         f"From: {sender}\nTo: alpha@example.invalid\nSubject: {subject}\n"
-        f"Message-ID: <{mid}>\nDate: Tue, 01 Jan 2030 12:00:00 +0000\n\nbody\n"
+        f"Message-ID: <{mid}>\nDate: Sun, 09 Jun 2030 12:00:00 +0000\n\nbody\n"
     )
     if mtime is not None:
         os.utime(p, (mtime, mtime))
@@ -653,7 +653,7 @@ def test_a_taking_directory_of_a_live_scoop_is_left_alone(seat, monkeypatch):
 
 
 def test_a_claim_elsewhere_cannot_re_present_a_given_item(seat, monkeypatch):
-    """F18 (SM-70, measured Sat 2030-09-14): a claim of another copy
+    """F18 (SM-70, measured Sun 2030-06-09): a claim of another copy
     bumps lastmod and the remind window expires - and the item still does
     not ride again, because the scoop reads neither."""
     monkeypatch.setenv("CLAUDE_CODE_SESSION_ID", "sess-a")
@@ -760,7 +760,7 @@ def test_nothing_is_recorded_when_nothing_was_given(seat, monkeypatch):
 
 def test_the_scoop_is_silent_when_there_is_nothing(seat, monkeypatch):
     """A ride-along line prints nothing when quiet - the carrier repeats
-    whatever it prints on every tool call (measured Thu 2030-09-12).
+    whatever it prints on every tool call (measured Sun 2030-06-09).
     Plain status keeps its sentence."""
     monkeypatch.setenv("CLAUDE_CODE_SESSION_ID", "sess-a")
     result = run("--new")
@@ -801,7 +801,7 @@ def _queued_to(seat, session: str, mid: str, subject: str, to: str,
     p.write_text(
         f"X-Original-To: {to}\nFrom: {sender}\nTo: alpha@example.invalid\n"
         f"Subject: {subject}\nMessage-ID: <{mid}>\n"
-        f"Date: Tue, 01 Jan 2030 12:00:00 +0000\n\nbody\n"
+        f"Date: Sun, 09 Jun 2030 12:00:00 +0000\n\nbody\n"
     )
     return p
 
@@ -873,7 +873,7 @@ def test_the_threshold_is_what_decides_it_not_the_sender(seat, monkeypatch):
 # runs BEFORE claude is exec'd, so no listener - the plugin's monitor least
 # of all - can exist yet. It used to read "pager is not listening - re-arm"
 # and the seat obeyed with a hand-armed listen that fought the monitor
-# (rca-001, findings/2030-10-13-rca-001.md). Now: the not-yet line, which
+# (rca-001, findings/2030-12-08-rca-001.md). Now: the not-yet line, which
 # still says how to arm once claude is up (it is true when no monitor will
 # run) and never says "nothing to arm" except about a refused arm.
 # `pre_claude` (conftest) makes `_seat.claude_for` answer None and records

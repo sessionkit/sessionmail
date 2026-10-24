@@ -1,6 +1,6 @@
 """`carry` and `carry!`, the rules half of wake carry: SM-640 do-002.
 
-SM-632 option D (findings/2030-10-08-wake-carry-design.md, Q1, E6, E10, E11),
+SM-632 option D (findings/2030-12-08-wake-carry-design.md, Q1, E6, E10, E11),
 built on a branch as ruled:
 
 - R1 `carry` and `carry!` are verbs. A carry IS a wake (`Rule.action` is
@@ -58,7 +58,7 @@ from sessionmail.rules import (
 SID = "9d0c6c51-74a4-97fc-f6a6-c3c350e58ad9"
 HOST = "hq.tailnet.example"
 ME = Me.of(session=SID, seat="ivan", host=HOST)
-NOW = datetime(2030, 12, 11, 12, 34, 56, tzinfo=timezone.utc)
+NOW = datetime(2030, 12, 8, 12, 34, 56, tzinfo=timezone.utc)
 ENV = {"SESSIONMAIL_HOST": "hq", "MAGICDNS_SUFFIX": "tailnet.example"}
 
 JUDY = f"Judy <judy@{HOST}>"

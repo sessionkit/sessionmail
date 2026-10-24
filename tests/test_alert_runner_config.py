@@ -32,7 +32,7 @@ SHORT = "box"
 FORMS = (HOST, SHORT)
 SID = "0b5e2c1a-7f3d-4e2b-9a61-5c8d0e4f7a21"
 ME = Me.of(session=SID, seat="watcher", host=HOST)
-NOW = datetime(2030, 12, 19, 12, 34, 56, tzinfo=timezone.utc)
+NOW = datetime(2030, 12, 8, 12, 34, 56, tzinfo=timezone.utc)
 ENV = {"SESSIONMAIL_HOST": SHORT, "MAGICDNS_SUFFIX": "example"}
 
 

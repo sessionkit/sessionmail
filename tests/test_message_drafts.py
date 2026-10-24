@@ -44,7 +44,7 @@ def draft(root: Path, key: str, *, mid: str = TURN, words: str = "so far I have 
     path = root / box / "cur" / f"{key}.M1P1.host:2,{flags}"
     path.write_text("\r\n".join([
         "From: ears+airpods@hq", "To: ears+airpods@hq",
-        "Date: Wed, 12 Jun 2030 12:00:00 +1000",
+        "Date: Sun, 09 Jun 2030 12:00:00 +1000",
         "Subject: a turn, still open", f"Message-ID: <{mid}>",
         "Ears-Kind: spoken", "Ears-Device: airpods",
     ]) + "\r\n\r\n" + words + "\n")

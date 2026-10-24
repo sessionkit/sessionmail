@@ -45,7 +45,7 @@ DENY = [
     ("env-prefix", 'SESSIONMAIL_FROM_NAME=Alpha message send bob -s "`x`" -f b'),
     ("full-path", '~/.local/bin/message send bob -s "`x`" -f b'),
     ("json", 'message send bob --json -s "`x`" --no-body'),
-    # the two genuine denials in 30 days of real transcripts (2030-09-30 scan)
+    # the two genuine denials in 30 days of real transcripts (2030-12-08 scan)
     ("corpus-echo", "message send alpha+memory -r '<a@b>' -s \"$(echo 'x')\" --no-body"),
     ("corpus-date", "message send alpha+memory -s \"RETIRED $(date '+%H:%M'): dup of 400\" -f b"),
     ("subst-inside-arith", 'message send bob -s "$(( $(wc -l < f) + 1 )) items" -f b'),

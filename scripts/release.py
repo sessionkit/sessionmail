@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
 """Cut a sessionmail release.
 
-Modelled on the release scripts of the sibling tools (taskmaster's and
-voicemode's). The ONE version lives in .claude-plugin/plugin.json; the
-build reads it from there (hatchling regex source in pyproject.toml), and
-this script is its single writer: it stamps plugin.json and
-marketplace.json textually, stamps CHANGELOG.md's [Unreleased] section
-with the version and date, commits, and tags.
+The ONE version lives in pyproject.toml (a static `version` in [project]).
+This script is its single writer: it sets it with `uv version`, which keeps
+uv.lock in step, and mirrors it into .claude-plugin/plugin.json and
+marketplace.json textually, so their formatting survives. It then stamps
+CHANGELOG.md's [Unreleased] section with the version and date, commits the
+files by name and makes the annotated tag. This is the family rule, and the
+sibling tools' release scripts work the same way.
 
 Pushing is deliberately NOT done for you.
 
@@ -22,15 +23,26 @@ import sys
 from datetime import date
 from pathlib import Path
 
+try:
+    import tomllib
+except ModuleNotFoundError:  # Python < 3.11: requires-python excludes it
+    raise SystemExit("release.py needs Python 3.11 or newer (tomllib)")
+
+PYPROJECT = Path("pyproject.toml")
+LOCK = Path("uv.lock")
 PLUGIN = Path(".claude-plugin/plugin.json")
 MARKET = Path(".claude-plugin/marketplace.json")
 CHANGELOG = Path("CHANGELOG.md")
+MIRRORS = (PLUGIN, MARKET)
 
 SEMVER = re.compile(r"^\d+\.\d+\.\d+$")
 
 
 def current_version():
-    return json.loads(PLUGIN.read_text())["version"]
+    project = tomllib.loads(PYPROJECT.read_text()).get("project", {})
+    if "version" not in project:
+        raise SystemExit("pyproject.toml has no static [project] version - nothing to read")
+    return project["version"]
 
 
 def set_json_version(path, version):
@@ -57,7 +69,7 @@ def stamp_changelog(version):
 
 
 def run(*args, dry):
-    print("  $ " + " ".join(args))
+    print("  $ " + " ".join(args), flush=True)
     if not dry:
         subprocess.run(args, check=True)
 
@@ -72,40 +84,49 @@ def main():
     if len(args) != 1 or not SEMVER.match(args[0]):
         raise SystemExit("usage: release.py <MAJOR.MINOR.PATCH> [--dry-run]")
     version = args[0]
+    tag = "v%s" % version
 
     if version == current_version():
         raise SystemExit("version %s is already current" % version)
     if subprocess.run(["git", "diff", "--quiet"]).returncode != 0:
         raise SystemExit("working tree is dirty - commit or stash first")
+    if subprocess.run(["git", "tag", "-l", tag], capture_output=True, text=True).stdout.strip():
+        raise SystemExit("tag %s already exists" % tag)
     if subprocess.run(["git", "var", "GIT_AUTHOR_IDENT"], capture_output=True).returncode != 0:
         raise SystemExit(
             "git has no author identity here - set user.name/user.email first.\n"
             "Refusing to edit files before a commit that cannot succeed."
         )
 
-    print("sessionmail %s -> %s" % (current_version(), version))
-    edits = [
-        (PLUGIN, set_json_version(PLUGIN, version)),
-        (MARKET, set_json_version(MARKET, version)),
-        (CHANGELOG, stamp_changelog(version)),
-    ]
-    for path, content in edits:
-        print("  updated %s" % path)
-        if not dry:
-            path.write_text(content)
+    print("sessionmail %s -> %s" % (current_version(), version), flush=True)
+    # Compute every edit before writing any, so a refusal leaves the tree as it was.
+    edits = [(path, set_json_version(path, version)) for path in MIRRORS]
+    edits.append((CHANGELOG, stamp_changelog(version)))
 
+    files = [PYPROJECT] + ([LOCK] if LOCK.exists() else []) + [p for p, _ in edits]
     try:
-        run("git", "add", "--", *[str(p) for p, _ in edits], dry=dry)
-        run("git", "commit", "-m", "chore: release v%s" % version, dry=dry)
-        run("git", "tag", "-a", "v%s" % version, "-m", "sessionmail v%s" % version, dry=dry)
-    except subprocess.CalledProcessError as exc:
+        # pyproject.toml (and uv.lock, re-locked without a sync) through uv.
+        run("uv", "version", version, "--no-sync", *(["--dry-run"] if dry else []), dry=False)
+        print("  updated %s" % PYPROJECT)
+        for path, content in edits:
+            print("  updated %s" % path)
+            if not dry:
+                path.write_text(content)
+        run("git", "add", "--", *[str(p) for p in files], dry=dry)
+        run("git", "commit", "-m", "chore: release %s" % tag, dry=dry)
+        run("git", "tag", "-a", tag, "-m", "sessionmail %s" % tag, dry=dry)
+    except (subprocess.CalledProcessError, FileNotFoundError) as exc:
+        cmd = " ".join(exc.cmd) if isinstance(exc, subprocess.CalledProcessError) else str(exc)
         raise SystemExit(
-            "\ngit step failed: %s\n"
-            "The version files ARE already edited on disk. Either finish by hand,\n"
+            "\nstep failed: %s\n"
+            "Some version files MAY already be edited on disk. Either finish by hand,\n"
             "or undo with:  git checkout -- %s"
-            % (" ".join(exc.cmd), " ".join(str(p) for p, _ in edits))
+            % (cmd, " ".join(str(p) for p in files))
         )
-    print("\nTagged v%s. Not pushed - when you are ready:" % version)
+    if dry:
+        print("\nDry run: nothing written, nothing committed, nothing tagged.")
+        return
+    print("\nTagged %s. Not pushed - when you are ready:" % tag)
     print("  git push && git push --tags")
     print("Then: uv build && uv publish   (PyPI), and refresh the installed plugin.")
 

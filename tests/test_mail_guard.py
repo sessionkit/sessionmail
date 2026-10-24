@@ -67,7 +67,7 @@ LAMP_2 = "session mail send self --from me --subject \"it's here\" 'body'"
 
 #: What a deny may no longer tell anyone to use: `session mail send` is
 #: retired, and so are its `--body-file` and the MCP `mail_send` tool (review
-#: 2030-10-01, H2). The verb itself may still be NAMED - it is what was typed.
+#: 2030-12-08, H2). The verb itself may still be NAMED - it is what was typed.
 RETIRED_ADVICE = ("--body-file", "`mail_send`", "--from <me>")
 
 

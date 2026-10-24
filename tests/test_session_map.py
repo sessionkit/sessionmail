@@ -30,7 +30,7 @@ from test_postfix_vmailbox_gen import HOST, _rows, _valias, generator, needs_jq 
 
 LIVE = "5e550000-1111-2222-3333-444455556666"
 GONE = "9a9e0000-1111-2222-3333-444455556666"
-NOTE = "# added by worker 2030-10-05 (message subscription add)\n# why: the build\n"
+NOTE = "# added by worker 2030-12-08 (message subscription add)\n# why: the build\n"
 
 
 def smhome() -> Path:

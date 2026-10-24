@@ -792,8 +792,8 @@ SUFFIX = "sm847.invalid"
 #: A heard turn as the drop wrote it before the fix, verbatim (a synthetic
 #: host and date). The control: keeper_sent is False.
 R1_BYTES = (b"Return-Path: <heard+airpods>\nX-Original-To: probe\nDelivered-To: probe@vps\n"
-            b"Received: by vps (sessionmail mail drop); Tue, 01 Jan 2030 12:00:00 +0000\n"
-            b"From: Ears <heard+airpods>\nTo: probe\nDate: Tue, 01 Jan 2030 12:00:00 +0000\n"
+            b"Received: by vps (sessionmail mail drop); Sun, 09 Jun 2030 12:00:00 +0000\n"
+            b"From: Ears <heard+airpods>\nTo: probe\nDate: Sun, 09 Jun 2030 12:00:00 +0000\n"
             b"Subject: R1 probe turn\nMessage-ID: <1902000000.11111.11111@vps.session-mail>\n"
             b"MIME-Version: 1.0\nContent-Type: text/plain; charset=utf-8\n"
             b"Content-Transfer-Encoding: 8bit\nEars-Kind: spoken\nX-Machine: vps\n\n"

@@ -50,8 +50,15 @@ DEFAULT_LAUNCHCTL = "/bin/launchctl"
 #: The kit's launchd family for mail, as the template's Label has it.
 LABEL_PREFIX = "dev.sessionkit.mail.seat-agent."
 #: The wrapper's own rules (seat/seat-agent): the address, and the socket
-#: cap. macOS's sun_path is 104 bytes with its NUL.
-ADDRESS_RE = re.compile(r"^[a-z0-9][a-z0-9._-]*$")
+#: cap. macOS's sun_path is 104 bytes with its NUL. The address is seat
+#: init's grammar (seat_init.ADDRESS): a name, or ONE '+' between two names
+#: (heard+airpods). A '+' is used verbatim, never mapped: in the Label
+#: (launchd.plist(5): any string; launchctl reads `gui/<uid>/<label>` with
+#: '/' as its only separator, and no address holds a '/'), the plist and log
+#: file names, and the default socket path under seat-keys/<address>/.
+#: `\Z`, not `$`: under re.match a `$` also matches before a trailing newline,
+#: so 'heard+airpods\n' would pass (seat_init.ADDRESS ends in `\Z` too).
+ADDRESS_RE = re.compile(r"[a-z0-9][a-z0-9._-]*(?:\+[a-z0-9][a-z0-9._-]*)?\Z")
 SOCK_MAX = 103
 PLACEHOLDER = re.compile(r"@([A-Z_]+)@")
 
@@ -135,9 +142,6 @@ def _check_platform() -> None:
 
 
 def _check_address(address: str) -> None:
-    if "+" in address:
-        raise Refused(f"'{address}' has a '+': a seat is named with a dot (bot.alice), "
-                      "as `message seat init` mints it")
     if not ADDRESS_RE.match(address):
         raise Refused(f"'{address}' is not a seat address")
 

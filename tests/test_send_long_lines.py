@@ -340,10 +340,10 @@ def test_no_churn_a_short_body_builds_the_8d35912_bytes_exactly():
     CTE 8bit and the body's own bytes, a 998-octet line included."""
     body = b"line one\n" + b"e" * LIMIT + b"\n"
     req = _sender.parse_argv(["beta", "--from", "eve", "--subject", "s"])
-    wire = _sender.build(req, body, host=HOST, date="Tue, 01 Jan 2030 12:00:00 +0000",
+    wire = _sender.build(req, body, host=HOST, date="Sun, 09 Jun 2030 12:00:00 +0000",
                          message_id="<1.2.3@testhost.session-mail>", references=[],
                          session="", signature=None)
-    assert wire == (b"From: eve\nTo: beta\nDate: Tue, 01 Jan 2030 12:00:00 +0000\n"
+    assert wire == (b"From: eve\nTo: beta\nDate: Sun, 09 Jun 2030 12:00:00 +0000\n"
                     b"Subject: s\nMessage-ID: <1.2.3@testhost.session-mail>\n"
                     b"MIME-Version: 1.0\nContent-Type: text/plain; charset=utf-8\n"
                     b"Content-Transfer-Encoding: 8bit\nX-Machine: testhost\n\n" + body)

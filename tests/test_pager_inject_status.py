@@ -79,11 +79,11 @@ def test_today_sums_this_sessions_inject_rows_and_splits_the_rides(seat):
 
 
 def test_another_day_and_another_session_are_not_today(seat):
-    raw_row(SESSION, "2030-12-12T09:00:00.000+11:00")
+    raw_row(SESSION, "2030-12-08T09:00:00.000+11:00")
     _injectlog.write(OTHER, via="batch", s="x" * 40, seat=seat)
     _injectlog.write(SESSION, via="batch", s="x" * 40, seat=seat)
     assert _injectlog.today_totals(SESSION)["injections"] == 1
-    assert _injectlog.today_totals(SESSION, today="2030-12-12")["tokens"] == 999
+    assert _injectlog.today_totals(SESSION, today="2030-12-08")["tokens"] == 999
 
 
 def test_the_rolled_generation_is_read_too(seat, monkeypatch):
@@ -166,7 +166,7 @@ def test_the_documented_jq_sums_tokens_per_seat_per_day(seat, monkeypatch):
     _injectlog.write(SESSION, via="batch", s="x" * 400, seat=seat)          # 100
     _injectlog.write(SESSION, via="monitor", s="x" * 40, seat=seat)         # 10
     _injectlog.lifecycle(SESSION, event="start", via="monitor", seat=seat, box="b", timeout=None)
-    raw_row(SESSION, "2030-12-12T09:00:00.000+11:00", tokens_est=7)
+    raw_row(SESSION, "2030-12-08T09:00:00.000+11:00", tokens_est=7)
     _injectlog.write(OTHER, via="prompt", s="x" * 80, seat=seat)            # 20
     hook = ROOT / "hooks" / "mail-guard" / "hook.py"
     import importlib.util
@@ -184,7 +184,7 @@ def test_the_documented_jq_sums_tokens_per_seat_per_day(seat, monkeypatch):
     got = sorted(tuple(line.split("\t")) for line in out.splitlines())
     assert got == sorted([
         ("(no seat)", today(), "1", "2"),            # a deny in a session with no seat row
-        ("alpha", "2030-12-12", "1", "7"),
+        ("alpha", "2030-12-08", "1", "7"),
         ("alpha", today(), "4", str(100 + 10 + 20 + 30)),   # the deny joins its session's seat
     ])
 

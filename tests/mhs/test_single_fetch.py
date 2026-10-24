@@ -69,7 +69,7 @@ def _msg(tmp, mid, subject, ts, body=None):
     m = {"id": mid, "match": True, "excluded": False, "filename": [str(fn)],
          "timestamp": ts, "date_relative": "", "tags": [], "crypto": {},
          "headers": {"Subject": subject, "From": "tst@host", "To": "tst@host",
-                     "Date": "Tue, 01 Jan 2030 12:00:00 +0000"}}
+                     "Date": "Sun, 09 Jun 2030 12:00:00 +0000"}}
     if body is not None:
         m["body"] = [{"id": 1, "content-type": "text/plain", "content": body}]
     return m

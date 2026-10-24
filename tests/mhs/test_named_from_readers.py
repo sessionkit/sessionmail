@@ -6,7 +6,7 @@ NAME: mhs-thread's short_from() got "Ivan" (so a named memory item was judged
 NOT the owner's and hidden, MHS 170), and session-mail-run got "ivan <ivan"
 (so a named WAKE item read as unverified and never ran). Both now take the
 innermost <...> first, as session-mail-verify's local_part() does; a bare
-From reduces exactly as before. (Since 2030-09-30 session-mail-run has no
+From reduces exactly as before. (Since 2030-12-08 session-mail-run has no
 reducer of its own: it verifies with mhs-thread's Members.)
 
 Run: uv run pytest -q tests/mhs/test_named_from_readers.py
@@ -53,7 +53,7 @@ FORMS = [
 @pytest.mark.parametrize("frm, want", FORMS)
 def test_the_owner_test_reduces_like_the_verifier(frm, want):
     """session-mail-run no longer reduces From itself: since the member walk
-    (2030-09-30) it verifies with mhs-thread's Members, the one owner test
+    (2030-12-08) it verifies with mhs-thread's Members, the one owner test
     every reader uses. So the parity pinned here is Members' owner check
     against the verifier's local_part() — case-blind, as that one is."""
     mhs = load("mhs-thread")

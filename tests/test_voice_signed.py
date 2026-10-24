@@ -116,7 +116,7 @@ class Rig:
 def turn(sender: str = "Ears <heard@hq>", *, body: str = BODY, extra: str = "") -> bytes:
     """A keeper turn as the wire carries it, unsigned."""
     return (f"From: {sender}\nTo: heard@hq\nSubject: hey eve\n"
-            f"Date: Thu, 03 Jan 2030 00:00:00 +0000\nMessage-ID: <turn{len(extra)}@hq>\n"
+            f"Date: Sun, 08 Dec 2030 00:00:00 +0000\nMessage-ID: <turn{len(extra)}@hq>\n"
             f"MIME-Version: 1.0\nContent-Type: text/plain; charset=utf-8\n"
             f"Ears-Kind: spoken\nEars-Device: airpods\nEars-Speaker: judy@hq\n"
             f"Ears-Rule: eve@hq=call\n{extra}\n{body}\n").encode()

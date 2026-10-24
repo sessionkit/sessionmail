@@ -436,7 +436,7 @@ def test_the_detached_child_without_a_suffix_runs_no_generator_and_records_why(t
     _no_suffix(monkeypatch)
     monkeypatch.setattr(_seat, "regen_maps", lambda *a, **kw: pytest.fail("generator ran"))
     record = tmp_path / "born"
-    record.write_text("2030-12-17T23:34:56+11:00 startup regen=detached\n")
+    record.write_text("2030-12-08T23:34:56+11:00 startup regen=detached\n")
     assert _birth._main(["--regen", str(tmp_path), "--record", str(record)]) == 0
     assert record.read_text().splitlines()[1] == ("generator NOT run (MagicDNS suffix unknown: "
                                                   "no tailscale here)")
@@ -473,7 +473,7 @@ def test_on_the_drop_the_detached_child_without_a_suffix_names_the_carrier(tmp_p
     monkeypatch.setenv("SESSIONMAIL_SENDMAIL", "drop")
     monkeypatch.setattr(_seat, "regen_maps", lambda *a, **kw: pytest.fail("generator ran"))
     record = tmp_path / "born"
-    record.write_text("2030-12-17T23:34:56+11:00 startup regen=detached\n")
+    record.write_text("2030-12-08T23:34:56+11:00 startup regen=detached\n")
     assert _birth._main(["--regen", str(tmp_path), "--record", str(record)]) == 0
     assert record.read_text().splitlines()[1] == _birth.DROP_REGEN
 

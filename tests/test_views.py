@@ -559,7 +559,7 @@ def _arrive(mail, raw: str, *, before: int = 0) -> str:
 def _raw(sender: str, *fields: str, body: str, subject: str = "a subject") -> str:
     return "\n".join([f"From: {sender}", "To: alpha@hq", f"Subject: {subject}",
                       f"Message-ID: <{abs(hash(body + subject)) % 10**9}@example.invalid>",
-                      "Date: Tue, 01 Jan 2030 12:00:00 +0000", *fields]) + "\n\n" + body + "\n"
+                      "Date: Sun, 09 Jun 2030 12:00:00 +0000", *fields]) + "\n\n" + body + "\n"
 
 
 def _given():
@@ -601,7 +601,7 @@ def test_scoop_a_voice_turn_whole_with_its_device(scoop, keeper_signs):
                         body=body, subject="hey alpha"))
     lines = _given().output.splitlines()
     # SM-562: the heard line, device in the bracket, no subject preview.
-    hhmmss = datetime(2030, 1, 1, 12, 0, tzinfo=timezone.utc).astimezone().strftime("%H:%M:%S")
+    hhmmss = datetime(2030, 6, 9, 12, 0, tzinfo=timezone.utc).astimezone().strftime("%H:%M:%S")
     assert lines[0] == f"[heard {hhmmss} airpods ?]"
     assert lines[1:] == [body]
 
@@ -613,7 +613,7 @@ def test_scoop_an_unverified_turn_is_fenced_and_capped(scoop):
     _arrive(scoop, _raw(KEEPER_FROM, "Ears-Kind: spoken", "Ears-Device: airpods",
                         "Ears-Speaker: judy@hq", body=body, subject="hey alpha"))
     lines = _given().output.splitlines()
-    hhmmss = datetime(2030, 1, 1, 12, 0, tzinfo=timezone.utc).astimezone().strftime("%H:%M:%S")
+    hhmmss = datetime(2030, 6, 9, 12, 0, tzinfo=timezone.utc).astimezone().strftime("%H:%M:%S")
     assert lines[0] == f"[heard UNVERIFIED {hhmmss} airpods]"
     assert lines[1] == _views.UNVERIFIED_FENCE
     assert lines[2] == body[:_views.TEXT_CAP]

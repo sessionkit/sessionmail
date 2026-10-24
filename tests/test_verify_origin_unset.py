@@ -84,7 +84,7 @@ class World:
         """A v2 mail with a BARE To:, signed for real with ORIGIN as the
         signer's `origin_of()` would have given it."""
         head = [f"From: {SEAT} <{SEAT}@host.example>", "To: eve",
-                "Date: Tue, 01 Jan 2030 12:00:00 +0000", "Subject: origin unset",
+                "Date: Sun, 09 Jun 2030 12:00:00 +0000", "Subject: origin unset",
                 "Message-ID: <1.2.3@host.example>", "MIME-Version: 1.0",
                 "Content-Type: text/plain; charset=utf-8",
                 "Content-Transfer-Encoding: 8bit"]

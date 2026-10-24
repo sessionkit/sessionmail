@@ -18,7 +18,7 @@ transcript, not by the agent that already typed the command).
 
 WHAT IT REFUSES, on a command-position invocation of `session mail send` (or of
 the resolved script `session-mail-send`, which is how most real callers spell
-it) - a verb RETIRED on 2030-09-30, so every deny below sends the caller to
+it) - a verb RETIRED on 2030-12-08, so every deny below sends the caller to
 `message send` and its MCP tool, never back to the retired forms:
 
   1. an inline body — a second positional word, or anything after a literal `--`
@@ -565,7 +565,7 @@ def judge_message(args, cmd):
     words are recipients; an inline body is the CLI's to refuse, and `-f -`
     reads stdin by design, so neither the inline-body nor the heredoc/pipe
     rule is here. Parsed as click parses it (measured against the command,
-    2030-09-30): options may follow recipients; `-sX` is `-s X`; the word
+    2030-12-08): options may follow recipients; `-sX` is `-s X`; the word
     after `-s` is its value even when it starts with `-`; `--` ends the
     options; no long option may be abbreviated."""
     last = len(args) - 1

@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "sessionmail"
-dynamic = ["version"]
+version = "0.3.0"
 description = "sessionmail - mail for coding agents: message, pager and memory over one maildir."
 readme = "README.md"
 requires-python = ">=3.11,<3.15"
@@ -50,14 +50,11 @@ Homepage = "https://github.com/sessionkit/sessionmail"
 Repository = "https://github.com/sessionkit/sessionmail"
 
 # ── Version: one source of truth ──────────────────────────────────────
-# .claude-plugin/plugin.json holds the version and scripts/release.py is
-# its single writer (it stamps plugin.json and marketplace.json). The
-# build READS it from there; hatchling's regex version source is why
-# hatchling is the backend (session's precedent, same reasoning).
-[tool.hatch.version]
-source = "regex"
-path = ".claude-plugin/plugin.json"
-pattern = '"version"\s*:\s*"(?P<version>[^"]+)"'
+# The ONE version is `version` in [project] above, static. scripts/release.py
+# is its single writer (through `uv version`, which keeps uv.lock in step)
+# and mirrors it into .claude-plugin/plugin.json and marketplace.json. This
+# is the family rule (the kit's docs/family-release.md): the version lives
+# in pyproject.toml and the release mirrors it.
 
 # ── Package data: the postfix map generator, and the arm instruction ──
 #

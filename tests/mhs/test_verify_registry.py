@@ -244,7 +244,7 @@ def v1_mail(tmp_path: Path, frm: str) -> tuple[Path, str]:
     if not key.exists():
         subprocess.run(["ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-f", str(key)], check=True)
     head = {"From": frm, "To": "uma", "Subject": "s",
-            "Date": "Tue, 01 Jan 2030 12:00:00 +0000", "Message-ID": "<1.2.3@hq.session-mail>"}
+            "Date": "Sun, 09 Jun 2030 12:00:00 +0000", "Message-ID": "<1.2.3@hq.session-mail>"}
     body = b"hello\n"
     data = _sender.canonical(head["From"], head["To"], head["Subject"], head["Date"],
                              head["Message-ID"], body)

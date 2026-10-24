@@ -41,7 +41,7 @@ S = "3d9d583c-44b9-7c6e-de8e-d5939a3a8d0f"     # the session asked about
 T = "a29b85de-8921-b813-4c63-cc98dab885f0"     # another session
 ID = "2000000000.11111.11111@hq.session-mail"
 OTHER = "2000000100.22222.22222@hq.session-mail"
-STAMP = "2030-01-01T12:00:00Z"
+STAMP = "2030-06-09T12:00:00Z"
 
 
 # ── the rig ──────────────────────────────────────────────────────────────
@@ -79,7 +79,7 @@ def six(mid: str = ID, mark: str = "read", seat: str = "worker", session: str = 
 
 
 def four(mid: str = ID, mark: str = "done", session: str = S, stamp: str = STAMP) -> str:
-    """A marks line in the four-field form written before Wed 2030-09-11."""
+    """A marks line in the four-field form written before Sun 2030-12-08."""
     return f"{mid} {mark} {session} {stamp}"
 
 
@@ -513,8 +513,9 @@ def test_21_another_sessions_mark_is_not_this_sessions():
 
 
 def _long_answer() -> None:
-    """45 rows for ID across the END of DST on hq (03:00 AEDT 2030-04-07,
-    `+11:00` -> `+10:00`), placed so that three wrong builds each keep a
+    """45 rows for ID across a UTC-offset change on hq (`+11:00` -> `+10:00`,
+    as at the end of DST; dated 2030-06-09, the earlier synthetic Sunday,
+    with the offsets kept), placed so that three wrong builds each keep a
     different 40 from the right one:
 
     - newest by STRING: the four `02:5x+11:00` stamps sort after the forty
@@ -526,13 +527,13 @@ def _long_answer() -> None:
     (02:00:00-02:00:38+10:00). The five cut: four +11:00 marks and the
     unreadable one."""
     root = make_mail()
-    newest = [six(mark="seen", reason=f"new{i}", stamp=f"2030-04-07T02:00:{i:02d}+10:00")
+    newest = [six(mark="seen", reason=f"new{i}", stamp=f"2030-06-09T02:00:{i:02d}+10:00")
               for i in range(39)]
-    oldest = [six(mark="read", reason=f"old{i}", stamp=f"2030-04-07T02:5{i}:00+11:00")
+    oldest = [six(mark="read", reason=f"old{i}", stamp=f"2030-06-09T02:5{i}:00+11:00")
               for i in range(4)]
     write_marks(root, *newest, *oldest, six(mark="done", reason="old-unreadable",
                                             stamp="not-a-stamp"))
-    write_verdicts(root, verdict(stamp="2030-04-07T02:30:00+10:00"))
+    write_verdicts(root, verdict(stamp="2030-06-09T02:30:00+10:00"))
 
 
 def test_22_a_long_answer_keeps_the_newest_40_by_time_and_says_so_last():
@@ -551,7 +552,7 @@ def test_22_a_long_answer_keeps_the_newest_40_by_time_and_says_so_last():
 
 
 def test_22b_exactly_40_rows_has_no_cut_line():
-    write_marks(make_mail(), *[six(reason=f"r{i}", stamp=f"2030-01-08T12:{i:02d}:00+11:00")
+    write_marks(make_mail(), *[six(reason=f"r{i}", stamp=f"2030-12-08T12:{i:02d}:00+11:00")
                                for i in range(40)])
     result = receipt(ID, "--session", S)
     assert result.exit_code == 0
@@ -560,8 +561,8 @@ def test_22b_exactly_40_rows_has_no_cut_line():
 
 
 def test_22c_kept_rows_print_in_recorded_order():
-    stamps = ["2030-01-08T12:05:00+11:00", "2030-01-08T12:01:00+11:00",
-              "2030-01-08T12:03:00+11:00"]
+    stamps = ["2030-12-08T12:05:00+11:00", "2030-12-08T12:01:00+11:00",
+              "2030-12-08T12:03:00+11:00"]
     write_marks(make_mail(), *[six(reason=f"r{i}", stamp=s) for i, s in enumerate(stamps)])
     rows = [line for line in receipt(ID, "--session", S).stdout.splitlines()
             if line.startswith("mark")]

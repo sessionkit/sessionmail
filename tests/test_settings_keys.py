@@ -37,6 +37,34 @@ KEYS = [
     ("postfix.generator", "SESSIONMAIL_VMAILBOX_GEN", "/opt/file/gen", "/opt/var/gen", None),
     ("postfix.relay_domain", "SESSIONMAIL_RELAY_DOMAIN", "relay.file", "relay.var", "relay.home"),
     ("postfix.origin", "SESSIONMAIL_ORIGIN", "origin.file", "origin.var", None),
+    # the host-to-host pull: no required key has a default
+    ("pull.imap_host", "SESSIONMAIL_PULL_IMAP_HOST", "imap.file.example", "imap.var.example",
+     None),
+    ("pull.imap_port", "SESSIONMAIL_PULL_IMAP_PORT", 1993, "2993", 993),
+    ("pull.login", "SESSIONMAIL_PULL_LOGIN", "{box}*file", "{box}*var", None),
+    ("pull.secret_command", "SESSIONMAIL_PULL_SECRET_COMMAND", "cat /opt/file/secret",
+     "cat /opt/var/secret", None),
+    ("pull.relay_domain", "SESSIONMAIL_PULL_RELAY_DOMAIN", "pull.file", "pull.var", None),
+    ("pull.listener", "SESSIONMAIL_PULL_LISTENER", "127.0.0.1:2525", "127.0.0.1:2526", None),
+    ("pull.vmailbox", "SESSIONMAIL_PULL_VMAILBOX", "hash:/opt/file/vmailbox",
+     "hash:/opt/var/vmailbox", None),
+    ("pull.boxes_file", "SESSIONMAIL_PULL_BOXES_FILE", "/opt/file/pull.boxes",
+     "/opt/var/pull.boxes", "~/.sessionkit/mail/settings/pull.boxes"),
+    ("pull.state_dir", "SESSIONMAIL_PULL_STATE_DIR", "/opt/file/puller", "/opt/var/puller",
+     "~/.sessionmail/puller"),
+    ("pull.local_domain", "SESSIONMAIL_PULL_LOCAL_DOMAIN", "local-file", "local-var", None),
+    ("pull.own_ips", "SESSIONMAIL_PULL_OWN_IPS", ["192.0.2.1"], "192.0.2.2", None),
+    ("pull.unsorted_box", "SESSIONMAIL_PULL_UNSORTED_BOX", "unsorted-file", "unsorted-var", None),
+    ("pull.audit_box", "SESSIONMAIL_PULL_AUDIT_BOX", "audit-file", "audit-var", None),
+    ("pull.audit_to", "SESSIONMAIL_PULL_AUDIT_TO", ["alpha@example.org"], "beta@example.org",
+     None),
+    ("pull.audit_sendmail", "SESSIONMAIL_PULL_AUDIT_SENDMAIL", "/opt/file/sendmail",
+     "/opt/var/sendmail", "/usr/sbin/sendmail"),
+    ("pull.label", "SESSIONMAIL_PULL_LABEL", "org.example.file", "org.example.var",
+     "dev.sessionkit.mail.puller"),
+    ("pull.backfill_seconds", "SESSIONMAIL_PULL_BACKFILL_SECONDS", 3600, "60", 86400),
+    ("pull.reissue_seconds", "SESSIONMAIL_PULL_REISSUE_SECONDS", 120, "30", 300),
+    ("pull.login_gate", "SESSIONMAIL_PULL_LOGIN_GATE", 2, "8", 4),
 ]
 
 #: What the reader gives for each key's VARIABLE value: the text, stripped,
@@ -107,7 +135,7 @@ def test_the_schema_names_every_key_with_its_variable():
         for part in name.split("."):
             node = node["properties"][part]
         assert node["x-env"] == var, name
-    for block in ("notmuch", "postfix"):
+    for block in ("notmuch", "postfix", "pull"):
         assert schema["properties"][block]["additionalProperties"] is False
 
 
@@ -141,6 +169,27 @@ def test_the_schema_accepts_the_design_example():
                     "relay_domain": "relay.home", "origin": "host-a.example.ts.net"},
     }
     jsonschema.validate(example, json.loads(_settings.schema()))
+
+
+def test_the_schema_accepts_a_pull_block():
+    """A full `pull` block, as docs/settings.md shows one, passes the shipped
+    schema; a typo in it, a login with no {box}, or a listener with no port
+    does not."""
+    jsonschema = pytest.importorskip("jsonschema")
+    schema = json.loads(_settings.schema())
+    pull = {"imap_host": "imap.example.org", "imap_port": 993, "login": "{box}*master",
+            "secret_command": "cat ~/.config/pull.secret", "relay_domain": "relay.example",
+            "listener": "127.0.0.1:2525", "vmailbox": "hash:/etc/postfix/vmailbox",
+            "boxes_file": "~/pull.boxes", "state_dir": "~/puller", "local_domain": "host-a",
+            "own_ips": ["192.0.2.1", "2001:db8::1"], "unsorted_box": "_unsorted",
+            "audit_box": "_audit", "audit_to": "alpha@example.org,beta@example.org",
+            "audit_sendmail": "/usr/sbin/sendmail", "label": "org.example.puller",
+            "backfill_seconds": 0, "reissue_seconds": 300, "login_gate": 4}
+    jsonschema.validate({"pull": pull}, schema)
+    for bad in ({"imap_hst": "x"}, {"login": "master"}, {"listener": "127.0.0.1"},
+                {"label": "has space"}, {"login_gate": 0}, {"audit_sendmail": "sendmail"}):
+        with pytest.raises(jsonschema.ValidationError):
+            jsonschema.validate({"pull": bad}, schema)
 
 
 @pytest.mark.parametrize("bad", [{"notmuch": {"profle": "x"}}, {"postfix": {"orgin": "x"}},

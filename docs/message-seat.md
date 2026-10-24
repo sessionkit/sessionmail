@@ -69,7 +69,7 @@ registry or the cert.
 
 ### `message seat agent --install ADDRESS [SOCKET]`
 
-1. **Checks, with nothing written.** It is macOS. ADDRESS is a seat name.
+1. **Checks, with nothing written.** It is macOS. ADDRESS is a seat name or a plus address (`heard+airpods`).
    `$SESSIONMAIL_HOME/seat-keys/ADDRESS/` holds `id_ed25519` and `seat.pub`.
    SOCKET is absolute, 103 bytes at most, and its directory exists; it
    defaults to `agent.sock` beside the key. `message` is on PATH.

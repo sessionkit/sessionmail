@@ -118,13 +118,13 @@ def turn(mid: str, rule: str | None, *, device: str = DEVICE, prefixed: bool = F
         f"To: {addr}",
         f"Subject: heard {mid}",
         f"Message-ID: <{mid}>",
-        "Date: Tue, 01 Jan 2030 12:00:00 +0000",
+        "Date: Sun, 09 Jun 2030 12:00:00 +0000",
         f"{x}Ears-Kind: spoken",
         f"{x}Ears-Device: {device}",
         f"{x}Ears-Speaker: judy@{HOST}",
         f"{x}Ears-Seq: 1",
-        f"{x}Ears-Start: 2030-01-01T11:59:52+00:00",
-        f"{x}Ears-End: 2030-01-01T12:00:00+00:00",
+        f"{x}Ears-Start: 2030-06-09T11:59:52+00:00",
+        f"{x}Ears-End: 2030-06-09T12:00:00+00:00",
     ]
     if rule is not None:
         head.append(f"{x}Ears-Rule: {rule}")
@@ -710,7 +710,7 @@ def _layers(home: Path, locked: Path, sid: str = EVE, *, breakthrough: bool = Tr
 
 ENV = {"SESSIONMAIL_HOST": HOST, "MAGICDNS_SUFFIX": SUFFIX}
 ME = rules.Me.of(session=EVE, seat="eve", host=FQDN)
-NIGHT = datetime(2030, 6, 13, 2, 0).astimezone()
+NIGHT = datetime(2030, 6, 9, 2, 0).astimezone()
 
 
 def verdict(raw: bytes, layers, signed=KEEPER_SIGNED) -> tuple[str, str | None, str]:

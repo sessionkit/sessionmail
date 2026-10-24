@@ -1,6 +1,6 @@
 #!/bin/sh
 # post-new — auto-classification of fleet mail at index time.
-# Installed 2030-07-15. Runs after every `notmuch new` indexes new
+# Installed 2030-06-09. Runs after every `notmuch new` indexes new
 # messages; retags are batch + idempotent (the `not tag:` guards keep
 # re-runs cheap).
 #
@@ -69,7 +69,7 @@ printf '+agent -- %s and not tag:agent\n+memory -- %s and not tag:memory\n' \
 # ---------------------------------------------------------------------------
 # RE-DERIVE `superseded` FROM THE MESSAGES THEMSELVES
 #
-# Why this exists. Measured on 2030-07-15, not assumed:
+# Why this exists. Measured on 2030-06-09, not assumed:
 #
 #   notmuch tags live in a Xapian index, and that index is a DERIVED artefact.
 #   You are meant to be able to delete it and rebuild from the maildir. We did.
@@ -93,7 +93,7 @@ printf '+agent -- %s and not tag:agent\n+memory -- %s and not tag:memory\n' \
 # --supersedes <msgid>` writes a `Supersedes:` header into the message (the
 # STANDARD one: RFC 2156 for email, RFC 5536 §3.2.12 for netnews); this hook
 # reads those headers back out of the maildir and re-applies the tag. Messages
-# from the first hours of 2030-07-15 carry the pre-rename `X-Supersedes:`
+# from the first hours of 2030-06-09 carry the pre-rename `X-Supersedes:`
 # spelling — immutable, so this hook honours BOTH forever.
 #
 #   The tag is how you find it. The message is how you know it's true.
@@ -102,20 +102,20 @@ printf '+agent -- %s and not tag:agent\n+memory -- %s and not tag:memory\n' \
 # messages on disk. Delete the whole index and every correction comes back.
 #
 # Idempotent. Cost history: v1 ran one `grep -l` pass over the
-# whole corpus per run — fine at 1.4k messages, but by 2030-08-06 the corpus
+# whole corpus per run — fine at 1.4k messages, but by 2030-12-08 the corpus
 # was 16k and the scan was 0.586s of `notmuch new`'s 0.642s (91.3%). Carriers
 # are now found via the INDEXED headers (sub-ms):
 #   index.header.Supersedes=Supersedes   index.header.XSupersedes=X-Supersedes
-# Both live in ~/.notmuch-config (set 2030-08-06).
+# Both live in ~/.notmuch-config (set 2030-12-08).
 # That file survives index deletion, so rebuild-from-nothing still holds; a
 # NEWLY added indexed header needs a one-off `notmuch reindex '*'` (~11s).
 # The sexp presence form is the ONLY faithful query measured: infix wildcard /
 # regex forms (`Supersedes:"*"`, `Supersedes:/./`) over-match — 256 hits for 5
-# real headers on 2030-08-06. If the indexed query errors (config entry lost,
+# real headers on 2030-12-08. If the indexed query errors (config entry lost,
 # notmuch built without sexp), the hook falls back to the original full grep
 # and SAYS SO on stderr — a silent degrade here would look exactly like an
 # idle mailbox.
-# 2030-09-08: O(NEW CARRIERS), ONE PROCESS. Measured at load 75-88:
+# 2030-12-08: O(NEW CARRIERS), ONE PROCESS. Measured at load 75-88:
 # the loop below used to walk EVERY carrier (750 of 40k messages) and
 # spawn one `notmuch tag` PER CARRIER PER DELIVERY - 94 deliveries in flight
 # = ~70,000 tag processes queued on the single Xapian write lock (163 notmuch
@@ -167,7 +167,7 @@ printf '%s\n' "$carriers" \
       # target arrives later (another box, a sync, a late delivery), the
       # carrier stays pending so the next run tags the target; marking it
       # applied here would leave the target unsuperseded until an index
-      # wipe (found by the sessionmail test, 2030-10-01).
+      # wipe (found by the sessionmail test, 2030-12-08).
       # A failed or empty count leaves the carrier pending; the next run retries.
       n=$("$NOTMUCH" count -- "$supq" 2>/dev/null)
       case "$cid:$n" in

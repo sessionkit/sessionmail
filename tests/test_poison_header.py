@@ -51,7 +51,7 @@ def _wire(*, mid: bytes = POISON_ID, subject: str = "poison", extra: bytes = b""
           to: str = "sess-a@example.invalid") -> bytes:
     return (b"From: alpha@example.invalid\n"
             + f"To: {to}\nSubject: {subject}\n".encode()
-            + b"Date: Tue, 01 Jan 2030 12:00:00 +0000\n"
+            + b"Date: Sun, 09 Jun 2030 12:00:00 +0000\n"
             + b"Message-ID: " + mid + b"\n" + extra
             + b"\npoison body\n")
 

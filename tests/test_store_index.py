@@ -1045,9 +1045,9 @@ class Joined(Stores):
     def __init__(self, tmp: Path):
         super().__init__(tmp)
         self.other, _ = self.add_store("other")
-        dated(self.root / "p1" / "new" / "n1", "n1", "Thu, 03 Oct 2030 10:00:00 +0000")
-        dated(self.other / "p1" / "new" / "n2", "n2", "Mon, 07 Oct 2030 10:00:00 +0000")
-        dated(self.root / "p2" / "new" / "n3", "n3", "Fri, 11 Oct 2030 10:00:00 +0000")
+        dated(self.root / "p1" / "new" / "n1", "n1", "Sun, 09 Jun 2030 10:00:00 +0000")
+        dated(self.other / "p1" / "new" / "n2", "n2", "Sun, 09 Jun 2030 11:00:00 +0000")
+        dated(self.root / "p2" / "new" / "n3", "n3", "Sun, 08 Dec 2030 10:00:00 +0000")
         self.ok("build", "acme")
         self.ok("build", "other")
 

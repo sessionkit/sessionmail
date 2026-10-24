@@ -252,7 +252,8 @@ def test_flag_misuse_is_refused(seat, launchctl_fake, argv, words):
 
 @darwin
 @pytest.mark.parametrize("address, words", [
-    ("bot+alice", "has a '+'"),
+    ("bot+alice+x", "is not a seat address"),
+    ("bot+alice", "mint the seat first"),   # a plus seat is a seat (test_seat_plus.py)
     ("Bot.Alice", "is not a seat address"),
     ("bot.bob", "mint the seat first"),
 ])

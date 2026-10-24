@@ -192,7 +192,7 @@ def send(to: tuple[str, ...], subject: str, body_file: str | None, no_body: bool
     """message send - send one message to one or more addresses; print its id
 
     \f
-    fold-override: 2030-10-03 maintainer - the send form, its flags and exit codes are above the fold; the page grew with the subject shortener
+    fold-override: 2030-06-09 maintainer - the send form, its flags and exit codes are above the fold; the page grew with the subject shortener
     """
     # `--json` (openspec/changes/agents-send-door): ONE object on stdout and
     # nothing on stderr; a program reads one key, `sent`. A refusal carries
@@ -2016,7 +2016,7 @@ def seat() -> None:
         """  --registry DIR   the registry dir (allowed_signers, certs/) in its
                    git repo; there is NO default
   --machine NAME   the cert's machine: line (default: hostname -s)
-  ADDRESS          the seat, e.g. bot.alice (a dot, never a +)
+  ADDRESS          the seat: a name (bot.alice) or a plus address (heard+airpods)
 
 Generates an ed25519 key in $SESSIONMAIL_HOME/seat-keys/ADDRESS/ (dir
 0700, key 0600), self-signs a birth cert, and registers both in DIR in
@@ -2410,10 +2410,10 @@ def receipt(message_id: str, session: str, as_json: bool) -> None:
         """Prints the WHOLE plan first (sudo steps, then every step's state),
 then applies what is TODO; a sudo step runs only at a tty. Re-run safely.
 
-  --box NAME   make box NAME too (repeatable); the operator's box
-               (operator.mailbox, else the account name) is always made
+  --box NAME   make box NAME too (repeatable); the operator's is always made
   --dry-run    print the plan; apply nothing, write nothing
   --write-maps write postfix maps on a host with none (an MTA carrier)
+  --pull       install the mail puller's LaunchAgent (macOS; docs/pull.md)
 
 Makes the agents root, the drop's boxes and its own notmuch profile
 (never over a file or a database); links the hooks into its hook_dir.

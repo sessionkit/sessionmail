@@ -70,7 +70,7 @@ def _v1(tmp_path: Path) -> bytes:
     key = tmp_path / "k"
     subprocess.run(["ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-f", str(key)], check=True)
     head = {"From": "eve", "To": "uma", "Subject": "Build green",
-            "Date": "Tue, 01 Jan 2030 12:00:00 +0000", "Message-ID": "<1.2.3@hq.session-mail>"}
+            "Date": "Sun, 09 Jun 2030 12:00:00 +0000", "Message-ID": "<1.2.3@hq.session-mail>"}
     body = b"hello\n"
     data = _sender.canonical(head["From"], head["To"], head["Subject"], head["Date"],
                              head["Message-ID"], body)
@@ -206,7 +206,7 @@ def trusted(tmp_path):
     for k in (key, bkey):
         subprocess.run(["ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-f", str(k)], check=True)
     head = {"From": "eve", "To": "uma", "Subject": "env check",
-            "Date": "Tue, 01 Jan 2030 12:00:00 +0000", "Message-ID": "<749.1@hq.session-mail>"}
+            "Date": "Sun, 09 Jun 2030 12:00:00 +0000", "Message-ID": "<749.1@hq.session-mail>"}
     body = b"hello\n"
     data = _sender.canonical(head["From"], head["To"], head["Subject"], head["Date"],
                              head["Message-ID"], body)

@@ -139,7 +139,7 @@ def test_cause3_done_after_a_reminder_stops_the_reminders(rig, monkeypatch):
 
 
 def _resident_done(rig, monkeypatch, tmp_path, mid: str, how: str) -> None:
-    """The live datum's shape (findings/foreman-live-datum-2030-10-16.md):
+    """The live datum's shape (findings/foreman-live-datum-2030-12-08.md):
     the link sits in ride/new, the mail was given, read and marked `done`
     more than a reminder window ago, and no scoop has run. HOW the `done`
     is written: `write` (the one writer, direct), `bare` (`message mark 1

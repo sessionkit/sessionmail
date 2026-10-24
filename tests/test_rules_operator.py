@@ -29,7 +29,7 @@ from sessionmail import _operator, _seat, pager, rules
 HOST = "hq.example"
 SID = "0be1a70e-1111-2222-3333-444455556666"
 ME = rules.Me.of(session=SID, seat="eve", host=HOST)
-NOW = datetime(2030, 12, 16, 12, 34, 56, tzinfo=timezone.utc)
+NOW = datetime(2030, 12, 8, 12, 34, 56, tzinfo=timezone.utc)
 SUBSCRIBED = ("X-Original-To", "atomnote")   # not to me: only a carry! line wakes it
 
 ALICE_HOST = '{"operator": {"mailbox": "alice", "privileged": ["alice"]}}'

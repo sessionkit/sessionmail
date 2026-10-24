@@ -97,8 +97,8 @@ def test_the_seat_agent_shim_passes_its_arguments_and_refusals_through(tmp_path)
     env_ = {"PATH": "/usr/bin:/bin", "HOME": str(tmp_path), "SESSIONMAIL_HOME": str(tmp_path / "h")}
     rc, _, err = run([AGENT_SHIM], env_)
     assert rc == 2 and "message seat agent: REFUSED - usage: message seat agent ADDRESS [SOCKET]" in err
-    rc, _, err = run([AGENT_SHIM, "uma+desk"], env_)
-    assert rc == 2 and "has a '+'" in err
+    rc, _, err = run([AGENT_SHIM, "uma+desk+x"], env_)
+    assert rc == 2 and "'uma+desk+x' is not a seat address" in err
     rc, _, err = run([AGENT_SHIM, ADDRESS], env_)
     assert rc == 2 and f"no key home {tmp_path / 'h'}/seat-keys/{ADDRESS}" in err
 

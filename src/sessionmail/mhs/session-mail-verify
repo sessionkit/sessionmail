@@ -16,7 +16,7 @@
 # (no header) · 3 usage / arg parse / unreadable mailfile.
 #
 # --trust runs the full three-leg trust test — the boot-mail
-# ritual every keyed agent otherwise performed by hand (measured 2030-07-28:
+# ritual every keyed agent otherwise performed by hand (measured 2030-06-09:
 # ~10 tool calls and 4 dead ends per boot, per agent):
 #   1. signature-crypto + principal-binding (the checks above)
 #   2. registry-cert: $SESSION_REGISTRY/certs/<sid>.cert exists — an EXACT
@@ -484,7 +484,7 @@ def run_trust(sid, keyline, msg):
         input=cert_bytes, capture_output=True,
     )
     # ssh-keygen -Y verify exits 255 on failure, NOT 1 — the only pass is
-    # rc == 0 (proven live 2030-07-28: forged sig => "incorrect
+    # rc == 0 (proven live 2030-06-09: forged sig => "incorrect
     # signature", rc 255). Testing rc == 1 would pass forgeries.
     if pb.returncode != 0:
         out("bless-sig         : ❌ PRESENT but does NOT verify over the "

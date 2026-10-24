@@ -2,10 +2,10 @@ Return-Path: <acme+lead@hq.example.net>
 X-Original-To: ivan
 Delivered-To: ivan@hq.example.net
 Received: by hq.example.net (Postfix, from userid 501)
-	id 0123456789ABC; Tue,  1 Jan 2030 12:00:00 +0000 (UTC)
+	id 0123456789ABC; Sun,  9 Jun 2030 12:00:00 +0000 (UTC)
 From: acme+lead@hq.example.net
 To: ivan@hq.example.net
-Date: Tue, 01 Jan 2030 12:00:00 +0000
+Date: Sun, 09 Jun 2030 12:00:00 +0000
 Subject: Re: cc vector
 Message-ID: <1901000000.5.1@hq.session-mail>
 In-Reply-To: <1901000000.4.1@hq.session-mail>
@@ -24,7 +24,7 @@ X-Session-Signature: v=2; a=sshsig; n=session-mail@example.com;
  p=l43CQNDei/cycWkmEWVNnb0gRlmuLHmk5P5gugPBrfQ=;
  b=U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgmn8BxxaYqsxu3NiwTjLVHtshGWTG
  ns5uRHAWpWHkUbAAAAAYc2Vzc2lvbi1tYWlsQGV4YW1wbGUuY29tAAAAAAAAAAZzaGE1MTIA
- AABTAAAAC3NzaC1lZDI1NTE5AAAAQBvPlmkpdNkUIFQa/IS1NV8qDSbCz6CiqlvDIbFQ0I4A
- 5KM1FEXKbK35MFPRcttq+W0gvCy6Fu7ReLfHwHa43wk=
+ AABTAAAAC3NzaC1lZDI1NTE5AAAAQMiSRTcyrwcyWpmJ+a7ttpy9L2rEGkyl1hxO/gS3u3F0
+ IWMbX4NFD+JMVCQMAp8TLbRA0Wy1pPTV9LNfUJiQ8wg=
 
 A reply, superseding a draft.

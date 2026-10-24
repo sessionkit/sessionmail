@@ -201,55 +201,55 @@ def test_three_groups_and_twenty_one_verbs():
     are `message|pager|memory mcp` (a stateless MCP server from the same
     model as the CLI; THREE servers, one per command), each page authored to 40/400 first. Verb 16
     is `pager off` (Rulings 1360). `pager on` is a refusal in the resolver, not a verb.
-    Verbs 17-18 (Mon 2030-09-16, SM-30): `pager hook` - the plugin's two
+    Verbs 17-18 (Sun 2030-06-09, SM-30): `pager hook` - the plugin's two
     hooks as verbs of the pager, so seat identity has one resolver - and
     `pager stop`, `off` by the name the standard line uses ("run `pager
-    stop` to stop"). Verb 19 (Tue
-    2030-09-17, changes/message-path): `message path` - the maildir a box
-    name resolves to, for SessionView's Messages tab. Verb 20 (Wed 2030-09-18, changes/memory-wake):
-    `memory wake` - the boot readout comes home to memory (Q11). Pages 21-23 (Sun 2030-09-29,
+    stop` to stop"). Verb 19 (Sun
+    2030-06-09, changes/message-path): `message path` - the maildir a box
+    name resolves to, for SessionView's Messages tab. Verb 20 (Sun 2030-06-09, changes/memory-wake):
+    `memory wake` - the boot readout comes home to memory (Q11). Pages 21-23 (Sun 2030-12-08,
     message-subscriptions 3.1): the noun `message box` and its two verbs,
     `list` and `path` - `message path` stays as the old name (specs/message,
     "The old verb still answers"), so it is still counted. Pages 24-25 are
     not new: `pager hook stop` and `pager hook batch` existed, but the walk
     went one level deep until the same day and never fold-checked them.
-    Pages 26-28 (Sun 2030-09-29, message-subscriptions 3.2): the noun
+    Pages 26-28 (Sun 2030-12-08, message-subscriptions 3.2): the noun
     `message subscription` and its verbs `add` and `remove`. Page 29 (the
     same day, 3.3): `message subscription list`, what reaches me and who
     hears a box. Minus one (the same day, 4.2): `pager subscriptions`
-    RETIRED with the saved-query files it listed, so 28. Plus one (Tue
-    2030-10-01, on master as "Verb 21" before the SM-374 merge):
+    RETIRED with the saved-query files it listed, so 28. Plus one (Sun
+    2030-12-08, on master as "Verb 21" before the SM-374 merge):
     `message verify` - the retired `session mail verify` at the message
     door, so 29.
-    Plus five (Thu 2030-10-03, pager-filters 5.1 and 5.3, SM-474 do-008):
+    Plus five (Sun 2030-12-08, pager-filters 5.1 and 5.3, SM-474 do-008):
     the noun `pager rule` and its verbs `list`, `add` and `remove`, and
     `pager why` (RULED P10), so 34. Plus one (the
     same day, pager-filters 5.2, SM-474 do-009): `pager focus sleep|off`
-    (RULED P7), so 35. Plus two (Sat 2030-10-05, sessiontools session-
+    (RULED P7), so 35. Plus two (Sun 2030-12-08, sessiontools session-
     settings 3.2, call (a)): the HIDDEN noun `pager settings`
     and its verb `migrate`, a host's once-only move. Walked and fold-checked
     here, but on no group page and no MCP tool, so 37. Plus three (Sun
-    2030-10-13, SM-715 do-002; ruling (b): three
+    2030-12-08, SM-715 do-002; ruling (b): three
     commands kept, the verbs named `message seat init` and `message seat
     agent`): the HIDDEN noun `message seat` and its two verbs (hidden on the
     Q-F ruling, after `pager settings`), so 40. Plus two
-    (Tue 2030-10-15, SM-726 do-003, design.md (l3)): `pager mute` and `pager unmute`, so 42. Plus one (Thu
-    2030-10-03, SM-498 build-002, merged up at its land-prep): `pager hook
+    (Sun 2030-12-08, SM-726 do-003, design.md (l3)): `pager mute` and `pager unmute`, so 42. Plus one (Sun
+    2030-12-08, SM-498 build-002, merged up at its land-prep): `pager hook
     start`, the SessionStart hook that births the session's box, so 43. Plus
-    one (Tue 2030-10-15, SM-748 do-002, openspec/changes/message-receipt D3):
+    one (Sun 2030-12-08, SM-748 do-002, openspec/changes/message-receipt D3):
     the HIDDEN verb `message receipt`, what another session recorded about
     one message - walked and fold-checked here, on no group page and no MCP
     tool, so `mcp` keeps line 20 of `message --help`; so 44 (SM-748
-    merge-up-001 took both lines when SM-498 landed first). Plus two (Thu
-    2030-10-17, SM-790 do-001, its design as passed): `message box archive`
+    merge-up-001 took both lines when SM-498 landed first). Plus two (Sun
+    2030-12-08, SM-790 do-001, its design as passed): `message box archive`
     and `message box unarchive`, dead session boxes out of notmuch's scan and
     back - on the `box` page, never MCP tools (`_mcp.NOT_A_TOOL`), so 46.
-    Plus one (Fri 2030-10-18, SM-721 fix-001, ruling (i)): `pager settings install`, the pre-launch verb a launcher runs
+    Plus one (Sun 2030-12-08, SM-721 fix-001, ruling (i)): `pager settings install`, the pre-launch verb a launcher runs
     before its birth writer - under the HIDDEN noun `pager settings`, so on
     no group page and no MCP tool; so 47 (SM-721 deliver-001 took both when
-    SM-790 landed first). Plus one (Sat 2030-09-21, SM-186 do-003,
+    SM-790 landed first). Plus one (Sun 2030-06-09, SM-186 do-003,
     changes/memory-init; merged up at SM-186 do-011, do-013 and do-014):
-    `memory init` - the fifth memory verb, RATIFIED, so 48. Plus one (Sat 2030-10-19, SM-660
+    `memory init` - the fifth memory verb, RATIFIED, so 48. Plus one (Sun 2030-12-08, SM-660
     fix-003, design-001 C.1): the HIDDEN verb `message setup`, its name
     PROVISIONAL (`_setup.VERB`) - on no group page and no MCP tool, so 49."""
     groups = [label for label, argv, _ in PAGES if not argv]

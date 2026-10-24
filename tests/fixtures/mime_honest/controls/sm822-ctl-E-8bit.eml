@@ -1,13 +1,13 @@
 From: alice@t3.invalid
 To: bob@t3.invalid
-Date: Wed, 02 Jan 2030 08:00:00 +0000
+Date: Sun, 08 Dec 2030 08:00:00 +0000
 Subject: T-3 v1 v1-E
 Message-ID: <v1-E@t3.repro>
 MIME-Version: 1.0
 Content-Type: text/plain; charset=utf-8
 Content-Transfer-Encoding: 8bit
 X-Machine: t3
-X-Session-Signature: v=1; a=sshsig; n=session-mail@example.com; h=from:to:subject:date:message-id; b=U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgmn8BxxaYqsxu3NiwTjLVHtshGWTGns5uRHAWpWHkUbAAAAAYc2Vzc2lvbi1tYWlsQGV4YW1wbGUuY29tAAAAAAAAAAZzaGE1MTIAAABTAAAAC3NzaC1lZDI1NTE5AAAAQMUcxVzkAmaXMZwJ1e7trihmoC3H/cg3cZB/dedZdC6r94SfA1sSObPnsWYHEuFeOGR7S03cHl49+0cyPb0d6Q0=
+X-Session-Signature: v=1; a=sshsig; n=session-mail@example.com; h=from:to:subject:date:message-id; b=U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgmn8BxxaYqsxu3NiwTjLVHtshGWTGns5uRHAWpWHkUbAAAAAYc2Vzc2lvbi1tYWlsQGV4YW1wbGUuY29tAAAAAAAAAAZzaGE1MTIAAABTAAAAC3NzaC1lZDI1NTE5AAAAQCXwkA9f2uPqrRXj3T7MqtPJ4+dVF6ZGAzbky11QGSJmzfcNpfLPN4Br/Zi7wTqnZZMSUq5nbmh/t4Qq21xEcwM=
 
 Pay Alice: https://pay.example/send?amt=100&ref=BEEF
 Rule: a==b holds; café ok.

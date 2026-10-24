@@ -48,7 +48,7 @@ from sessionmail.rules import (
 SID = "48c504e1-829c-95ea-295f-2ab6456e2bb2"
 HOST = "hq.tailnet.example"
 ME = Me.of(session=SID, seat="ivan", host=HOST)
-NOW = datetime(2030, 7, 11, 12, 34, 56, tzinfo=timezone.utc)
+NOW = datetime(2030, 6, 9, 12, 34, 56, tzinfo=timezone.utc)
 JUDY = f"Judy <judy@{HOST}>"
 
 

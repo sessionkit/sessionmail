@@ -52,7 +52,7 @@ SID = "9be83ae9-58c6-0c79-9faf-d18fba5b63be"
 HOST = "hq.tailnet.example"
 SHORT = "hq"
 ME = Me.of(session=SID, seat="ivan", host=HOST)
-NOW = datetime(2030, 7, 11, 12, 34, 56, tzinfo=timezone.utc)
+NOW = datetime(2030, 6, 9, 12, 34, 56, tzinfo=timezone.utc)
 ENV = {"SESSIONMAIL_HOST": SHORT, "MAGICDNS_SUFFIX": "tailnet.example"}
 
 JUDY = f"Judy <judy@{HOST}>"

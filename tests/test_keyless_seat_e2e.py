@@ -61,7 +61,7 @@ from test_sender_v2 import delivered
 
 #: The installed `memory` verb, beside `message` in the test venv.
 MEMORY = Path(sys.executable).parent / "memory"
-#: A fixture seat (a dot, never a `+`) and a fixture box. No real seat or person.
+#: A fixture seat (a dot-grammar address; a `+` seat is admitted too) and a fixture box. No real seat or person.
 ADDRESS = "keyless.seat"
 INBOX = "scratch.inbox"
 ROOT_HINT = "KEYLESS_SEAT_ROOT"          # mhs-thread's `$<AGENT>_ROOT`, for keyless.seat

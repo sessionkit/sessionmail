@@ -136,7 +136,7 @@ def test_both_interpreters_are_really_used(rig, tmp_path):
 # ── mail shapes ──────────────────────────────────────────────────────────────
 
 HEAD = (b"From: ivan@example.com\nTo: uma@example.com\nSubject: s sm819\n"
-        b"Date: Wed, 02 Jan 2030 08:00:00 +0000\nMessage-ID: <sm819@example.com>\n"
+        b"Date: Sun, 08 Dec 2030 08:00:00 +0000\nMessage-ID: <sm819@example.com>\n"
         b"MIME-Version: 1.0\n")
 
 
@@ -602,7 +602,7 @@ def _sent(body: bytes, shape: str, headers=()) -> bytes:
     page = b"<p>page</p>\n" if shape == "multi" else None
     req = _sender.Request(to="uma@example.com", from_="ivan@example.com", subject="s sm819",
                           headers=list(headers))
-    return _sender.build(req, body, host="h", date="Thu, 03 Jan 2030 12:00:00 +0000",
+    return _sender.build(req, body, host="h", date="Sun, 08 Dec 2030 12:00:00 +0000",
                          message_id="<sm819-cr@h.session-mail>", references=[], session="",
                          signature=None, page=page,
                          boundary=("=_sesh890_" + "0" * 32) if page else "")
@@ -730,7 +730,7 @@ FIXTURES = Path(__file__).parent / "fixtures" / "sig_v2"
 #: mints them under the TEST key (the generator and the key's .pub are in the directory too).
 #: The key's PRIVATE half is left out: the release export does not ship it (.gitattributes),
 #: and tests/test_sig_v2_key_export.py pins it in a checkout.
-FIXTURES_AT_BASE = "62c14b1fc2026969dc6a51398ce41ef26215d0767958429da7f2ce91266e9d5e"
+FIXTURES_AT_BASE = "ad27d6f7227ab32cade5d1d2d85e01b5f950451757a457ab23a3632fd02d4623"
 PRIVATE_KEY = "sessionmail-sig-TEST-VECTORS-ONLY"
 #: sha256 of the source of lf, leaves, leaf_canon and digests, at 0539fd2.
 CANON_AT_BASE = "ba66f8a35a3e3e5cbf76213da6631a7d71ec33d94fa2ef5e99b7145321bc5674"

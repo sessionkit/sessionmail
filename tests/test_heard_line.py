@@ -50,13 +50,13 @@ X-Original-To: heard+airpods@hq
 From: Ears <heard+airpods@hq>
 To: heard+airpods@hq
 Subject: Right, so the build is green. And the release notes, the long version. How...
-Date: Tue, 01 Jan 2030 12:00:00 +0000
+Date: Sun, 09 Jun 2030 12:00:00 +0000
 Message-ID: <1902000000.000000.11111.11111@hq.ears>
 Ears-Kind: spoken
 Ears-Rule: ivan@hq=reply
 Ears-Seq: 160508
-Ears-Start: 2030-01-01T11:59:40.000Z
-Ears-End: 2030-01-01T12:00:00.000Z
+Ears-Start: 2030-06-09T11:59:40.000Z
+Ears-End: 2030-06-09T12:00:00.000Z
 Ears-Source: mic
 Ears-Device: airpods
 Ears-Speaker: {speaker}
@@ -72,7 +72,7 @@ ld keep it to the changes a user sees um, so that it says what to do next.
 FIRST_WORDS = "Right, so the build is green. And the release notes"
 
 #: 12:00:00 UTC, in THIS box's local time, as the line prints it.
-WHEN = datetime(2030, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
+WHEN = datetime(2030, 6, 9, 12, 0, 0, tzinfo=timezone.utc)
 HHMMSS = WHEN.astimezone().strftime("%H:%M:%S")
 
 ACTION_LAST = re.compile(r" \([a-z]+\)$")
@@ -295,7 +295,7 @@ def test_scoop_judged_the_unverified_line_ends_with_its_action(scoop, monkeypatc
 def test_scoop_an_ordinary_mail_line_is_unchanged(scoop):
     _arrive(scoop, "From: eve@hq\nTo: alpha@hq\nSubject: the build is green\n"
                    "Message-ID: <plain-562@example.invalid>\n"
-                   "Date: Tue, 01 Jan 2030 12:00:00 +0000\n\nall green\n")
+                   "Date: Sun, 09 Jun 2030 12:00:00 +0000\n\nall green\n")
     lines = _given().output.splitlines()
     hhmm = WHEN.astimezone().strftime("%H:%M")
     assert lines == [f"[mail] {hhmm} eve the build is green", "all green"]

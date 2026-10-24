@@ -474,7 +474,7 @@ def heard_log(tmp_path, monkeypatch):
     base = tmp_path / "voicemode"
     conv = base / "logs" / "conversations"
     conv.mkdir(parents=True)
-    log = conv / "heard_2030-10-03.jsonl"
+    log = conv / "heard_2030-12-08.jsonl"
     log.write_text(json.dumps({"seq": 1, "type": "said", "session": "rupert-sess",
                                "who": "rupert", "text": "The build is green"}) + "\n")
     (base / "state" / "heard-cursor").mkdir(parents=True)

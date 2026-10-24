@@ -140,7 +140,7 @@ def run(repo: str, ref: str, check: bool, out=sys.stdout, err=sys.stderr) -> int
 # ── self-test ────────────────────────────────────────────────────────────────
 # Every example stamp is BUILT at run time, so this file's own source is never a hit.
 
-def _stamp(hh: int, mm: int, day: str = "Thu", date: str = "2030-12-05", tail: str = "") -> str:
+def _stamp(hh: int, mm: int, day: str = "Sun", date: str = "2030-12-08", tail: str = "") -> str:
     return f"{hh:02d}:{mm:02d}{tail} {day} {date}"
 
 
@@ -152,7 +152,7 @@ def self_test() -> int:
         if got != want:
             fails.append(f"{what}: got {got!r}, want {want!r}")
 
-    d, dt = "Thu", "2030-12-05"
+    d, dt = "Sun", "2030-12-08"
     # every hour and every day is a hit; what is not a stamp is not
     for hh, mm in ((0, 0), (8, 59), (9, 0), (16, 59), (17, 0), (23, 59)):
         eq(len(hits(_stamp(hh, mm))), 1, f"{hh:02d}:{mm:02d} is a hit")
@@ -160,7 +160,7 @@ def self_test() -> int:
         eq(len(hits(_stamp(10, 0, day=day))), 1, f"a {day} stamp is a hit")
     eq(len(hits(f"{10:02d}:{0:02d} {d}")), 0, "no date, no stamp")
     eq(len(hits(f"{dt} {10:02d}:{0:02d}")), 0, "a date then a time is not this shape")
-    eq(len(hits(f"{d}, 05 Dec 2030 {10:02d}:{0:02d}:00 +1100")), 0, "a mail Date header is not")
+    eq(len(hits(f"{d}, 08 Dec 2030 {10:02d}:{0:02d}:00 +1100")), 0, "a mail Date header is not")
     eq(len(hits(_stamp(8, 30, tail="-" + f"{10:02d}:{0:02d}"))), 1, "a range is one stamp")
     # the strip: the time token and one space go, everything else stays
     quote = "As noted " + _stamp(13, 17, tail="-" + f"{13:02d}:{22:02d}") + ": keep it"
@@ -171,7 +171,7 @@ def self_test() -> int:
     eq(strip(_stamp(8, 0).encode())[0].decode(), f"{d} {dt}", "an early stamp goes too")
     eq(strip(_stamp(22, 15, day="Sat").encode())[0].decode(), f"Sat {dt}",
        "a weekend evening stamp goes too")
-    keep = f"{dt} {10:02d}:{0:02d} and {d}, 05 Dec 2030 {10:02d}:{0:02d}:00"
+    keep = f"{dt} {10:02d}:{0:02d} and {d}, 08 Dec 2030 {10:02d}:{0:02d}:00"
     eq(strip(keep.encode())[0].decode(), keep, "other time shapes are untouched")
     two = f"{12:02d}:{0:02d} " + _stamp(13, 0)
     eq(strip(two.encode())[0].decode(), f"{d} {dt}", "a time the strip exposes goes too")

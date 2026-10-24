@@ -2,7 +2,7 @@
 
 One resolution for every reader: `<root>/<name>` for a flat box, else the
 box postfix delivers `<name>@<host>` to - where a project box lives, nested
-under its store. Measured Tue 2030-09-17: `message list delta-chat`
+under its store. Measured Sun 2030-06-09: `message list delta-chat`
 refused while `delta-chat@hq` delivered; `path` and `list` now agree."""
 from __future__ import annotations
 
@@ -95,7 +95,7 @@ def test_a_plus_address_resolves_to_its_base_box_and_why_keeps_the_tag(nested):
     """`<box>+<tag>@<host>`: postfix strips the extension at the first `+`
     (recipient_delimiter) and delivers to the base box; the tag is a slot in
     the SAME maildir (specs/addressing). `path` must say what postfix does.
-    Measured Wed 2030-09-18: `message path taskmaster+kaizen` refused
+    Measured Sun 2030-06-09: `message path taskmaster+kaizen` refused
     while postfix delivered it to agents/taskmaster/ (SM-242)."""
     r = run("proj+kaizen", "--why")
     assert r.exit_code == 0, r.output

@@ -101,7 +101,7 @@ def delivered(wire: bytes, qualify: dict[bytes, bytes]) -> bytes:
     trace = (b"Return-Path: <eve@" + HOST.encode() + b">\n"
              b"X-Original-To: ivan\nDelivered-To: ivan@" + HOST.encode() + b"\n"
              b"Received: by " + HOST.encode() + b" (Postfix, from userid 501)\n"
-             b"\tid 4ABC; Tue,  1 Jan 2030 12:00:00 +0000 (UTC)\n")
+             b"\tid 4ABC; Sun,  9 Jun 2030 12:00:00 +0000 (UTC)\n")
     return trace + head + sep + body
 
 
@@ -140,7 +140,7 @@ def test_the_sender_signs_every_vector_and_the_verifier_says_good(name, sender, 
 # an independent copy, so this pin does not just compare the script with itself. The atom pair is hand-built multipart and the two postfix ones are real
 # probes, so neither is build()'s to reproduce.
 
-VDATE, VSESSION = "Tue, 01 Jan 2030 12:00:00 +0000", "0a1b2c3d"
+VDATE, VSESSION = "Sun, 09 Jun 2030 12:00:00 +0000", "0a1b2c3d"
 VPAGE = (b"<!DOCTYPE html>\n<html><head><meta charset=\"utf-8\"><title>t</title></head>\n"
          b"<body><p>The decision: <strong>go</strong>.</p></body></html>\n")
 VMD = "The decision: **go**.\n\nSigned by the whole mail \u2014 every part.\n".encode()

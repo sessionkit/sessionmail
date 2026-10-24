@@ -2,10 +2,10 @@ Return-Path: <uma@hq.example.net>
 X-Original-To: acme
 Delivered-To: acme@hq.example.net
 Received: by hq.example.net (Postfix, from userid 501)
-	id 0123456789ABC; Tue,  1 Jan 2030 12:00:00 +0000 (UTC)
+	id 0123456789ABC; Sun,  9 Jun 2030 12:00:00 +0000 (UTC)
 From: =?UTF-8?B?SsOpcsO0bWU=?= <uma@hq.example.net>
 To: acme@hq.example.net
-Date: Tue, 01 Jan 2030 12:00:00 +0000
+Date: Sun, 09 Jun 2030 12:00:00 +0000
 Subject: =?UTF-8?B?RMOpY2lzaW9uOiBzaWduIGV2ZXJ5IHBhcnQ=?=
 Message-ID: <1901000000.6.1@hq.session-mail>
 MIME-Version: 1.0
@@ -28,7 +28,7 @@ X-Session-Signature: v=2; a=sshsig; n=session-mail@example.com;
  p=EuFUFSWtl7zjxjD7799uToFhohRkcmYIKLInJ5IIUqY=;
  b=U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgmn8BxxaYqsxu3NiwTjLVHtshGWTG
  ns5uRHAWpWHkUbAAAAAYc2Vzc2lvbi1tYWlsQGV4YW1wbGUuY29tAAAAAAAAAAZzaGE1MTIA
- AABTAAAAC3NzaC1lZDI1NTE5AAAAQNiE5uu/soELtVgHWO/5xMcJqL35e4vPl7nuPuzWQ8fe
- qES9+cg1/32VsZhxfVqK2b/KSN4xgo/RZOz9AcrFJA4=
+ AABTAAAAC3NzaC1lZDI1NTE5AAAAQAEyTuzO2IS8SS1H0skAvh+zI0a5i+DURrbo+RQgzk2h
+ jzNlq7CqmJoIWjesA/xL/a2GxxnzQRz68OeReci8sgE=
 
 Atom headers on a single part.

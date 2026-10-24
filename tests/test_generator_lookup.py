@@ -7,7 +7,7 @@ What is pinned here:
 - the WRITING order (`_seat._run_generator`, `_archive`): the same three
   steps and NEVER the packaged copy. Making the packaged copy write a live
   map is reserved to the project owner (SM-74); sessionmail+super answered Q-B1 NO,
-  2030-10-19;
+  2030-12-08;
 - a SET `$SESSIONMAIL_VMAILBOX_GEN` is the only candidate in both orders, so
   a pin whose file is missing finds nothing (the conftest fence, SM-374
   do-006);

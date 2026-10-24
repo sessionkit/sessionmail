@@ -173,15 +173,15 @@ def test_the_mark_page_no_longer_promises_that_marks_survive_succession(seat):
 
 
 def test_the_four_field_line_written_before_the_ruling_still_counts(seat):
-    """Every seat wrote `<id> <mark> <session> <stamp>` before Wed
-    2030-09-11. A done on disk stays done; the old form has no seat column
+    """Every seat wrote `<id> <mark> <session> <stamp>` before Sun
+    2030-12-08. A done on disk stays done; the old form has no seat column
     and reads as `-`."""
-    old = f"{ID} done 7ed6b16b 2030-06-12T14:00:00+10:00"
+    old = f"{ID} done 7ed6b16b 2030-06-09T14:00:00+10:00"
     event = _seat.parse_mark(old)
     assert event is not None
     assert (event.message_id, event.mark, event.seat, event.session, event.stamp) == (
-        ID, "done", "-", "7ed6b16b", "2030-06-12T14:00:00+10:00")
-    assert _seat.parse_mark(f"<{ID}> read s1 2030-06-12T14:00:00+10:00").message_id == ID
+        ID, "done", "-", "7ed6b16b", "2030-06-09T14:00:00+10:00")
+    assert _seat.parse_mark(f"<{ID}> read s1 2030-06-09T14:00:00+10:00").message_id == ID
     assert _seat.parse_mark("not a mark at all") is None
     assert _seat.parse_mark("") is None
 
@@ -189,8 +189,8 @@ def test_the_four_field_line_written_before_the_ruling_still_counts(seat):
 def test_both_forms_in_one_file_read_as_one_history(seat):
     seat.marks_file().parent.mkdir(parents=True, exist_ok=True)
     seat.marks_file().write_text(
-        f"{ID} read 7ed6b16b 2030-06-12T14:00:00+10:00\n"
-        f"2030-06-13T01:40:00+10:00 {ID} done alpha 7ed6b16b-31bd created TM-99\n"
+        f"{ID} read 7ed6b16b 2030-06-09T14:00:00+10:00\n"
+        f"2030-12-08T01:40:00+10:00 {ID} done alpha 7ed6b16b-31bd created TM-99\n"
     )
     events = _seat.read_mark_events(_seat.resolve(), SESSION)
     assert [e.mark for e in events] == ["read", "done"]
@@ -273,7 +273,7 @@ def test_done_here_quiets_the_ride_along_there(seat, tmp_path, monkeypatch):
 
 
 def test_an_empty_id_is_refused_before_any_lookup_and_writes_nothing(seat):
-    """F20 (SM-70, Sat 2030-09-14): `message mark "" done` reached
+    """F20 (SM-70, Sun 2030-06-09): `message mark "" done` reached
     notmuch as `id:` - everything matches - and wrote a row with no id,
     which the reader then parsed as the old four-field form. A shell
     variable that came up empty is how it happens."""
@@ -582,7 +582,7 @@ def test_the_summary_carries_no_path_so_cut_keeps_the_count(two_of_three):
 
 
 def test_the_incidents_own_pipe_tail_3_ends_on_the_count(two_of_three):
-    """Thu 2030-10-17: `2>&1 | tail -3` over 43 refusals read as
+    """Sun 2030-12-08: `2>&1 | tail -3` over 43 refusals read as
     "only 3 failed". The last line written is the tally, so it says 43."""
     last = _piped(*MANY, "done", "--reason", "t", pipe="tail -3").splitlines()
     assert last[-1] == "message mark: 0 of 43 marked, 43 refused (named above); no rows written"

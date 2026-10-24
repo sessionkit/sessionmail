@@ -1426,7 +1426,7 @@ def _until(text: str, set_at: datetime) -> datetime:
     """An end time: `HH:MM` is the FIRST such local time after SET_AT (when
     the mode was set: the file's mtime), so `until 07:00` set at 23:00 runs
     overnight and one left over from last week has long ended. Anything else
-    is an ISO date and time (`2030-06-13T07:00`, `2030-06-13 07:00`), local
+    is an ISO date and time (`2030-06-09T07:00`, `2030-06-09 07:00`), local
     when it names no zone. The sum is done on the local wall clock, so a DST
     change overnight still ends at 07:00 as the clock reads it."""
     hhmm = _HHMM.match(text)
@@ -1509,7 +1509,7 @@ def parse_focus(text: str, source: str, set_at: datetime, *,
     """A focus file's text as `(focus, errors)` (tasks 3.2, design O-c).
 
     The file holds one line, `<mode> [until <time>]`: `sleep`, `sleep until
-    07:00`, `sleep until 2030-06-13T07:00`, or `off`. An empty file, or
+    07:00`, `sleep until 2030-06-09T07:00`, or `off`. An empty file, or
     `off`, is no mode (focus is None). SET_AT is when the mode was set (the
     file's mtime): an `HH:MM` end is the first such time after it. `where`
     is carried into the `Focus` (`session` or `seat`).

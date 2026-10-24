@@ -66,8 +66,8 @@ VERIFIER = Path(_mhs.MHS_DIR) / "session-mail-verify"
 # ── sig_v2: the ten v2 vectors ──────────────────────────────────────────────
 
 DOM, HOST, SESSION = "hq.example.net", "hq", "0a1b2c3d"
-DATE = "Tue, 01 Jan 2030 12:00:00 +0000"
-RECEIVED_DATE = "Tue,  1 Jan 2030 12:00:00 +0000 (UTC)"
+DATE = "Sun, 09 Jun 2030 12:00:00 +0000"
+RECEIVED_DATE = "Sun,  9 Jun 2030 12:00:00 +0000 (UTC)"
 LEAD, WORKER = "acme+lead", "acme+t-1.worker"
 PAGE = (b"<!DOCTYPE html>\n<html><head><meta charset=\"utf-8\"><title>t</title></head>\n"
         b"<body><p>The decision: <strong>go</strong>.</p></body></html>\n")
@@ -251,9 +251,9 @@ def mint_sig_v2(env) -> tuple[dict[str, bytes], dict]:
 
 # ── the signed controls (mime_honest/controls) ──────────────────────────────
 
-V1_DATE = "Wed, 02 Jan 2030 08:00:00 +0000"
-V2_DATE = "Wed, 02 Jan 2030 11:00:00 +0000"
-ITEM_DATE = "Wed, 02 Jan 2030 11:30:00 +0000"
+V1_DATE = "Sun, 08 Dec 2030 08:00:00 +0000"
+V2_DATE = "Sun, 08 Dec 2030 11:00:00 +0000"
+ITEM_DATE = "Sun, 08 Dec 2030 11:30:00 +0000"
 V1_BOUNDARY = "=_sesh890_" + "0123456789abcdef" * 2
 V2_BOUNDARY = "=_sesh890_" + "0" * 32
 CTL_SESSION = "1a2b3c4d"

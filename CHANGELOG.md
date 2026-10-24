@@ -4,10 +4,44 @@ All notable changes to sessionmail are documented here.
 
 The format is [Keep a Changelog](https://keepachangelog.com/en/1.0.0/);
 the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
-The one version lives in `.claude-plugin/plugin.json`; `scripts/release.py`
-is its only writer and the build reads it from there.
+The one version lives in `pyproject.toml`; `scripts/release.py` is its only
+writer and mirrors it into `.claude-plugin/plugin.json` and `marketplace.json`.
 
 ## [Unreleased]
+
+## [0.3.0] - 2026-10-24
+
+### Added
+
+- `message seat init` accepts a plus seat address (`base+tag`) as well as a dotted name.
+- **`message setup --pull` installs a puller that brings a mail host's IMAP boxes down into this host's postfix**, read-only, every host-specific value from config (`pull.*`; docs/pull.md) (SM-921).
+
+### Fixed
+
+- **A new session is no longer told "pager is not listening" before its
+  pager monitor arms** (SM-891, SK-104 F8). The SessionStart hook ran
+  beside the monitor's start and could read the state first, so a seat
+  about to be heard armed a second `pager listen`. `pager hook start` now
+  says the box line only; whether the session listens is said on its first
+  turn, by the first PostToolBatch (or a UserPromptSubmit that carries the
+  ride-along; a typed prompt does not by default) and by Stop. A seat that
+  nothing hears still hears "not listening" on that first turn.
+
+### Changed
+
+- **The one version now lives in `pyproject.toml`** (SM-922). It is a
+  static `version` in `[project]`, which `scripts/release.py` sets through
+  `uv version` (so `uv.lock` stays in step) and mirrors into
+  `.claude-plugin/plugin.json` and `marketplace.json`. Before, it lived in
+  `plugin.json` and the build read it with hatchling's regex source. The
+  bundled `plugins/pager-monitor` keeps its own version.
+
+- **The re-arm instruction stands alone** (SM-891, walk-145). It reads
+  "re-arm with `pager listen`, in the background (Bash run_in_background:
+  true), never a trailing `&`", plus the monitor rider. It no longer points
+  at "the `pager listen` line your boot instruction gave you", which a seat
+  with no boot brief could not follow. Every teller reads `arm.txt`, so the
+  Stop hook, the ride-along, `pager status` and the pages all move together.
 
 ## [0.2.1] - 2026-10-21
 

@@ -44,10 +44,10 @@ loose() {  # group or world bits on $1 (ls, so BSD and GNU alike)
 
 address="${1:-}"
 [ -n "$address" ] || refuse "usage: message seat agent ADDRESS [SOCKET]"
-case "$address" in
-  *+*) refuse "'$address' has a '+': a seat is named with a dot (desk.alice), as seat-init mints it" ;;
-esac
-[[ "$address" =~ ^[a-z0-9][a-z0-9._-]*$ ]] || refuse "'$address' is not a seat address"
+# seat init's grammar (seat_init.ADDRESS, _launchd.ADDRESS_RE): a name, or ONE '+'
+# between two names (heard+airpods). The '+' is kept verbatim in every path.
+SEAT_ADDRESS='^[a-z0-9][a-z0-9._-]*([+][a-z0-9][a-z0-9._-]*)?$'
+[[ "$address" =~ $SEAT_ADDRESS ]] || refuse "'$address' is not a seat address"
 
 sm_home="${SESSIONMAIL_HOME:-$HOME/.sessionmail}"
 # shellcheck disable=SC2088  # a literal ~ from a plist, which launchd never expands

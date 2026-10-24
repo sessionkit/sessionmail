@@ -2,10 +2,10 @@ Return-Path: <acme+t-1.worker@hq.example.net>
 X-Original-To: acme+lead
 Delivered-To: acme@hq.example.net
 Received: by hq.example.net (Postfix, from userid 501)
-	id 0123456789ABC; Tue,  1 Jan 2030 12:00:00 +0000 (UTC)
+	id 0123456789ABC; Sun,  9 Jun 2030 12:00:00 +0000 (UTC)
 From: acme+t-1.worker@hq.example.net
 To: acme+lead@hq.example.net
-Date: Tue, 01 Jan 2030 12:00:00 +0000
+Date: Sun, 09 Jun 2030 12:00:00 +0000
 Subject: design done
 Message-ID: <1901000000.1.1@hq.session-mail>
 MIME-Version: 1.0
@@ -19,7 +19,7 @@ X-Session-Signature: v=2; a=sshsig; n=session-mail@example.com;
  p=LJY6MJzXiTno5o7129RP1sPlEJ2sEwRy2P6R/7y5gi4=;
  b=U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgmn8BxxaYqsxu3NiwTjLVHtshGWTG
  ns5uRHAWpWHkUbAAAAAYc2Vzc2lvbi1tYWlsQGV4YW1wbGUuY29tAAAAAAAAAAZzaGE1MTIA
- AABTAAAAC3NzaC1lZDI1NTE5AAAAQAcRjGnZKV08SEA/kFt5cVZetbSUTAPqXkeNH6A3SE8E
- A8Ift80Hg92yZJbNRs8yI7XhVhyRGS5eNo41FW95sww=
+ AABTAAAAC3NzaC1lZDI1NTE5AAAAQF1DMd++3c/EBogQFppIAR6xz15lI8K7yJE37zw2tL2x
+ hKLe/8QWygvrc/YZEsdYuQpsXQqcWirllFHQEH6xngM=
 
 The design is in design.md.

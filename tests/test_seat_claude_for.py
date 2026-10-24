@@ -31,7 +31,7 @@ SESSION = "sess-a"
 ME = 7_100_001              # the asking process, in the table only
 CLAUDE = 7_100_002          # a claude, in the table only
 SHELL = 7_100_003
-PROC_START = "Tue Jan 01 12:00:00 2030"     # UTC ctime, as Claude Code writes it
+PROC_START = "Sun Jun 09 12:00:00 2030"     # UTC ctime, as Claude Code writes it
 
 
 def _never():
@@ -136,7 +136,7 @@ def test_a_claude_ancestor_for_another_session_is_not_this_sessions_claude():
     session B run under a live claude for session A (`--session-id` A on its
     argv; repro sec 5, the SM-454 class) is pre-claude for B. One
     implementation: SM-558's other-id check, inside `_session_claudes`
-    (ruling, brief 2030-10-13-2320-super-414839f4.md). Owed by fix-002,
+    (ruling, brief 2030-12-08-2320-super-414839f4.md). Owed by fix-002,
     written here at rebase-001."""
     ps = lambda: ({ME: SHELL, SHELL: CLAUDE, CLAUDE: 1},
                   {ME: "session start", SHELL: "/bin/zsh -c x",

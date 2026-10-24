@@ -169,15 +169,15 @@ def test_folders_hidden_files_and_bad_names_are_skipped_and_counted(tmp_path):
     home = tmp_path / "sessionmail"
     _write(home, "seats", "ivan", "atomnote")
     folder = home / "seats" / "ivan" / "subscriptions"
-    (folder / "retired-2030-09-29").mkdir()             # tasks 6.3's dated folder
-    (folder / "retired-2030-09-29" / "old-query").write_text("query: x\n")
+    (folder / "retired-2030-12-08").mkdir()             # tasks 6.3's dated folder
+    (folder / "retired-2030-12-08" / "old-query").write_text("query: x\n")
     (folder / ".atomnote.tmp.123").write_text(NOTE)     # an atomic write in flight
     (folder / "a----b").write_text(NOTE)                # not a stored box
     scan = sub.scan(home, live=set())
     assert {(e.subscriber, e.box) for e in scan.entries} == {("ivan", "atomnote")}
     skipped = {p.name: why for p, why in scan.skipped}
-    assert set(skipped) == {"retired-2030-09-29", "a----b"}
-    assert "folder" in skipped["retired-2030-09-29"]
+    assert set(skipped) == {"retired-2030-12-08", "a----b"}
+    assert "folder" in skipped["retired-2030-12-08"]
     assert "--" in skipped["a----b"]
 
 

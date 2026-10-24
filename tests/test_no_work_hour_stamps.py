@@ -92,7 +92,7 @@ def report(files: collections.Counter) -> str:
     return "\n".join(lines)
 
 
-def _stamp(hh: int, mm: int, day: str = "Thu", date: str = "2030-12-05") -> str:
+def _stamp(hh: int, mm: int, day: str = "Sun", date: str = "2030-12-08") -> str:
     return f"{hh:02d}:{mm:02d} {day} {date}"
 
 
@@ -127,6 +127,11 @@ def test_the_imported_matcher_finds_a_built_stamp():
     assert len(sws.hits(_stamp(0, 0))) == 1
     assert len(sws.hits(_stamp(10, 0, day="Sat"))) == 1
     assert len(sws.hits(_stamp(23, 59, day="Sun").encode())) == 1
+    # The day name is the matcher's input, not the date's weekday: a work-hour
+    # stamp on a weekday name is the case this guard is named for (SM-917
+    # moved the default to Sun, so name every day here).
+    for day in ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"):
+        assert len(sws.hits(_stamp(10, 0, day=day))) == 1, day
     assert sws.hits(f"{10:02d}:{0:02d} Thu") == []          # no date, no stamp
 
 
@@ -135,7 +140,7 @@ def test_the_sha_matcher_finds_a_built_sha_and_nothing_else():
     ref = "(" + "SM" + "-123)"                            # a bare tracker ref, built too
     assert SHA_RE.search(f"through that map (`{sha}`)")
     assert SHA_RE.search(sha + "def0" * 8)                # a full 40-digit sha
-    for plain in (ref, "0.2.0", "2030-12-07", "abc123", "v1 and v2", "ab" + "c12345g"):
+    for plain in (ref, "0.2.0", "2030-12-08", "abc123", "v1 and v2", "ab" + "c12345g"):
         assert not SHA_RE.search(plain), plain
 
 
@@ -185,11 +190,11 @@ def test_measure_counts_archive_members_and_reports_no_text(tmp_path):
     text = report(files)
     assert "files=3 hits=4" in text
     assert "a.md" in text and "src/b.py" in text and "late.md" in text
-    assert stamp not in text and "10:30" not in text and "2030-12-05" not in text
+    assert stamp not in text and "10:30" not in text and "2030-12-08" not in text
 
-    (repo / "a.md").write_text("noted Thu 2030-12-05\n")
-    (repo / "src" / "b.py").write_text("# Thu 2030-12-05\n")
-    (repo / "late.md").write_text("Sun 2030-12-05\n")
+    (repo / "a.md").write_text("noted Sun 2030-12-08\n")
+    (repo / "src" / "b.py").write_text("# Sun 2030-12-08\n")
+    (repo / "late.md").write_text("Sun 2030-12-08\n")
     subprocess.run(g + ["commit", "-qam", "strip"], check=True)
     assert measure(repo) == collections.Counter()
 

@@ -316,7 +316,7 @@ SCRATCH_PYTEST = ("/private/tmp/claude-502/-Users-x-proj/9f9cb189/scratchpad/bas
 ])
 def test_a_claude_is_known_by_its_binary(line):
     """Every claude form the suite (and a live host's table: all 53 claudes'
-    argv[0] was `claude`, Wed 2030-10-16) uses still matches."""
+    argv[0] was `claude`, Sun 2030-12-08) uses still matches."""
     assert _seat._CLAUDE.match(line), line
 
 

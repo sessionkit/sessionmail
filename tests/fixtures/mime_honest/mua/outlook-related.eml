@@ -1,7 +1,7 @@
 From: Carol <carol@example.org>
 To: Dave <dave@example.net>
 Subject: outlook-related
-Date: Thu, 03 Jan 2030 12:00:00 +0000
+Date: Sun, 08 Dec 2030 12:00:00 +0000
 Message-ID: <outlook-related@example.org>
 MIME-Version: 1.0
 Content-Type: multipart/related;
@@ -30,8 +30,8 @@ Content-Transfer-Encoding: quoted-printable
 Content-Type: image/png; name="image001.png"
 Content-Description: image001.png
 Content-Disposition: inline; filename="image001.png"; size=95;
-	creation-date="Thu, 03 Jan 2030 12:00:00 GMT";
-	modification-date="Thu, 03 Jan 2030 12:00:00 GMT"
+	creation-date="Sun, 08 Dec 2030 12:00:00 GMT";
+	modification-date="Sun, 08 Dec 2030 12:00:00 GMT"
 Content-ID: <image001.png@01DA0000.12345670>
 Content-Transfer-Encoding: base64
 

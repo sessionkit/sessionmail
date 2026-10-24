@@ -44,7 +44,7 @@ SID = "5006e0fb-ed67-7d14-3b9c-8764386a8d7f"
 HOST = "hq.tailnet.example"
 SHORT = "hq"
 ME = Me.of(session=SID, seat="ivan", host=HOST)
-NOW = datetime(2030, 7, 11, 12, 34, 56, tzinfo=timezone.utc)
+NOW = datetime(2030, 6, 9, 12, 34, 56, tzinfo=timezone.utc)
 #: The host SM-442's keeper test reads (`_voice.host_forms`).
 ENV = {"SESSIONMAIL_HOST": SHORT, "MAGICDNS_SUFFIX": "tailnet.example"}
 

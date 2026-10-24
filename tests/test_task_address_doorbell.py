@@ -188,14 +188,14 @@ for line in lines:
 sys.exit(1)
 """
 
-#: The generator reads Claude Code's sidecars for LIVE (2030-09-30, no
+#: The generator reads Claude Code's sidecars for LIVE (2030-12-08, no
 #: `session` any more); `ps` answers from the fixture so the pid is "running".
 FAKE_PS = """#!/bin/sh
 cat "$FAKE_PS_TABLE"
 """
 #: A synthetic start, the suite's fixture moment. The sidecar and the fake
 #: `ps` share it, so the 2 s match holds.
-STARTED = "Tue Jan 01 12:00:00 2030"
+STARTED = "Sun Jun 09 12:00:00 2030"
 
 #: The REAL generator, held at arm's length: always `--out` under tmp_path,
 #: never postmap, the host pinned to the one the doorbell folds to.

@@ -122,9 +122,9 @@ jq -rs '(map(select(.seat)) | map({(.sid): .seat}) | add // {}) as $seat
 It prints one line per seat per day: seat, date, injections, estimated tokens. For example:
 
 ```text
-(no seat)	2030-10-16	1	30
-sm+t.worker	2030-10-16	3	170
-sm+t.worker	2030-10-17	1	7
+(no seat)	2030-06-09	1	30
+sm+t.worker	2030-06-09	3	170
+sm+t.worker	2030-12-08	1	7
 ```
 
 ## When a write fails

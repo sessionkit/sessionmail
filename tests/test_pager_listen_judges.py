@@ -642,5 +642,5 @@ def test_r5_pager_why_and_the_ride_along_say_the_wake_carried():
     assert pager.why_lines([v]) == ["pager: wake by `wake to:$me` (built-in)"]
     rec = {"message_id": "x@y", "action": "wake", "rule": "wake to:$me",
            "layer": rules.BUILT_IN, "line": 6, "carry": True, "by": "pager listen",
-           "stamp": "2030-01-01T12:00:00Z"}
+           "stamp": "2030-06-09T12:00:00Z"}
     assert pager.why_text(rec).startswith("carry by `wake to:$me` (the built-in default)")

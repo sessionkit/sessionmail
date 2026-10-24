@@ -480,7 +480,7 @@ def probe(key, env: Mapping[str, str]) -> bool:
     signer = SIGNER or _sender.sign_wire
     verify = VERIFY or _root.ssh_verify
     wire = (f"From: {key.principal}@probe.invalid\nTo: {key.principal}@probe.invalid\n"
-            f"Subject: [ROOT] signing probe\nDate: Tue, 01 Jan 2030 00:00:00 +0000\n"
+            f"Subject: [ROOT] signing probe\nDate: Sun, 09 Jun 2030 00:00:00 +0000\n"
             f"Message-ID: <probe@probe.invalid>\nMIME-Version: 1.0\n"
             f"Content-Type: text/plain; charset=utf-8\n\n"
             f"memory init: a signing probe, never sent\n").encode("utf-8")
