@@ -150,7 +150,10 @@ def test_only_send_is_hand_written_and_it_keeps_its_name_and_place():
     listed = [t.name for t in server._tool_manager.list_tools()]
     assert listed == [t for t, _ in PAGE_TOOLS], "same names, same order: the prompt cache's"
     assert listed[0] == "message_send"
-    hand_written = [n for n, fn in handlers.items() if inspect.iscoroutinefunction(fn)]
+    # Every handler is async since every tool runs its verb in a child
+    # (SM-926), so the one hand-written tool is told by what BUILT it.
+    assert all(inspect.iscoroutinefunction(fn) for fn in handlers.values())
+    hand_written = [n for n, fn in handlers.items() if fn.__qualname__.startswith("_send_handler.")]
     assert hand_written == ["message_send"], "one hand-written tool, on purpose"
     assert _mcp.HAND_WRITTEN == {("message", "send")}
     props = server._tool_manager.get_tool("message_send").parameters["properties"]

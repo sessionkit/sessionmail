@@ -2,7 +2,7 @@
   "name": "sessionmail",
   "metadata": {
     "description": "Self-hosting marketplace for the sessionmail skill - add with `claude plugin marketplace add sessionkit/sessionmail`.",
-    "version": "0.3.0"
+    "version": "0.3.1"
   },
   "owner": {
     "name": "Mike Bailey",

@@ -43,6 +43,8 @@ from click.testing import CliRunner
 
 from sessionmail import _init, _mcp, _root, _seat, _sender, _sig, memory
 from sessionmail._init import InitError, InitResult
+import tool_call
+from fakes import fake_sign_bytes
 from test_root import BOX, Box
 
 pytestmark = pytest.mark.skipif(shutil.which("ssh-keygen") is None,
@@ -230,24 +232,21 @@ def env(mailroot, mta, keydir, monkeypatch) -> dict[str, str]:
     return e
 
 
+def _no_map(name):
+    """`_seat.box_via_map`, here: no postfix map knows any box."""
+    return None
+
+
+#: A tool's verb runs in a CHILD (SM-926): both seams reach it by these names
+#: (tests/tool_call.py). The fake signer by REFERENCE, from `fakes`, which
+#: imports no command module, so the child imports it as it is.
+tool_call.CARRIED_FNS[_no_map] = ("returns", None, None)
+tool_call.CARRIED_FNS[fake_sign_bytes] = ("ref", "fakes:fake_sign_bytes", None)
+
+
 @pytest.fixture(autouse=True)
 def no_postfix(monkeypatch):
-    monkeypatch.setattr(_seat, "box_via_map", lambda name: None)
-
-
-def fake_sign_bytes(data: bytes, env, ns: str) -> str | None:
-    """`_sender.sign_bytes`, faked: signs with the private half beside
-    $CLAUDE_SESSION_PUB when an agent socket is named, as the real one signs
-    under that socket. The bare base64, or None, exactly as the real one."""
-    pub = env.get("CLAUDE_SESSION_PUB", "")
-    if not (env.get("CLAUDE_SESSION_AGENT_SOCK") and pub.endswith(".pub")
-            and Path(pub[:-4]).is_file()):
-        return None
-    done = subprocess.run(["ssh-keygen", "-Y", "sign", "-f", pub[:-4], "-n", ns, "-"],
-                          input=data, capture_output=True)
-    if done.returncode != 0:
-        return None
-    return "".join(l for l in done.stdout.decode().splitlines() if "SSH SIGNATURE" not in l)
+    monkeypatch.setattr(_seat, "box_via_map", _no_map)
 
 
 @pytest.fixture(autouse=True)

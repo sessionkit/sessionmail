@@ -30,6 +30,7 @@ from starlette.testclient import TestClient
 
 from sessionmail import _mcp, memory, message, pager
 from test_scaffold import TOKEN_BUDGET, count_tokens
+from tool_call import call
 from test_message_subscription import fleet  # noqa: F401  (a fixture: a synthetic host)
 
 #: Three servers, one per command.
@@ -161,12 +162,14 @@ def test_a_noun_verbs_schema_is_its_pages_flags_with_its_pages_help():
 def test_a_noun_verb_tool_runs_that_verb(tmp_path, monkeypatch):
     """The argv carries the noun: the tool runs `box list`, not `list`."""
     monkeypatch.setenv("SESSION_MAIL_ROOT", str(tmp_path))
+    # The seam, so the listing never reads this host's live sessions. The
+    # verb runs in a CHILD (SM-926); the conftest carries this into it.
     monkeypatch.setattr(message, "_live_sessions", lambda: set())
     fn, _ = tool_index()["message_box_list"]
-    assert fn().strip() == "-- 0 shown"
+    assert call(fn).strip() == "-- 0 shown"
     fn, _ = tool_index()["message_box_path"]
     with pytest.raises(Exception) as caught:
-        fn(box_="no-such-box-here")
+        call(fn, box_="no-such-box-here")
     assert str(caught.value).startswith("exit 2: message box path: ")
 
 
@@ -176,9 +179,13 @@ def test_a_subscription_tool_is_refused_by_the_same_gate_as_the_page(fleet):
     from sessionmail._mcp import tools
     fn = {n: f for n, f, _ in tools(GROUP, NAME)}["message_subscription_add"]
     with pytest.raises(Exception) as caught:
-        fn(box_="atomnote", seat=True)
+        call(fn, box_="atomnote", seat=True)
     said = str(caught.value)
     assert said.startswith("exit 2: ") and "request it by mail, from a privileged seat" in said
+    # The sandbox's operator (conftest: privileged ivan and judy), never the
+    # host's real file: the verb runs in a child, and `call` hands it the
+    # suite's seams (SM-926 review r2; a bare child named the host's seats).
+    assert "message send ivan " in said, said
     assert fleet.files() == [] and fleet.runs() == 0
 
 
@@ -190,7 +197,7 @@ def test_over_http_a_subscription_write_is_refused_before_it_runs(fleet, verb):
     identity, no write. `list` only reads, and still runs."""
     by_name = {n: f for n, f, _ in _mcp.tools(GROUP, NAME, "http")}
     with pytest.raises(Exception) as caught:
-        by_name[f"message_subscription_{verb}"](box_="atomnote")
+        call(by_name[f"message_subscription_{verb}"], box_="atomnote")
     said = str(caught.value)
     assert said.startswith("not done: identity: over http"), said
     assert f"{NAME} mcp" in said
@@ -199,7 +206,7 @@ def test_over_http_a_subscription_write_is_refused_before_it_runs(fleet, verb):
 
 def test_over_stdio_a_subscription_write_runs(fleet):
     fn = {n: f for n, f, _ in _mcp.tools(GROUP, NAME, "stdio")}["message_subscription_add"]
-    out = fn(box_="atomnote")
+    out = call(fn, box_="atomnote")
     assert "atomnote" in out and fleet.runs() == 1
 
 
@@ -221,27 +228,43 @@ def test_a_tool_description_is_the_page_prose_within_budget(name, argv):
 
 # ── same stub, over a real client session (in-memory transport) ──────────
 
-def _stub_group():
-    """Every shipped verb has a body since Sun 2030-06-09, so the gate
-    keeps a stub of its own: one command that names a real requirement."""
-    import click
-    from sessionmail._help import CONTEXT_SETTINGS, OrderedGroup
-    from sessionmail._stub import stub
+#: Every shipped verb has a body since Sun 2030-06-09, so the gate keeps a
+#: stub of its own: one command that names a real requirement. A FILE, so the
+#: tool's child (SM-926) runs the same group the server was built from.
+STUB_GROUP = '''
+import click
+from sessionmail._help import CONTEXT_SETTINGS, OrderedGroup
+from sessionmail._stub import stub
 
-    @click.group(cls=OrderedGroup, context_settings=CONTEXT_SETTINGS)
-    def probe() -> None:
-        """probe - a group with one unbuilt verb, for this gate"""
+@click.group(cls=OrderedGroup, context_settings=CONTEXT_SETTINGS)
+def probe() -> None:
+    """probe - a group with one unbuilt verb, for this gate"""
 
-    @probe.command(context_settings=CONTEXT_SETTINGS)
-    def hollow() -> None:
-        """probe hollow - not built; names a requirement that exists"""
-        stub("memory", "The root holds only labels")
+@probe.command(context_settings=CONTEXT_SETTINGS)
+def hollow() -> None:
+    """probe hollow - not built; names a requirement that exists"""
+    stub("memory", "The root holds only labels")
 
-    return probe
+if __name__ == "__main__":
+    probe(prog_name="probe")
+'''
 
 
-def test_calling_a_stub_tool_returns_the_clis_own_stub_line_as_an_error():
-    group = _stub_group()
+def _stub_group(tmp_path, monkeypatch):
+    import importlib.util
+    import sys
+
+    source = tmp_path / "stub_probe.py"
+    source.write_text(STUB_GROUP)
+    spec = importlib.util.spec_from_file_location("sm_stub_probe", source)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    monkeypatch.setitem(_mcp.COMMANDS, "probe", [sys.executable, "-P", str(source)])
+    return module.probe
+
+
+def test_calling_a_stub_tool_returns_the_clis_own_stub_line_as_an_error(tmp_path, monkeypatch):
+    group = _stub_group(tmp_path, monkeypatch)
     server = _mcp.server(group, "probe")
     cli_text = CliRunner().invoke(group, ["hollow"], prog_name="probe").stderr
 

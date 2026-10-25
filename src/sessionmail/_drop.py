@@ -68,17 +68,17 @@ from __future__ import annotations
 import email.utils
 import os
 import re
-import socket
 import subprocess
 import sys
 import time
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from email.parser import BytesHeaderParser
 from email.policy import compat32
 from pathlib import Path
 
 from . import _generator
+from . import _host   # the ONE host rule
 from . import _magicdns
 from . import _settings
 from ._maildir import deliver_private
@@ -137,6 +137,17 @@ class Maps:
     #: alias map is then empty, and a reader that must tell "no row" from
     #: "no map" (the doorbell) reads this.
     alias_refused: str = ""
+    #: The environment `prepare` read; `names` asks the IS-ME set with it.
+    env: Mapping[str, str] | None = None
+    _names: frozenset[str] | None = field(default=None, repr=False)
+
+    def names(self) -> frozenset[str]:
+        """Every name this host has (`_host.names`), asked once per
+        send and only when a domain is not `host` itself: `scutil` runs at
+        most once a send, and not at all for mail to the NAME."""
+        if self._names is None:
+            self._names = _host.names(self.env) | {self.host}
+        return self._names
 
 
 def selected(env: Mapping[str, str]) -> bool:
@@ -165,12 +176,9 @@ def mail_root(env: Mapping[str, str]) -> Path:
 
 
 def short_host(env: Mapping[str, str]) -> str:
-    """The sender's host ($SESSIONMAIL_HOST, else the settings file's `host`,
-    else the short hostname), so both halves of one send agree on what "this
-    host" is."""
-    return (env.get("SESSIONMAIL_HOST") or env.get("SESSION_MAIL_HOST")
-            or _settings.file_text("host", env)
-            or socket.gethostname().split(".")[0]).lower()
+    """This host's NAME, the sender's (`_host.name`), so both halves
+    of one send agree on what "this host" is. The map rows are keyed by it."""
+    return _host.name(env)
 
 
 #: The signer's override for the mail origin (`_sig.origin_of`).
@@ -264,6 +272,10 @@ def _print_argv(env: Mapping[str, str]) -> tuple[Path, str, str, list[str], bool
     """(root, host, generator, argv base, no_fqdn) for the print modes: the
     one place the drop's print argv is built."""
     root, host = mail_root(env), short_host(env)
+    if not host:
+        raise NotDelivered("this host has no name ($SESSIONMAIL_HOST, the settings file's "
+                           "`host` and the hostname are all empty), so the drop cannot key "
+                           "its maps: set SESSIONMAIL_HOST", EX_UNAVAILABLE)
     gen = generator(env, root)
     base = ["--root", str(root), "--host", host]
     no_fqdn = _no_fqdn(gen, env)
@@ -310,7 +322,7 @@ def prepare(env: Mapping[str, str]) -> Maps:
         raise NotDelivered(f"the map generator failed (exit {done.returncode}): "
                            f"{_last(done.stderr)}{old}", EX_UNAVAILABLE)
     mailbox = {k: v[0] for k, v in _rows(done.stdout).items() if v}
-    maps = Maps(root, host, mailbox, {})
+    maps = Maps(root, host, mailbox, {}, env=env)
     done = _run_gen(gen, [*base, "--print-valias"], env)
     if done.returncode == 0:
         maps.alias = _rows(done.stdout)
@@ -323,14 +335,21 @@ def prepare(env: Mapping[str, str]) -> Maps:
 
 # ── resolution: what virtual(8) does with the two maps ───────────────────────
 
-def qualify(address: str, host: str) -> str | None:
+def qualify(address: str, host: str,
+            me: Callable[[], frozenset[str]] | None = None) -> str | None:
     """`local@host`, lowercased, +ext kept; None when the domain is not this
-    host (its short name, or anything under it, such as the tailnet FQDN)."""
+    host. HOST is the NAME the map rows are keyed by; a domain is this host
+    when it is HOST or under it (the tailnet FQDN), or, given ME (the IS-ME
+    set, `Maps.names`, asked only for a domain that is not HOST), any name
+    this machine has or had: the pin, the live hostname, LocalHostName,
+    ComputerName slugged, localhost. A local domain is rewritten
+    to HOST, so `alpha@MacBook-Air` resolves as `alpha@<the NAME>`."""
     local, at, domain = address.strip().lower().partition("@")
     if not local:
         return None
-    if at and not (domain == host or domain.startswith(host + ".")):
-        return None
+    if at and not _host.matches(domain, {host}):
+        if me is None or not _host.matches(domain, me()):
+            return None
     return f"{local}@{host}"
 
 
@@ -353,7 +372,7 @@ def expand(key: str, maps: Maps, depth: int = 0) -> list[str]:
         return [key]
     out: list[str] = []
     for dest in found:
-        d = qualify(dest, maps.host)
+        d = qualify(dest, maps.host, maps.names)
         if d is None:
             raise NotDelivered(f"{key} is aliased to {dest}, which is not on this host - the "
                                "drop delivers on this host only", EX_NOUSER)
@@ -381,7 +400,7 @@ def plan(recipients: Sequence[str], maps: Maps) -> list[tuple[str, str, Path]]:
     out: list[tuple[str, str, Path]] = []
     seen: set[Path] = set()
     for original in recipients:
-        key = qualify(original, maps.host)
+        key = qualify(original, maps.host, maps.names)
         if key is None:
             misses.append(f"'{original}' is not on this host (the drop delivers locally only)")
             continue

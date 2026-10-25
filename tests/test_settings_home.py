@@ -366,7 +366,7 @@ def test_branch_2_neither_path_writes_the_template_at_the_new_path(home):
     assert _settings.stranded() is False
     settings, created = _settings.ensure()
     assert (settings.state, created) == (_settings.OFF, True)
-    assert (home / NEW_DIR / "mail.json").read_text() == _settings.template()
+    assert (home / NEW_DIR / "mail.json").read_text() == _settings.fresh_body().decode()
     absent(home)
 
 

@@ -28,6 +28,12 @@ from sessionmail.pager import cli
 
 ROOT = Path(__file__).resolve().parents[1]
 TEMPLATE = '{"version": 1, "hooks": false, "sendmail": "drop"}\n'
+
+
+def created_body() -> str:
+    """What `ensure` creates a missing file from: the template, with the
+    host pin added (SM-941, `_settings.fresh_body`)."""
+    return _settings.fresh_body().decode("utf-8")
 AS_ROOT = hasattr(os, "geteuid") and os.geteuid() == 0
 
 
@@ -215,7 +221,7 @@ def test_ensure_creates_the_parents_and_writes_exactly_the_template(tmp_path):
     s, created = _settings.ensure(env_for(tmp_path))
     assert created is True
     assert (s.hooks, s.state, s.why) == (False, "off", "")
-    assert settings_file(tmp_path).read_text() == TEMPLATE
+    assert settings_file(tmp_path).read_text() == created_body()
     assert leftovers(tmp_path) == []
 
 
@@ -292,7 +298,7 @@ def test_two_processes_on_one_HOME_create_it_exactly_once(tmp_path):
         results.append(out.split())
     assert sorted(r[0] for r in results) == ["False"] * 7 + ["True"]
     assert all(r[1] == "off" for r in results)
-    assert settings_file(home).read_text() == TEMPLATE      # whole, once
+    assert settings_file(home).read_text() == created_body()      # whole, once
     assert leftovers(home) == []
 
 
@@ -311,7 +317,7 @@ def test_an_unwritable_HOME_is_off_with_the_os_error_and_the_next_call_creates(t
         home.chmod(0o700)
     s, created = _settings.ensure(env_for(home))            # writable now: try again
     assert (created, s.state) == (True, "off")
-    assert settings_file(home).read_text() == TEMPLATE
+    assert settings_file(home).read_text() == created_body()
 
 
 @pytest.mark.skipif(AS_ROOT, reason="root writes into a read-only directory")
@@ -428,7 +434,7 @@ def test_the_hermetic_HOME_is_a_sandbox_not_the_real_one(tmp_path, monkeypatch):
     s, created = _settings.ensure()
     assert (created, s.state) == (True, "off")
     assert _settings.path() == home / ".sessionkit/mail/settings/mail.json"
-    assert _settings.path().read_text() == TEMPLATE
+    assert _settings.path().read_text() == created_body()
 
     # and a hook run itself, as a seat: whatever it writes lands in the sandbox
     monkeypatch.setenv("CLAUDE_CODE_SESSION_ID", "99999999-0000-0000-0000-000000000000")
@@ -494,7 +500,7 @@ def test_no_old_file_is_the_template_and_no_old_dir_is_made(tmp_path):
     env = env_for(tmp_path)
     s, created = _settings.ensure(env)
     assert (s.state, created) == ("off", True)
-    assert settings_file(tmp_path).read_text() == TEMPLATE
+    assert settings_file(tmp_path).read_text() == created_body()
     assert not (tmp_path / ".session").exists()          # no symlink for nothing
 
 
@@ -518,7 +524,7 @@ def test_a_dangling_old_symlink_is_not_a_source(tmp_path):
     settings_file(tmp_path).unlink()
     s, created = _settings.ensure(env)
     assert (s.state, created) == ("off", True)
-    assert old_file(tmp_path).read_text() == TEMPLATE
+    assert old_file(tmp_path).read_text() == created_body()
 
 
 def test_an_old_file_that_differs_from_the_new_is_never_replaced(tmp_path):

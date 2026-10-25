@@ -25,11 +25,11 @@ render is owed; `--renderer PATH` or $SESSIONMAIL_RENDERER names another,
 from __future__ import annotations
 
 import base64
+import json
 import os
 import random
 import re
 import shutil
-import socket
 import subprocess
 import tempfile
 import threading
@@ -44,6 +44,7 @@ from collections.abc import Mapping
 import sessiontools
 
 from . import _drop   # SESSIONMAIL_SENDMAIL=drop: the mail drop, no MTA
+from . import _host   # the ONE host rule
 from . import _settings
 from . import _sig
 
@@ -108,9 +109,107 @@ def setting(env: Mapping[str, str], name: str, default: str = "") -> str:
 
 
 def host_of(env: Mapping[str, str]) -> str:
-    """The variable, else the settings file's `host`, else the short hostname."""
-    return (setting(env, "HOST") or _settings.file_text("host", env)
-            or socket.gethostname().split(".")[0])   # send:1858
+    """This host's NAME, by the one rule (`_host.name`): the
+    variable, else the settings file's `host`, else the short hostname;
+    stripped, lowercased. "" when none is set: `_deliver` refuses."""
+    return _host.name(env)
+
+
+# ── the writing model ────────────────────────────────────────────────────────
+
+#: The header that names the model that wrote the mail. No `X-`: a
+#: header we mint now is unprefixed. Written beside X-Session-From, before
+#: signing, so `_sig.h_for` signs it; `_sig.CLAIM_NAMES` holds it so an added
+#: unsigned one is refused; `_send.OWNED` holds it so no caller can type it.
+MODEL_HEADER = "Session-Model"
+#: The variable a NON-Claude harness sets in its agent's environment at launch.
+#: The harness's to set, never the agent's prompt (docs/session-model.md).
+MODEL_VAR = "SESSIONMAIL_MODEL"
+#: An exact model id: one token, no spaces, no line breaks, nothing a header
+#: could carry onward. `claude-opus-5-5`, `gemma-3-27b-it`, `org/model:tag`.
+MODEL_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:/@+-]{0,127}")
+#: What Claude Code writes as the model of a turn it made up itself.
+SYNTHETIC_MODEL = "<synthetic>"
+#: A session id that may name a file: never a path separator, never `..`.
+TRANSCRIPT_SID = re.compile(r"[A-Za-z0-9][A-Za-z0-9-]{0,127}")
+#: The tail of a transcript read first, and the most read at all: an
+#: assistant turn is a line, so the window doubles until it holds one.
+TRANSCRIPT_TAIL, TRANSCRIPT_MAX = 256 * 1024, 8 * 1024 * 1024
+
+
+def _model_id(value) -> str | None:
+    """VALUE when it is an id-shaped token, else None."""
+    if not isinstance(value, str) or value == SYNTHETIC_MODEL:
+        return None
+    return value if MODEL_ID.fullmatch(value) else None
+
+
+def _transcript(env: Mapping[str, str], sid: str) -> Path | None:
+    """`<claude config dir>/projects/*/<sid>.jsonl`: the slug is the session's
+    LAUNCH cwd, not the sender's, so every project dir is looked in."""
+    if not TRANSCRIPT_SID.fullmatch(sid):
+        return None
+    home = env.get("HOME") or os.path.expanduser("~")
+    config = (env.get("CLAUDE_CONFIG_DIR") or "").strip() or os.path.join(home, ".claude")
+    projects = Path(config).expanduser() / "projects"
+    try:                       # one removed between the glob and the stat is no model
+        hits = [p for p in projects.glob(f"*/{sid}.jsonl") if p.is_file()]
+        return max(hits, key=lambda p: p.stat().st_mtime) if hits else None
+    except OSError:
+        return None
+
+
+def _last_model(path: Path) -> str | None:
+    """The `message.model` of the LAST main-chain assistant turn in a Claude
+    Code transcript, read from its tail. A subagent's own turn
+    (`isSidechain`) and a synthetic one are passed over."""
+    try:
+        with path.open("rb") as f:
+            size = f.seek(0, os.SEEK_END)
+            window = TRANSCRIPT_TAIL
+            while True:
+                start = max(0, size - window)
+                f.seek(start)
+                lines = f.read(size - start).split(b"\n")
+                if start > 0:
+                    lines = lines[1:]          # the first line is cut: not a record
+                for line in reversed(lines):
+                    if b'"assistant"' not in line:
+                        continue
+                    try:
+                        rec = json.loads(line)
+                    except ValueError:
+                        continue
+                    if (not isinstance(rec, dict) or rec.get("type") != "assistant"
+                            or rec.get("isSidechain") is True):
+                        continue
+                    msg = rec.get("message")
+                    model = _model_id(msg.get("model")) if isinstance(msg, dict) else None
+                    if model:
+                        return model
+                if start == 0 or window >= TRANSCRIPT_MAX:
+                    return None
+                window *= 2
+    except OSError:
+        return None
+
+
+def writing_model(env: Mapping[str, str]) -> str | None:
+    """The exact id of the model writing this mail, as the HARNESS recorded
+    it, or None: then no Session-Model header is written. Never a guess, an
+    alias or `unknown`, and never fatal to a send.
+
+    1. Claude Code: `CLAUDE_CODE_SESSION_ID` names a transcript
+       (`_transcript`), and its last assistant turn names the model.
+    2. Another harness: `SESSIONMAIL_MODEL`, an id-shaped token.
+    3. Neither: None."""
+    sid = (env.get("CLAUDE_CODE_SESSION_ID") or "").strip()
+    if sid:
+        path = _transcript(env, sid)
+        model = _last_model(path) if path is not None else None
+        if model:
+            return model
+    return _model_id((env.get(MODEL_VAR) or "").strip())
 
 
 def root_of(env: Mapping[str, str]) -> Path:
@@ -1221,7 +1320,7 @@ def qp_encode(data: bytes) -> bytes:
 
 def build(req: Request, body: bytes, *, host: str, date: str, message_id: str,
           references: list[str], session: str, signature: str | None,
-          page: bytes | None = None, boundary: str = "") -> bytes:
+          page: bytes | None = None, boundary: str = "", model: str = "") -> bytes:
     """The header block in build_message's order, then the body's own bytes
     (send:1887-2111), each leaf quoted-printable instead when a line of it is
     past LINE_LIMIT (`_leaf_cte`). Pure."""
@@ -1255,6 +1354,8 @@ def build(req: Request, body: bytes, *, host: str, date: str, message_id: str,
         h.append(f"Supersedes: {req.supersedes}")
     if session:
         h.append(f"X-Session-From: {session}")
+    if model:                                    # no model known, no header
+        h.append(f"{MODEL_HEADER}: {model}")
     h.append(f"X-Machine: {host}")
     if signature:
         h.append(signature)
@@ -1349,6 +1450,11 @@ def mint(host: str, epoch: int, pid: int, rand: int) -> tuple[str, str]:
 def _deliver(req: Request, body: bytes, env: Mapping[str, str], err: list[str], *,
              now: int | None, pid: int | None, rand: int | None, boundary: str | None) -> str:
     host = host_of(env)
+    if not host:
+        raise Refused("this host has no name - refusing to send: $SESSIONMAIL_HOST, the "
+                      "settings file's `host` and the hostname are all empty, so no "
+                      "Message-ID can be minted at this host. Set SESSIONMAIL_HOST. "
+                      "NOTHING WAS SENT.", kind="identity")
     if req.message_id is not None:               # before render, preflight, mint, drop
         check_own_host(req.message_id, host)
 
@@ -1428,12 +1534,13 @@ def _deliver(req: Request, body: bytes, env: Mapping[str, str], err: list[str], 
     if req.message_id is not None:               # the caller's id; the Date stays minted
         message_id = req.message_id
     session = (sessiontools.session_id(env) or "")[:8]
+    model = writing_model(env) or ""             # captured from the harness, never typed
 
     # Build first, exactly as before: bare addresses, Bcc included (`sendmail -t`
     # strips it), no signature yet.
     wire = build(req, body, host=host, date=date, message_id=message_id,
                  references=references, session=session, signature=None,
-                 page=page, boundary=mime_boundary)
+                 page=page, boundary=mime_boundary, model=model)
 
     # Sign (send:2126-2173; 7(b): a send never fails for want of a key,
     # unless the seat asked for $SESSIONMAIL_REQUIRE_SIGNATURE).

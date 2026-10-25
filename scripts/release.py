@@ -2,12 +2,29 @@
 """Cut a sessionmail release.
 
 The ONE version lives in pyproject.toml (a static `version` in [project]).
-This script is its single writer: it sets it with `uv version`, which keeps
-uv.lock in step, and mirrors it into .claude-plugin/plugin.json and
-marketplace.json textually, so their formatting survives. It then stamps
-CHANGELOG.md's [Unreleased] section with the version and date, commits the
-files by name and makes the annotated tag. This is the family rule, and the
-sibling tools' release scripts work the same way.
+This script is its single writer: it sets it with `uv version --frozen`,
+records it on uv.lock's own root line (textual), and mirrors it into
+.claude-plugin/plugin.json and marketplace.json textually, so their
+formatting survives. It then stamps CHANGELOG.md's [Unreleased] section with
+the version and date, commits the files by name and makes the annotated tag.
+This is the family rule, and the sibling tools' release scripts work the
+same way.
+
+A RELEASE NEVER RE-LOCKS, as in sessionkit's script. A plain `uv version X`,
+with or without --no-sync, is a project write: it re-locks against the
+index, and this script commits uv.lock. Cut before the family's releases are
+on PyPI, that fails (unsatisfiable); offline, it fails; with UV_FIND_LINKS
+set, it writes a local-path lock and the release commits it. --no-sync only
+skips the venv sync. So `uv version` always runs with --frozen, which writes
+pyproject only and resolves nothing, on the dry path too, so a rehearsal
+runs the same uv call as the release. (uv refuses --no-sync beside --frozen;
+--frozen already implies no sync.) --frozen leaves uv.lock's own
+`[[package]] name = "sessionmail"` version line on the old version, so the
+script edits that one line as text, as it edits the manifests. The result is
+the bytes uv's own re-lock writes when the deps are unchanged, and
+`uv lock --check` passes. The lock is checked BEFORE `uv version` writes
+anything, so a refusal leaves pyproject untouched. `make release` runs this
+with python3, never a re-locking `uv run`.
 
 Pushing is deliberately NOT done for you.
 
@@ -68,6 +85,54 @@ def stamp_changelog(version):
     )
 
 
+def lock_root(text, name):
+    """The (start, end) span of the version VALUE on uv.lock's root line.
+
+    The root is the one [[package]] block named `name` whose source is the
+    project itself (editable or virtual "."), and it must hold exactly one
+    top-level `version = "..."` line. Anything else is refused: no guess, no
+    write.
+    """
+    starts = [m.start() for m in re.finditer(r"^\[\[package\]\]$", text, re.MULTILINE)]
+    roots = []
+    for i, start in enumerate(starts):
+        block = text[start : starts[i + 1] if i + 1 < len(starts) else len(text)]
+        if re.search(r'^name = "%s"$' % re.escape(name), block, re.MULTILINE) and re.search(
+            r'^source = \{ (?:editable|virtual) = "\." \}$', block, re.MULTILINE
+        ):
+            roots.append((start, block))
+    if len(roots) != 1:
+        raise SystemExit(
+            '%s has %d root [[package]] blocks for %s (editable or virtual source "."), not one'
+            " - refusing; nothing was written" % (LOCK, len(roots), name)
+        )
+    start, block = roots[0]
+    versions = list(re.finditer(r'^version = "([^"]*)"$', block, re.MULTILINE))
+    if len(versions) != 1:
+        raise SystemExit(
+            "%s's root %s block has %d version lines, not one - refusing; nothing was written"
+            % (LOCK, name, len(versions))
+        )
+    return start + versions[0].start(1), start + versions[0].end(1)
+
+
+def set_lock_root(text, span, version, dry):
+    """Write `version` onto the root line found by lock_root(), and nothing else."""
+    print("  ~ %s: root version %s -> %s (textual; nothing resolved)" % (LOCK, text[span[0] : span[1]], version))
+    if not dry:
+        LOCK.write_text(text[: span[0]] + version + text[span[1] :])
+
+
+def set_version(version, dry):
+    """pyproject.toml through `uv version --frozen`: it resolves nothing.
+
+    The dry path runs the SAME call plus --dry-run (uv writes nothing then),
+    so a rehearsal runs what the release runs. Never --no-sync: it does not
+    stop the re-lock, and uv refuses it beside --frozen.
+    """
+    run("uv", "version", version, "--frozen", *(["--dry-run"] if dry else []), dry=False)
+
+
 def run(*args, dry):
     print("  $ " + " ".join(args), flush=True)
     if not dry:
@@ -98,16 +163,24 @@ def main():
             "Refusing to edit files before a commit that cannot succeed."
         )
 
+    if not LOCK.exists():
+        raise SystemExit("%s not found - the release records its version there; nothing was written" % LOCK)
+
     print("sessionmail %s -> %s" % (current_version(), version), flush=True)
     # Compute every edit before writing any, so a refusal leaves the tree as it was.
+    # The uv.lock root line is found here, BEFORE `uv version` writes pyproject.
+    lock = LOCK.read_text()
+    span = lock_root(lock, tomllib.loads(PYPROJECT.read_text())["project"]["name"])
     edits = [(path, set_json_version(path, version)) for path in MIRRORS]
     edits.append((CHANGELOG, stamp_changelog(version)))
 
-    files = [PYPROJECT] + ([LOCK] if LOCK.exists() else []) + [p for p, _ in edits]
+    files = [PYPROJECT, LOCK] + [p for p, _ in edits]
     try:
-        # pyproject.toml (and uv.lock, re-locked without a sync) through uv.
-        run("uv", "version", version, "--no-sync", *(["--dry-run"] if dry else []), dry=False)
+        # pyproject.toml through uv, frozen: nothing is resolved or re-locked.
+        set_version(version, dry)
         print("  updated %s" % PYPROJECT)
+        # uv.lock's own root version line, as text: the one line --frozen leaves stale.
+        set_lock_root(lock, span, version, dry)
         for path, content in edits:
             print("  updated %s" % path)
             if not dry:

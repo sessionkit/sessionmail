@@ -111,6 +111,76 @@ def _is_maildir(d: Path) -> bool:
     return (d / "new").is_dir() and (d / "cur").is_dir()
 
 
+#: The store marker (nested-v1), `vmailbox-gen`'s STORE_MARKER and
+#: `_boxes.STORE_MARKER`. Not imported from `_boxes`: that module imports
+#: `_seat`, which imports this one. A test pins the two spellings equal.
+STORE_MARKER = ".tm-store"
+
+#: root -> (its mtime_ns, its marker stores in C order). A store is a new
+#: directory under the root, and making one moves the root's mtime, so the
+#: cache answers until the root changes. Without it every resolution would
+#: stat every box on the host (thousands) to find the few stores among them.
+_STORES: dict[str, tuple[int, tuple[str, ...]]] = {}
+
+
+def _stores(r: Path) -> tuple[str, ...]:
+    """The marker stores directly under R, in C order: the directories whose
+    `.tm-store` file makes their CHILDREN boxes. The generator's rule: marker
+    over inference, one level, dot-directories skipped."""
+    try:
+        mtime = os.stat(r).st_mtime_ns
+    except OSError:
+        return ()
+    hit = _STORES.get(str(r))
+    if hit is not None and hit[0] == mtime:
+        return hit[1]
+    found: list[str] = []
+    try:
+        with os.scandir(r) as entries:
+            for e in entries:
+                if e.name.startswith("."):
+                    continue
+                try:
+                    if e.is_dir() and os.path.isfile(os.path.join(e.path, STORE_MARKER)):
+                        found.append(e.name)
+                except OSError:
+                    continue
+    except OSError:
+        return ()
+    stores = tuple(sorted(found, key=os.fsencode))
+    _STORES[str(r)] = (mtime, stores)
+    return stores
+
+
+def two_boxes(name: str, r: Path) -> tuple[Path, tuple[Path, ...]] | None:
+    """When more than one directory answers to the bare NAME under R, the one
+    postfix delivers to, and the rest. None when there are fewer than two.
+
+    The candidates are the flat `R/<name>` and every marker store's
+    `R/<store>/<name>`. The generator writes one map line for each, keyed
+    alike, and pipes them through `LC_ALL=C sort -u`; `postmap` keeps the
+    FIRST. So delivery goes to the relative path (`<name>/` against
+    `<store>/<name>/`) that sorts first in C (byte) order. This is the same
+    rule `mail_box_resolve` applies in `mhs/mail-box.lib.sh`, so wake and
+    `list`/`read` land on one box (specs/message, "One physical box, on both
+    sides"). A fixed flat-first order is wrong whenever the store sorts
+    before the name: a stray flat copy took every read while every delivery
+    went to the nested box."""
+    if not name or "/" in name:
+        return None
+    rels: list[str] = []
+    if (r / name).is_dir():
+        rels.append(f"{name}/")
+    for store in _stores(r):
+        if (r / store / name).is_dir():
+            rels.append(f"{store}/{name}/")
+    if len(rels) < 2:
+        return None
+    rels.sort(key=os.fsencode)
+    paths = [r / rel.rstrip("/") for rel in rels]
+    return paths[0], tuple(paths[1:])
+
+
 # -- absent, or unreadable: one stat that tells them apart ----------
 #
 # `Path.is_dir()`, `is_file()`, `exists()` and `is_symlink()` raised
@@ -263,7 +333,9 @@ def deliver_private(box: Path, data: bytes, name_for) -> Path:
 def resolve_box(box: str, env: dict[str, str] | None = None) -> tuple[Path, str]:
     """The maildir BOX resolves to, and how - ONE resolution for every reader
     (specs/message, "One physical box, on both sides"). In order: a path that
-    is a maildir (absolute, or ~); `<root>/<name>`, where FLAT boxes live; and
+    is a maildir (absolute, or ~); for a bare name that more than one
+    directory answers to, the one postfix delivers to (`two_boxes`, the rule
+    `mhs/mail-box.lib.sh` applies too); `<root>/<name>`, where FLAT boxes live; and
     for a bare name, the box postfix DELIVERS `<name>@<host>` to
     (`_seat.box_via_map`). A project box nests under its store
     (`agents/example/chat/`), so `<root>/<name>` is not where it is: the
@@ -277,6 +349,12 @@ def resolve_box(box: str, env: dict[str, str] | None = None) -> tuple[Path, str]
             return p, f"path {p}"
         tried.append(f"no maildir at {p}")
     r = root(env)
+    two = two_boxes(box, r)
+    if two is not None:                      # two boxes, one name: the delivered one
+        first, others = two
+        return first, (f"under {r}: {box!r} is {len(others) + 1} boxes; postfix "
+                       f"delivers to the first in C order, and never to "
+                       f"{', '.join(str(o) for o in others)}: move it aside")
     d = r / box
     if _is_maildir(d):                       # <root>/<name>, or <root>/<store>/<project>
         return d, f"under {r}"

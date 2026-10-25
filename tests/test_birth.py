@@ -312,7 +312,8 @@ def test_detach_starts_the_generator_and_does_not_wait_or_measure_again(tmp_path
     rig = Rig(tmp_path, monkeypatch, rings=(NOT_COPIED, LIVE))
     started = []
     monkeypatch.setattr(_birth, "detach_regen",
-                        lambda root, env=None, record=None: started.append((root, record))
+                        lambda root, env=None, record=None, session="":
+                        started.append((root, record))
                         or (True, "generator started in the background (pid 1)"))
     birth = rig.ensure(regen="detach", record_source="startup")
     assert rig.calls == ["doorbell"]                     # no regen_maps, no second ring

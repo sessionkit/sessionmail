@@ -20,6 +20,7 @@ from click.testing import CliRunner
 
 from sessionmail.message import cli
 from test_message_list import deliver, box  # noqa: F401  (fixture reused)
+from tool_call import call
 
 FAKE = """#!{python}
 import os, sys
@@ -193,7 +194,7 @@ def test_the_mcp_tool_keeps_the_verdict_when_the_verifier_also_writes_stderr(box
     monkeypatch.setenv("SESSIONMAIL_MHS_ORACLE", str(bad))
     tool = {n: fn for n, fn, _ in _mcp.tools(cli, "message")}["message_verify"]
     with pytest.raises(ToolError) as err:
-        tool(args=["1"], trust=True)
+        call(tool, args=["1"], trust=True)
     text = str(err.value)
     assert "incorrect signature" in text and "signer: someone" in text
     assert text.splitlines()[-1] == "TRUST: FAIL reason=bad-signature"

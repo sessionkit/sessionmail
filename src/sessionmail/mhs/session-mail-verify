@@ -13,7 +13,9 @@
 #
 # Output: signer key, derived session-ID, crypto + principal verdicts.
 # Exit (plain mode, unchanged): 0 verified · 1 BAD signature · 2 unsigned
-# (no header) · 3 usage / arg parse / unreadable mailfile.
+# (no header) · 3 usage / arg parse / unreadable mailfile, or the verifier
+# could not decide (a broken install, or an unexpected internal fault:
+# verifier-incomplete, never BAD).
 #
 # --trust runs the full three-leg trust test — the boot-mail
 # ritual every keyed agent otherwise performed by hand (measured 2030-06-09:
@@ -71,8 +73,10 @@
 #        to the caller: when the fleet is blessed, strictness becomes the
 #        default by a one-line change, not a redesign).
 #   5  TRUST: ERROR reason=registry-absent|allowed-signers-absent|verifier-incomplete
-#        (verifier-incomplete: this install's _sig.py is missing. That is
-#        EVERY mail, v1 too: the version is read by _sig's parser)
+#        (verifier-incomplete: this install's _sig.py is missing or broken
+#        (that is EVERY mail, v1 too: the version is read by _sig's parser),
+#        or the verifier failed unexpectedly: a verifier fault, never a
+#        verdict on the mail)
 #        the test COULD NOT BE RUN — fix the environment, not the mail.
 #        Fail closed; there is no reduced mode. Plain mail-verify IS the
 #        reduced mode, under its honest name.
@@ -598,6 +602,27 @@ def load_sig():
         verdict("TRUST: ERROR reason=verifier-incomplete", 5)
     sys.exit(3)
 
+def incomplete(e):
+    # An exception main() did not decide is a verifier fault, never a
+    # verdict on the mail. It exits as a broken install does (load_sig above):
+    # rc 3, and under --trust ERROR verifier-incomplete (rc 5). Python's own
+    # handler printed a traceback and exited 1, BAD's code, so every caller
+    # read a verifier bug as a forgery. Whatever the run had recorded is
+    # dropped first: a leg-1 "good", a signature or a cert's agent recorded
+    # before the fault must never reach emit() beside this exit.
+    for k in J:
+        J[k] = None
+    leg1("unverified", "verifier-incomplete")
+    try:
+        what = f"{type(e).__name__}: {e}"
+    except Exception:          # a str() that raises still gets its type named
+        what = type(e).__name__
+    print(f"session-mail-verify: the verifier failed ({what}); it could not decide. "
+          "This is a verifier fault, not a verdict on the mail", file=sys.stderr)
+    if trust:
+        verdict("TRUST: ERROR reason=verifier-incomplete", 5)
+    sys.exit(3)
+
 def parse_failed(why):
     # As v1 does on a parse failure: plain rc 3; --trust fails closed.
     leg1("unverified", "signature-unparseable")
@@ -964,11 +989,25 @@ def main():
         run_trust(sid, keyline, msg)
     sys.exit(0)
 
+def run():
+    # Every verdict leaves main() as a SystemExit and passes through as it is
+    # (a genuine BAD is still rc 1). Any other exception is incomplete()'s:
+    # its own SystemExit is raised here, inside run(), so the try below still
+    # sees it and --json still writes its object. Exception, not
+    # BaseException: a Ctrl-C stays a Ctrl-C.
+    try:
+        main()
+    except SystemExit:
+        raise
+    except Exception as e:
+        incomplete(e)
+
 # --json: one object on every run that READ the mail (the usage and
 # unreadable-file exits above print none), written as the run exits, whatever
-# the exit site, canonical()'s included. A traceback prints none: no verdict.
+# the exit site, canonical()'s and an unexpected exception's included. No
+# traceback is ever the verdict: run() turns one into verifier-incomplete.
 try:
-    main()
+    run()
 except SystemExit as e:
     if json_mode:
         emit(e.code)

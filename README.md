@@ -33,6 +33,16 @@ memory ls / | memory cat PATH             # the box as a filesystem
 Each command's own `--help` is the reference; `<command> <verb> --help` is
 the page for a verb.
 
+## Requirements
+
+- [x] macOS (tested on macOS 27, Apple silicon)
+- [ ] Linux
+- [ ] WSL
+- [ ] Windows
+
+What sessionmail depends on, what needs each one, and how to upgrade it:
+[dependencies][dependencies].
+
 ## Installation
 
 **Two installs, and you need both.** The plugin brings the skills, the two
@@ -60,8 +70,10 @@ hook says so once per session rather than leaving you to guess.
 - `message send` writes each copy straight into this host's maildirs: [the
   file drop][file-drop], the default. Mail to another host is refused by
   name.
-- Reading needs no server either: `message list`, `tree`, `read` and
-  `mark`, `pager` and `memory` all read the maildir directly.
+- Reading needs no server either: `message list`, `tree` and `read`, and
+  `pager`, read the maildir directly. `message mark` and `memory` read the
+  [notmuch][] index, which is only as current as its last `notmuch new`
+  (below).
 - **Mail across machines** goes through postfix, which is opt-in:
   [postfix configuration][postfix-configuration].
 
@@ -70,9 +82,7 @@ setup][message-setup].
 
 ```sh
 message setup --dry-run          # print the plan; change nothing
-message setup --box NAME         # the mail root, the boxes, the notmuch profile
-notmuch --config="$HOME/.config/notmuch/sessionkit/config" new   # once, as setup says
-message setup                    # again: it links the notmuch hook
+message setup --box NAME         # the mail root, the boxes, the notmuch profile and hook
 ```
 
 - It makes the mail root, the operator's box and each `--box NAME` (the
@@ -82,8 +92,10 @@ message setup                    # again: it links the notmuch hook
   safe to re-run.
 - It never touches your own notmuch config, never edits postfix, and
   writes no settings key.
-- **Nothing runs `notmuch new` for you.** `message mark` and `memory`
-  read an empty index until something does: launchd, cron, or by hand.
+- **Setup runs `notmuch new --no-hooks` once**, on its own empty profile,
+  to build the index the hook needs. Nothing keeps it fresh: `message mark`
+  and `memory` read what was indexed until something runs `notmuch new`
+  again: launchd, cron, or by hand.
 
 `message`, `pager` and `memory` all run; the specs, in the git repository
 (the release archive leaves them out), say what each verb is meant to do
@@ -158,22 +170,28 @@ Everything else is in `docs/`, one subject per file:
   recorded; and [`message setup`][message-setup], making a host ready.
 - [Gating on `message verify --json`][verify-json-verdict]: the verdict as
   one JSON object.
+- [The writing model][session-model]: the signed `Session-Model:` header,
+  and where its id comes from for Claude Code and for another harness.
 - Delivery: [where mail comes from][mail-delivery-paths], [postfix
   configuration][postfix-configuration], [the file drop][file-drop],
   [pulling a mail host's boxes][pull].
 - [Configuration][configuration]: the files you set up, by component;
   [settings][settings], the keys of `mail.json`.
+- [Dependencies][dependencies]: what sessionmail needs, and how to upgrade
+  each one.
 - Index: [notmuch][], [notmuch settings][notmuch-settings], [the post-new
   command][post-new-command].
 - [The plugin's three skills][plugin-skills]; [development][development-setup],
   including `make test-latency`, the wall-clock tests `make test` leaves out.
 
+[dependencies]: docs/dependencies.md
 [pager]: docs/pager.md
 [pager-listen-internals]: docs/pager-listen-internals.md
 [pager-monitor]: docs/pager-monitor.md
 [pager-outside-claude]: docs/pager-outside-claude.md
 [pager-inject-log]: docs/pager-inject-log.md
 [message-seat]: docs/message-seat.md
+[session-model]: docs/session-model.md
 [message-receipt]: docs/message-receipt.md
 [message-setup]: docs/message-setup.md
 [verify-json-verdict]: docs/verify-json-verdict.md

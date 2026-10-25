@@ -389,21 +389,30 @@ class PagerGroup(OrderedGroup):
         return super().get_command(ctx, name)
 
 
-#: message-subscriptions 4.3: this page used to say listen "reads every file
-#: in <seat>/subscriptions/ on every run" - false now, and the files are
-#: retired (4.2). What reaches the
-#: box is postfix's job, set by `message subscription add`; the pager only
-#: watches the one box. "124 timeout" went with it: --timeout is hidden
-#: and the page no longer names it.
+#: The top page, the first one a stranger reads. It says four things: the
+#: default (mail to this session's id wakes it: the built-in `wake to:$me`),
+#: where the rest is ruled (`pager rule`), that the pager only watches the
+#: one box, and the exits. It names no mail carrier: what reaches the box is
+#: `message subscription add`'s job, whatever delivers it. It used to say
+#: listen "reads every file in <seat>/subscriptions/" (message-subscriptions
+#: 4.3), false since those files were retired (4.2). The exit line is
+#: measured: click exits 2 for a usage error, and could-not-look
+#: (`EX_COULD_NOT_LOOK`) is 2 as well, so one code covers both, as on
+#: `pager why`'s page. The top page leaves the other codes, 1 among them,
+#: to the verb pages. For example, 1 is a verb's own refusal when `listen
+#: --monitor` is given a flag it cannot take, or when `mcp --transport
+#: http` is asked to bind off loopback. tests/test_pager_top_help.py runs
+#: the group and holds the page to it.
 GROUP_EPILOG = unwrapped(
-    """It takes no argument about WHAT to hear: `pager listen` watches
-this session's box. What else reaches that box is a subscription
-(`message subscription add BOX`), delivered by postfix; the pager
+    """By default, mail to this session's id wakes this session; other
+mail in its box, such as a subscription's (`message subscription
+add BOX`), rides along. `pager rule` shows and changes what pages
+and what rides. `pager listen` watches only this session's box and
 reads no subscription file. Alerts are mail with X-Alert-* headers
 from the host's runner, one thread per alert. The pager never
 writes to the maildir and never claims a message.
 
-Exit: 0 ok · 1 usage · 2 could not look"""
+Exit: 0 ok · 2 usage, or could not look (each verb's page has the rest)"""
 )
 
 

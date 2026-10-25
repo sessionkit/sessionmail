@@ -54,6 +54,11 @@ def subscribe(home: Path, folder: str, stored: str, body: str = "# added by a te
 
 NO_PS = lambda: ({}, {})  # noqa: E731
 
+#: The footer's clause when no alias map can be asked (SM-938): the `root`
+#: fixture has no postfix, so every row says `map not measured` and the
+#: footer says why, once.
+NO_MAP = "; map not measured: no postfix here"
+
 
 @pytest.fixture
 def root(tmp_path, monkeypatch):
@@ -63,6 +68,8 @@ def root(tmp_path, monkeypatch):
     monkeypatch.delenv("TM_AGENT_ADDRESS", raising=False)
     monkeypatch.delenv("CLAUDE_CODE_AGENT", raising=False)
     monkeypatch.setattr(_seat, "_postfix_maps", lambda p: None)     # no postfix here
+    monkeypatch.setattr(_seat, "rows_in_map",                        # nor its map (SM-938)
+                        lambda pairs, env=None: (None, "no postfix here"))
     monkeypatch.setattr(message, "_live_sessions", lambda: {SID, OTHER, SUPER})
     monkeypatch.setattr(_seat, "_ps_table", NO_PS)
     monkeypatch.setattr(_reach.sessiontools, "sessions", lambda env=None: [])
@@ -135,7 +142,7 @@ def test_the_tree_shows_what_feeds_what_seat_first(gc):
     assert lines[3].startswith("└── voicemode+super")
     assert "+super of project acmecorp/voicemode, session subscription" in lines[3]
     assert lines[4].startswith("    └── voicemode+kaizen") and "seat subscription" in lines[4]
-    assert footer(done.stdout) == "-- 4 addresses reach you, 2 levels deep"
+    assert footer(done.stdout) == "-- 4 addresses reach you, 2 levels deep" + NO_MAP
 
 
 def test_notes_line_up_in_one_column(gc):
@@ -166,7 +173,7 @@ def test_a_loop_is_printed_once_and_marked(ring):
     assert indent(lines[2]) > indent(lines[1]) and indent(lines[3]) > indent(lines[2])
     assert lines[3].endswith(_reach.LOOP), lines[3]
     assert _reach.LOOP not in "".join(lines[:3])
-    assert footer(done.stdout) == "-- 2 addresses reach you, 3 levels deep"
+    assert footer(done.stdout) == "-- 2 addresses reach you, 3 levels deep" + NO_MAP
 
 
 def test_a_loop_back_to_the_seat_is_marked_not_walked(root, home, monkeypatch):
@@ -208,7 +215,7 @@ def test_depth_is_the_readers_to_raise(chain):
     lines = body(done.stdout)
     assert [label(line) for line in lines] == [SID[:8]] + [f"c{n}" for n in range(1, 7)]
     assert "more feed" not in done.stdout and "cut at" not in done.stdout
-    assert footer(done.stdout) == "-- 6 addresses reach you, 6 levels deep"
+    assert footer(done.stdout) == "-- 6 addresses reach you, 6 levels deep" + NO_MAP
 
 
 def test_depth_bound_also_cuts_the_seat_branch(root, home, monkeypatch):

@@ -46,6 +46,7 @@ import sessiontools
 import time
 from datetime import datetime
 import re
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -179,7 +180,10 @@ def local_domain(value: str) -> bool:
     domain - a human's `name+tag@gmail.com` in an inherited EMAIL - is not a
     seat on this host and declares nothing."""
     _, at, domain = value.strip().lower().partition("@")
-    return not at or domain.split(".", 1)[0] == short_host()
+    if not at:
+        return True
+    host = short_host()
+    return bool(host) and (domain == host or domain.startswith(host + "."))
 
 
 def declared_address(env: dict[str, str] | None = None) -> tuple[str, str] | None:
@@ -699,9 +703,12 @@ class Malformed(Exception):
 #: `from:alice@alpha` matches the seat's own mail at BOTH `alice@alpha` and
 #: `alice@alpha.<suffix>`, while `from:alice@alpha.<suffix>`
 #: would MISS the bare-host form and re-open the hole on the other side.
-def short_host() -> str:
-    import socket
-    return socket.gethostname().split(".")[0].lower()
+def short_host(env: Mapping[str, str] | None = None) -> str:
+    """This host's NAME, by the one rule (`_host.name`): the
+    variable, else the settings `host`, else the short hostname, lowercased.
+    ENV defaults to `os.environ`, so the old 0-argument call still works."""
+    from . import _host
+    return _host.name(env)
 
 
 # ── marks ────────────────────────────────────────────────────────────────
@@ -2331,13 +2338,13 @@ def box_via_map(name: str) -> tuple[Path, str] | None:
     was born deaf (measured). The map is the one place the answer already
     is; asking it is what a human typing the name expects too.
     """
-    import socket
     if not name or "/" in name or name.startswith("."):
         return None
     maps = _postfix_maps("virtual_mailbox_maps")
     if not maps:
         return None
-    host = socket.gethostname().split(".")[0].lower()
+    from . import _host
+    host = _host.live()  # key as vmailbox-gen WRITES (hostname -s), not by NAME
     key = f"{name}@{host}"
     hit = _postmap_lookup(key, maps)
     tagged = ""
@@ -2395,7 +2402,7 @@ def doorbell(address: str, session: str, env: dict[str, str] | None = None
     because a drop host has no compiled maps and postfix's, where postfix is
     installed anyway, say nothing about where the drop delivers. A refused
     carrier delivers nothing, so it is not measured, and says why."""
-    import shutil, socket
+    import shutil
     from . import _settings
     env = os.environ if env is None else env
     carrier = _settings.carrier(env)
@@ -2408,7 +2415,8 @@ def doorbell(address: str, session: str, env: dict[str, str] | None = None
     alias_maps = _postfix_maps("virtual_alias_maps")
     if alias_maps is None:
         return None, "postconf could not read virtual_alias_maps"
-    host = socket.gethostname().split(".")[0].lower()
+    from . import _host
+    host = _host.live()  # key as vmailbox-gen WRITES (hostname -s), not by NAME
     key = f"{address}@{host}"
     copied = _postmap_lookup(key, alias_maps)
     if not (copied and session and session in copied[1]):
@@ -2422,6 +2430,53 @@ def doorbell(address: str, session: str, env: dict[str, str] | None = None
         return False, (f"NOT DELIVERABLE: {key} -> this box in {copied[0]}, but no mailbox line for "
                        f"{box_key} in virtual_mailbox_maps - the copy would bounce 5.1.1 (F21)")
     return True, f"{key} -> this box, in {copied[0]}; {box_key} -> {landed[1]}, in {landed[0]}"
+
+
+def rows_in_map(pairs: list[tuple[str, str]], env: dict[str, str] | None = None
+                ) -> tuple[list[bool] | None, str]:
+    """Does the alias map the carrier reads copy each KEY into its DEST? PAIRS
+    are local parts, `(key, dest)`: a subscription's row key (`atomnote`,
+    `heard+airpods`) and its subscriber (a session id or a seat), as the
+    generator writes them (`<key>@<host> -> <key>@<host>, <dest>@<host>`).
+    ([True | False per pair], "") when measured, (None, why) when not - never
+    a guess. Read-only: it asks the maps and runs no generator.
+
+    The maps asked are the doorbell's: postfix's compiled maps on an MTA
+    carrier (`_postmap_lookup`, the first map that resolves the key, as
+    virtual(8) reads them), the drop's own alias rows on the mail drop."""
+    import shutil, socket
+    from . import _settings
+    env = os.environ if env is None else env
+    if not pairs:
+        return [], ""
+    carrier = _settings.carrier(env)
+    if carrier.kind == "refused":
+        return None, f"the carrier is refused: {carrier.why}"
+    if carrier.kind == "drop":
+        from . import _drop
+        try:
+            maps = _drop.prepare(env)
+        except _drop.NotDelivered as exc:
+            return None, f"the mail drop could not read its maps: {exc}"
+        if maps.alias_refused:
+            return [False] * len(pairs), ""
+        out = []
+        for key, dest in pairs:
+            k, d = _drop.qualify(key, maps.host), _drop.qualify(dest, maps.host)
+            out.append(k is not None and d is not None and d in maps.alias.get(k, []))
+        return out, ""
+    if not shutil.which("postconf") or not shutil.which("postmap"):
+        return None, "no postconf/postmap on PATH to read the alias maps"
+    alias_maps = _postfix_maps("virtual_alias_maps")
+    if not alias_maps:
+        return None, "postconf named no hash: or lmdb: alias map to read"
+    host = socket.gethostname().split(".")[0].lower()
+    out = []
+    for key, dest in pairs:
+        hit = _postmap_lookup(f"{key.lower()}@{host}", alias_maps)
+        dests = [d.strip().lower() for d in hit[1].split(",")] if hit else []
+        out.append(f"{dest.lower()}@{host}" in dests)
+    return out, ""
 
 
 def _drop_doorbell(address: str, session: str, env: dict[str, str]) -> tuple[bool | None, str]:
@@ -2438,8 +2493,8 @@ def _drop_doorbell(address: str, session: str, env: dict[str, str]) -> tuple[boo
         maps = _drop.prepare(env)
     except _drop.NotDelivered as exc:
         return None, f"the mail drop could not read its maps: {exc}"
-    key = _drop.qualify(address, maps.host)
-    box_key = _drop.qualify(session, maps.host) if session else None
+    key = _drop.qualify(address, maps.host, maps.names)
+    box_key = _drop.qualify(session, maps.host, maps.names) if session else None
     if key is None or box_key is None:
         return None, (f"the mail drop delivers on this host only, and {address!r} or the "
                       f"session {session!r} is not an address here")

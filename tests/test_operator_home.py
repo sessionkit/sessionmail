@@ -3,9 +3,10 @@
 The `session` tool's settings (the operator block) live in
 `~/.sessionkit/tools/settings/session.json`, sessiontools' package folder
 for the `session` tool (ST-202's map: session -> tools). sessionmail names
-that folder itself (`_operator.DIR`), because the published sessiontools
-(0.1.0, the floor) has no `host_dir` and no `PACKAGES`, and its settings
-root is the old `~/.settings`, which sessiontools writes no longer.
+that folder itself (`_operator.DIR`). It was written when the floor was
+sessiontools 0.1.0, which has no `host_dir` and no `PACKAGES`, and whose
+settings root is the old `~/.settings`, which sessiontools writes no longer.
+The floor is now 0.3.0, which has the map.
 
 Red before the fix (sessionmail a7818e8): `_operator._tool_dir` built the
 session folder as `st.settings_root(env) / "session"`, `~/.settings/session/`,

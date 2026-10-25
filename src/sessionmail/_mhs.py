@@ -45,6 +45,7 @@ never refused, in either mode.
 from __future__ import annotations
 
 import os
+import shutil
 import subprocess
 import sys
 
@@ -89,6 +90,21 @@ DEGRADES = frozenset({"wake"})
 #: "path not found"; the refusal line on stderr tells the two apart, the way
 #: `message mark` says in words which 2 it meant.
 EX_REFUSED = 2
+
+#: The verbs whose bundled oracle is mhs-thread, which calls bare `notmuch`
+#: with no could-not-look path. With no `notmuch` on the child's PATH, `run`
+#: refuses them with EX_REFUSED before the oracle starts: one line, never
+#: mhs-thread's traceback. `wake` degrades by design (DEGRADES); `run` is
+#: not here, because its exit table on a failed item is not yet ruled.
+NEEDS_NOTMUCH = frozenset({"ls", "tree", "cat"})
+
+
+def notmuch_missing(verb: str) -> str:
+    """The one refusal line for VERB with no `notmuch` on PATH. Its words
+    say which 2 it is: not a path that was looked for and not found."""
+    return (f"memory {verb}: notmuch is not installed (no `notmuch` on PATH), and "
+            f"{verb} reads the mail index through it: nothing was read. Install "
+            f"notmuch; `memory wake` still runs without it, degraded.")
 
 #: The ONE opt-in that lets `memory run` execute anything (the interim fix).
 #: Off unless it is exactly "1". `run` executes script-mail as the owner.
@@ -217,7 +233,9 @@ def run(argv: list[str], env: dict[str, str] | None = None) -> int:
     The child's environment comes from `_index` (see the module doc), in
     either mode. With no profile, the refusal line
     goes to stderr first, once; then `wake` runs under REFUSED_CONFIG and
-    every other index-reading verb returns EX_REFUSED without running."""
+    every other index-reading verb returns EX_REFUSED without running.
+    With a profile but no `notmuch` on PATH, a bundled ls, tree or cat
+    (NEEDS_NOTMUCH) returns EX_REFUSED the same way, one line saying so."""
     verb = verb_of(argv, env)
     if verb not in NO_INDEX:
         resolved = _index.resolve(os.environ if env is None else env)
@@ -228,6 +246,9 @@ def run(argv: list[str], env: dict[str, str] | None = None) -> int:
             env = _store_env(env, REFUSED_CONFIG)
         else:
             env = _store_env(env, str(resolved.config))
+    if verb in NEEDS_NOTMUCH and _bundled(argv) and not _on_path("notmuch", env):
+        _emit(sys.stderr, (notmuch_missing(verb) + "\n").encode())
+        return EX_REFUSED
     try:
         done = subprocess.run(argv, capture_output=True, env=child_env(env))
     except OSError as exc:
@@ -250,6 +271,21 @@ def verb_of(argv: list[str], env: dict[str, str] | None = None) -> str:
         argv[0] if argv else ""
     name = os.path.basename(script)
     return name[len("session-mail-"):] if name.startswith("session-mail-") else ""
+
+
+def _bundled(argv: list[str]) -> bool:
+    """True when ARGV runs one of the bundled scripts in MHS_DIR, read the way
+    `oracle` built it. A named $SESSIONMAIL_MHS_ORACLE is a substitute that
+    need not call notmuch at all, so it is never checked for it."""
+    script = argv[1] if len(argv) > 1 and argv[0] == sys.executable else \
+        argv[0] if argv else ""
+    return os.path.dirname(os.path.realpath(script)) == MHS_DIR if script else False
+
+
+def _on_path(binary: str, env: dict[str, str] | None) -> bool:
+    """BINARY is on the PATH the child will search (ENV's, else this process's)."""
+    base = os.environ if env is None else env
+    return shutil.which(binary, path=base.get("PATH", os.defpath)) is not None
 
 
 def _store_env(env: dict[str, str] | None, config: str) -> dict[str, str]:

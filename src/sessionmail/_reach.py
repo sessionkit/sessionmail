@@ -137,6 +137,11 @@ class Node:
     children: list["Node"] = field(default_factory=list)
     loop: bool = False
     cut: int = 0          # feeders not walked because the depth bound stopped here
+    #: The alias row this node is: KEY's row copies into DEST. The
+    #: root has none; a subscription is `(box key, subscriber)`, the seat is
+    #: `(seat, session)`.
+    key: str = ""
+    dest: str = ""
 
 
 @dataclass
@@ -162,7 +167,8 @@ def _walk(g: Graph, key: str, path: tuple[str, ...], depth: int, limit: int,
         if skip and _short(r.entry.box).lower() == skip:
             continue
         k = r.key
-        node = Node(label=_short(r.entry.box), note=_what(r))
+        node = Node(label=_short(r.entry.box), note=_what(r), key=r.key,
+                    dest=r.entry.subscriber)
         seen.add(k)
         stats["levels"] = max(stats["levels"], depth)
         if k in path:
@@ -189,7 +195,8 @@ def tree(g: Graph, *, session: str = "", seat: str = "", limit: int = DEFAULT_DE
         top = Node(label=f"{_short(session)} (this session)", note=unmoved(session))
         path: tuple[str, ...] = (session.lower(),)
         if seat_key:
-            s = Node(label=seat, note="your seat: its row copies seat mail here (D12)")
+            s = Node(label=seat, note="your seat: its row copies seat mail here (D12)",
+                     key=seat_key, dest=session)
             seen.add(seat_key)
             stats["levels"] = 1
             if seat_key in path:
@@ -218,6 +225,38 @@ def tree(g: Graph, *, session: str = "", seat: str = "", limit: int = DEFAULT_DE
                 cut=stats["cut"], dropped=sum(g.dropped.get(k, 0) for k in walked))
 
 
+#: What `mark_map` adds to a row's note: the MAP's answer, never the settings'.
+IN_MAP, NOT_IN_MAP, NOT_MEASURED = "in map", "NOT in map", "map not measured"
+
+
+def mark_map(root: Node, measure: Callable[[list[tuple[str, str]]],
+                                           "tuple[list[bool] | None, str]"]) -> str:
+    """Add the alias map's state to every row under ROOT: `in map`
+    when the row the generator writes for it copies its key into its
+    subscriber, `NOT in map` when it does not, `map not measured` when
+    MEASURE could not ask. MEASURE is `_seat.rows_in_map`: read-only, one
+    lookup per row. Returns why it was not measured, or "".
+
+    The settings say what SHOULD reach you; this says what the map routes
+    now. They part when a generator run dropped a session's rows."""
+    nodes: list[Node] = []
+
+    def collect(n: Node) -> None:
+        for c in n.children:
+            if c.key and c.dest:
+                nodes.append(c)
+            collect(c)
+
+    collect(root)
+    if not nodes:
+        return ""
+    states, why = measure([(n.key, n.dest) for n in nodes])
+    for i, n in enumerate(nodes):
+        state = NOT_MEASURED if states is None else IN_MAP if states[i] else NOT_IN_MAP
+        n.note = f"{n.note}; {state}" if n.note else state
+    return why
+
+
 def render(node: Node, *, limit: int) -> list[str]:
     """The tree drawn with box characters, each note in one column."""
     rows: list[tuple[str, str]] = [(node.label, node.note)]
@@ -239,7 +278,7 @@ def render(node: Node, *, limit: int) -> list[str]:
     return [f"{label:<{width}}{note}".rstrip() if note else label for label, note in rows]
 
 
-def footer(t: Tree, *, limit: int, boxed: bool = True) -> str:
+def footer(t: Tree, *, limit: int, boxed: bool = True, unmeasured: str = "") -> str:
     n = t.addresses
     line = (f"-- {n} address{'es' if n != 1 else ''} reach{'' if n != 1 else 'es'} you, "
             f"{t.levels} level{'s' if t.levels != 1 else ''} deep")
@@ -251,6 +290,8 @@ def footer(t: Tree, *, limit: int, boxed: bool = True) -> str:
     if not boxed:
         line += ("; this session has NO BOX yet, so none of this reaches it until "
                  "`pager listen` births it")
+    if unmeasured:
+        line += f"; {NOT_MEASURED}: {unmeasured}"
     return line
 
 

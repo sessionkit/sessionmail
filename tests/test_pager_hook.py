@@ -34,7 +34,7 @@ def context(result) -> list[str]:
     return out["additionalContext"].splitlines()
 
 from _export import export_absent
-from sessionmail import _seat, pager
+from sessionmail import _host, _seat, pager
 from sessionmail.pager import cli
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -1352,8 +1352,9 @@ def test_success_criterion_1_a_home_with_no_settings_file(seat):
     first = batch()
     assert first.exit_code == 0
     p = settings_path()
-    assert json.loads(p.read_text()) == {"version": 1, "hooks": False, "sendmail": "drop"}
-    assert p.read_text() == _settings.template()
+    assert json.loads(p.read_text()) == {"version": 1, "hooks": False, "sendmail": "drop",
+                                         "host": _host.live()}      # the pin (SM-941)
+    assert p.read_text() == _settings.fresh_body().decode()
     lines = context(first)
     assert lines == [note_for(p)], "the note is the batch's ONLY output"
     assert str(p) in lines[0] and '"hooks": true' in lines[0]
@@ -1396,7 +1397,7 @@ def test_two_sessions_race_to_create_it_and_exactly_one_says_the_note(seat, tmp_
             assert json.loads(out)["hookSpecificOutput"]["additionalContext"] == note_for(settings_path())
             notes += 1
     assert notes == 1, "exactly one racer hands its agent the note"
-    assert settings_path().read_text() == _settings.template(), "created once, and whole"
+    assert settings_path().read_text() == _settings.fresh_body().decode(), "created once, and whole"
     assert [n for n in os.listdir(settings_path().parent)
             if n not in ("mail.json", _settings.SCHEMA, _settings.INSTALLED_TEMPLATE)] == []
 
@@ -1473,7 +1474,7 @@ def test_the_file_cannot_be_written(seat):
     dot.unlink()
     again = batch()
     assert context(again) == [note_for(settings_path())]
-    assert settings_path().read_text() == _settings.template()
+    assert settings_path().read_text() == _settings.fresh_body().decode()
 
 
 @pytest.mark.skipif(AS_ROOT, reason="root writes into a read-only HOME")

@@ -23,8 +23,11 @@ README = ROOT / "README.md"
 
 #: The README's H2s, in order: the standard's four front-door parts, the
 #: family template's two MUST-HAVEs, Configuration and Logs (SM-858), then
-#: the link list (SM-755 Q1, accepted).
-README_SECTIONS = ["Quick start", "Installation", "Uninstall", "Configuration", "Logs", "Docs"]
+#: the link list (SM-755 Q1, accepted). Requirements is section 4 of the
+#: family's README shape, after Quick start: the operating systems and a
+#: link to docs/dependencies.md (the family's dependency-docs page).
+README_SECTIONS = ["Quick start", "Requirements", "Installation", "Uninstall", "Configuration",
+                   "Logs", "Docs"]
 
 #: Every shipped doc: the README, AGENTS.md and all of docs/, found, never
 #: hand-kept (SM-849: a hand-kept list let two dead links hide). Each one

@@ -91,6 +91,11 @@
 #                    the box is routable, and the alias lines must follow the
 #                    live session list, not the box list). Was `session mail
 #                    arm`'s until that verb was retired 2030-06-09.
+#                    A writing run queued behind another may be ANSWERED by
+#                    it (see QUEUED RUNS COALESCE, at the lock): it writes
+#                    nothing itself, and exits with the code its own run would
+#                    have had. Exit 0 still means the maps on disk come from a
+#                    read made after this run began.
 #     --valias-static FILE  the hand-kept standing-alias file folded into valias
 #                    (default: $MAIL_ROOT/.postfix/valias.static; absent = none).
 #     --subscription-box STORED  print the box a subscription file named STORED
@@ -258,6 +263,7 @@ while [ -L "$_self" ]; do
   case "$_link" in /*) _self="$_link" ;; *) _self="$(dirname "$_self")/$_link" ;; esac
 done
 GEN_DIR="$(cd "$(dirname "$_self")" && pwd -P)"
+GEN_PATH="$GEN_DIR/${_self##*/}"   # this file, links followed: one input of the regen request key
 SUFFIX_HELPER="$GEN_DIR/magicdns-suffix"
 unset _self _link
 MAIL_ROOT="${MAIL_ROOT:-$HOME/.mail}"
@@ -795,8 +801,12 @@ VALIAS_ADDR_OLD=0      # live sessions with only an old address file (3.3b) - no
 # also leaves the $MAIL_ROOT/.state/regen-failures.log breadcrumb (see the header).
 # On --print-valias it writes NO file and NO dir: that path's contract is stdout
 # only, and its caller reads the stderr line and the exit 3 directly.
+VALIAS_REFUSAL=""     # the refusal line valias_refuse printed: a coalesced waiter's answer
+VALIAS_JSON=""        # the live list this run read (generate_valias): checks a coalesced request's session
+VALIAS_SELF_REFUSED=0 # 1 = valias refused by the self-check, for THIS run's session only
 valias_refuse() {
-  printf 'vmailbox-gen: ⚠ valias NOT regenerated — the previous alias map stays in force: %s\n' "$*" >&2
+  VALIAS_REFUSAL="⚠ valias NOT regenerated — the previous alias map stays in force: $*"
+  printf 'vmailbox-gen: %s\n' "$VALIAS_REFUSAL" >&2
   VALIAS_RC=3
   if [ "$PRINT_VALIAS" -eq 1 ]; then return 0; fi
   local d="$MAIL_ROOT/.state"
@@ -813,6 +823,34 @@ valias_refuse() {
 # sidecar that will not parse (mid-write, or foreign) is skipped, as `session
 # list` skipped it. Returns non-zero only when it could not LOOK: no sidecar
 # directory, or `ps` failing - never for "nobody is live".
+#
+# Claude Code rewrites its sidecars IN PLACE (truncate, then write), so a
+# read can land on an empty or half-written file. Such a session used to be
+# dropped from this run silently, and every row it had - its seat row and its
+# subscriptions - left the map while the run exited 0. So a sidecar that is empty
+# or will not parse is read ONCE more, after a short pause (`sidecar_read`), and
+# one that still fails is NAMED on stderr. Valid JSON that is not an object is
+# foreign: skipped at once, with no pause.
+SIDECAR_REREAD_PAUSE=0.05
+sidecar_read() {
+  local f="$1" out rc
+  out="$(sidecar_parse "$f")" && rc=0 || rc=$?
+  if [ "$rc" -ne 0 ] || { [ -z "$out" ] && [ ! -s "$f" ]; }; then
+    sleep "$SIDECAR_REREAD_PAUSE"
+    out="$(sidecar_parse "$f")" && rc=0 || rc=$?
+    if [ "$rc" -ne 0 ] || { [ -z "$out" ] && [ ! -s "$f" ]; }; then
+      [ -e "$f" ] && printf 'vmailbox-gen: sidecar %s could not be read twice (empty, or not JSON) - its session is not counted live in this run, and its rows are not written\n' "$f" >&2
+      return 0
+    fi
+  fi
+  [ -n "$out" ] && printf '%s\n' "$out"
+  return 0
+}
+sidecar_parse() {
+  jq -c 'select(type=="object")
+         | {pid: (.pid | tostring), sid: (.sessionId // ""),
+            agent: (.agent // ""), start: (.procStart // "")}' "$1" 2>/dev/null
+}
 live_sessions_json() {
   local f ps_tab cars
   [ -d "$SIDECAR_DIR" ] || return 2
@@ -820,9 +858,7 @@ live_sessions_json() {
   [ -n "$ps_tab" ] || return 2
   cars="$(for f in "$SIDECAR_DIR"/*.json; do
             [ -f "$f" ] || continue
-            jq -c 'select(type=="object")
-                   | {pid: (.pid | tostring), sid: (.sessionId // ""),
-                      agent: (.agent // ""), start: (.procStart // "")}' "$f" 2>/dev/null || true
+            sidecar_read "$f"
           done)"
   printf '%s\n' "$cars" | jq -s -c --arg ps "$ps_tab" '
     def epoch: try (gsub(" +"; " ") | sub("^ | $"; ""; "g")
@@ -848,9 +884,11 @@ generate_valias() {
     || { valias_refuse "could not read the live sessions (no sidecar dir $SIDECAR_DIR, or 'ps' failed)"; return 3; }
   printf '%s' "$json" | jq -e 'type=="array"' >/dev/null 2>&1 \
     || { valias_refuse "the live-session reader did not return a JSON array"; return 3; }
+  VALIAS_JSON="$json"
   self="${CLAUDE_CODE_SESSION_ID:-}"
   if [ -n "$self" ] && ! printf '%s' "$json" | jq -e --arg s "$self" 'any(.[]; .session_id==$s)' >/dev/null 2>&1; then
     valias_refuse "run inside session $self but the sidecars in $SIDECAR_DIR do not show it live — the list is not trustworthy and an empty-ish map would switch every seat->session copy off"
+    VALIAS_SELF_REFUSED=1
     return 3
   fi
   rec="$(mktemp "${TMPDIR:-/tmp}/valias-rec.XXXXXX")"
@@ -1133,15 +1171,6 @@ live_guard() {
 }
 live_guard
 
-# Build the alias text BEFORE taking the lock (the sidecar read is tens of ms; the lock is
-# held for the writes only). A refusal here is loud, leaves VALIAS_RC=3 and the
-# previous valias untouched, and does NOT stop the mailbox map from being written.
-VALIAS_TEXT=""
-if [ "$DO_VALIAS" -eq 1 ]; then
-  VALIAS_TEXT="$(mktemp "${TMPDIR:-/tmp}/valias-text.XXXXXX")"
-  generate_valias > "$VALIAS_TEXT" || VALIAS_RC=$?
-fi
-
 # The map dir is made ONCE, with sudo, by the setup in docs/postfix-configuration.md
 # (sudo install -d, setgid <you>:_postfix 2750). This generator runs as the owner
 # with NO root. If the dir is missing it tries a plain `mkdir -p`: for --out into a
@@ -1158,15 +1187,110 @@ fi
 # use a mkdir lock: mkdir is an atomic create-or-fail on every POSIX/BSD fs. The
 # temp+mv write below is what keeps virtual(8) from ever reading a half-written
 # map; the lock keeps two *writers* from interleaving their generate/mv/postmap.
+#
+# QUEUED RUNS COALESCE, AND A WAITER WAITS. The alias text is read under the
+# lock (below), so a run holds it for its whole read, and a burst of births
+# would queue many runs behind one another, each doing the same read. Instead:
+#
+#   * Every writing run first leaves a REQUEST, an empty file in
+#     .vmailbox-gen.req/ beside the lock, named
+#     <key>.<maps>.<session id or ->.<pid>.<random>. The name carries all its
+#     data, so a request appears whole or not at all. <key> is a checksum over
+#     every input that shapes the maps (this generator's path and text, the
+#     root, the host and FQDN, the map path, the static file, postmap or not,
+#     the sidecar dir, the sessionmail home, HOME and the session-settings
+#     dir); <maps> is `ma` for a whole run, `a` for --valias-only and `m`
+#     for --no-valias.
+#   * The run that takes the lock (the HOLDER) lists the requests with its
+#     key BEFORE it reads anything, keeping each one whose maps are a subset
+#     of its own (a whole run serves all three; `a` serves `a`; `m` serves
+#     `m`). It then reads, builds and writes exactly as a lone run does, and
+#     only AFTER the write answers each request it listed, in
+#     .vmailbox-gen.done/: the exit code that request would have had, and one
+#     line saying why. A waiter whose request is answered exits with that code
+#     and writes nothing. So EXIT 0 STILL MEANS what every caller relies on:
+#     the maps on disk come from a read made after this call began.
+#   * A request created after the holder's listing is not answered by it: its
+#     own waiter is still spinning, and whichever run takes the lock next lists
+#     it. A holder that dies before its write (an error, a TERM) answers
+#     nothing, and its waiters go on to take the lock themselves.
+#   * The answer for an `a` or `ma` request is the valias outcome: 3 and the
+#     holder's own refusal line when valias was refused, and 3 when the
+#     request's session is not in the live list the holder read (today's
+#     self-check, made for that session). An `m` request gets 0 once vmailbox
+#     is written. A holder refused by the self-check for ITS OWN session
+#     answers no `a` or `ma` request whose session the list does show (or that
+#     has none): that run's own check would have passed, so its waiter is left
+#     to take the lock and write valias itself.
+#
+# The spin's bound stays as the backstop for a holder stuck past it, and it is
+# a CLOCK: about 10 s by $SECONDS (whole seconds, so 9 to 10 s), never a count
+# of forked sleeps, whose wall time grows with load. A run that reaches it
+# writes nothing and exits 2, as before.
 LOCKDIR="$STATE_DIR/.vmailbox-gen.lock"
+REQDIR="$STATE_DIR/.vmailbox-gen.req"
+DONEDIR="$STATE_DIR/.vmailbox-gen.done"
+mkdir -p "$REQDIR" "$DONEDIR" 2>/dev/null \
+  || die "could not make the regen request dirs $REQDIR and $DONEDIR - no map written"
+if [ "$VALIAS_ONLY" -eq 1 ]; then MAPS=a; elif [ "$DO_VALIAS" -eq 0 ]; then MAPS=m; else MAPS=ma; fi
+REQKEY="$({ printf '%s\n' "$GEN_PATH" "$MAIL_ROOT" "$HOST" "$FQDN" "$VMAILBOX" "$VALIAS_STATIC" \
+              "$DO_POSTMAP" "$SIDECAR_DIR" "$SESSIONMAIL_HOME" "$HOME" "$SESSIONS_SETTINGS"
+            cat -- "$GEN_PATH" 2>/dev/null || true; } | cksum | tr ' ' '-')"
+# A session id that cannot be part of a file name makes no request: that run
+# takes the lock itself, as every run did before.
+REQID=""
+case "${CLAUDE_CODE_SESSION_ID:-}" in
+  */*|*..*|.*) ;;
+  *) REQID="$REQKEY.$MAPS.${CLAUDE_CODE_SESSION_ID:--}.$$.$RANDOM" ;;
+esac
+req_clean() {
+  if [ -n "$REQID" ]; then rm -f "$REQDIR/$REQID" "$DONEDIR/$REQID"; fi
+  return 0
+}
+# req_answered -> exit with the answer, when a holder has answered this run's
+# request; return 1 when it has not. The answer's line is printed LAST on
+# stderr when the code is not 0, so a caller that reads the last stderr line
+# reads the holder's reason.
+req_answered() {
+  local served="" rc line
+  [ -n "$REQID" ] && [ -e "$DONEDIR/$REQID" ] || return 1
+  IFS= read -r served < "$DONEDIR/$REQID" || true
+  rc="${served%% *}"; line="${served#* }"
+  case "$rc" in ''|*[!0-9]*) rc=2; line="regen request answered unreadably: $served" ;; esac
+  if [ "$rc" -eq 0 ]; then
+    printf 'vmailbox-gen: coalesced: %s\n' "$line"
+  else
+    printf 'vmailbox-gen: coalesced: answered by a run that listed this request before its read\n' >&2
+    printf 'vmailbox-gen: %s\n' "$line" >&2
+  fi
+  exit "$rc"
+}
+if [ -n "$REQID" ]; then : > "$REQDIR/$REQID"; fi
+trap 'req_clean' EXIT
 _locked=0
-i=0
-while [ "$i" -lt 100 ]; do
+_deadline=$((SECONDS + 10))
+while :; do
+  req_answered || true
   if mkdir "$LOCKDIR" 2>/dev/null; then _locked=1; break; fi
-  sleep 0.1; i=$((i + 1))
+  [ "$SECONDS" -lt "$_deadline" ] || break
+  sleep 0.1
 done
-[ "$_locked" -eq 1 ] || die "could not acquire regen lock $LOCKDIR after 10s (stuck run? remove it if stale)"
-trap 'rmdir "$LOCKDIR" 2>/dev/null || true' EXIT
+[ "$_locked" -eq 1 ] || die "could not acquire regen lock $LOCKDIR after about 10 s (stuck run? remove it if stale)"
+trap 'rmdir "$LOCKDIR" 2>/dev/null || true; req_clean' EXIT
+# Answered between the last look and the mkdir: hand the lock back and exit.
+req_answered || true
+# Housekeeping: a request or answer older than two minutes outlived its waiter
+# (a live one is at most about 10 s old), so it was left by a killed run.
+find "$REQDIR" "$DONEDIR" -type f -mmin +2 -exec rm -f {} + 2>/dev/null || true
+# The requests this run serves, listed BEFORE any read below.
+SERVES=()
+for _f in "$REQDIR/$REQKEY".*; do
+  [ -e "$_f" ] || continue
+  _b="${_f##*/}"
+  [ "$_b" = "$REQID" ] && continue
+  _m="${_b#"$REQKEY".}"; _m="${_m%%.*}"
+  case "$MAPS:$_m" in ma:ma|ma:a|ma:m|a:a|m:m) SERVES+=("$_b") ;; esac
+done
 
 # Write atomically (temp + mv) so a concurrent virtual(8) lookup never reads a
 # half-written map. BOTH the source text AND its .db are built on the temp path
@@ -1176,7 +1300,21 @@ tmp="$(mktemp "$STATE_DIR/vmailbox.XXXXXX")"
 # shellcheck disable=SC2064
 vtmp="$(mktemp "$STATE_DIR/valias.XXXXXX")"
 # shellcheck disable=SC2064
-trap 'rm -f "$tmp" "$tmp.db" "$vtmp" "$vtmp.db" ${VALIAS_TEXT:+"$VALIAS_TEXT"}; rmdir "$LOCKDIR" 2>/dev/null || true' EXIT
+VALIAS_TEXT=""
+trap 'rm -f "$tmp" "$tmp.db" "$vtmp" "$vtmp.db" ${VALIAS_TEXT:+"$VALIAS_TEXT"}; rmdir "$LOCKDIR" 2>/dev/null || true; req_clean' EXIT
+
+# Build the alias text UNDER the lock. It was built before the lock, and
+# the lock is a mkdir spin, not a queue: a run whose snapshot of the live sessions
+# was older could win the spin last and write that older text over a newer run's,
+# dropping a just-born session's rows (its seat row and its subscriptions) while
+# both runs exited 0. Read under the lock, the last writer holds the newest read.
+# The cost is the read (about a second on a 5000-box host) held inside the lock.
+# A refusal here is loud, leaves VALIAS_RC=3 and the previous valias untouched,
+# and does NOT stop the mailbox map from being written.
+if [ "$DO_VALIAS" -eq 1 ]; then
+  VALIAS_TEXT="$(mktemp "${TMPDIR:-/tmp}/valias-text.XXXXXX")"
+  generate_valias > "$VALIAS_TEXT" || VALIAS_RC=$?
+fi
 if [ "$VALIAS_ONLY" -eq 0 ]; then
 generate > "$tmp"
 # 0640: the CONSUMER (virtual(8)) reads the map via its primary group _postfix
@@ -1219,4 +1357,41 @@ if [ "$DO_VALIAS" -eq 1 ] && [ "$VALIAS_RC" -eq 0 ]; then
 elif [ "$DO_VALIAS" -eq 1 ]; then
   printf 'vmailbox-gen: valias NOT written (refused, see stderr); %s left as it was\n' "$VALIAS"
 fi
+
+# Answer the requests listed before the read, now that the maps are written:
+# `<rc> <line>` to done/.<id>, then mv to done/<id>, so a waiter reads a whole
+# answer or none. The live list's session ids are read once, and only when a
+# request needs one checked.
+_live_sids=""; _live_read=0
+for _b in ${SERVES[@]+"${SERVES[@]}"}; do
+  _m="${_b#"$REQKEY".}"; _rest="${_m#*.}"; _m="${_m%%.*}"
+  _sid="${_rest%.*.*}"; [ "$_sid" = "-" ] && _sid=""
+  if [ "$_m" != m ] && [ -n "$_sid" ] && [ -n "$VALIAS_JSON" ] && [ "$_live_read" -eq 0 ]; then
+    _live_sids="$(printf '%s' "$VALIAS_JSON" | jq -r '.[].session_id' 2>/dev/null)" || _live_sids=""
+    _live_read=1
+  fi
+  _ghost=0
+  if [ "$_m" != m ] && [ -n "$_sid" ] && [ -n "$VALIAS_JSON" ] \
+     && ! printf '%s\n' "$_live_sids" | grep -Fqx -- "$_sid"; then _ghost=1; fi
+  if [ "$_m" = m ]; then
+    _ans="0 run $$ wrote $VMAILBOX from a read made after this request"
+  elif [ "$_ghost" -eq 1 ]; then
+    _ans="3 ⚠ run inside session $_sid but the sidecars in $SIDECAR_DIR do not show it live - the alias map run $$ wrote has no rows for it"
+  elif [ "$VALIAS_SELF_REFUSED" -eq 1 ]; then
+    # Refused for THIS run's own session: the list showed the request's session
+    # (or it has none), so its own run would have written valias. Leave it to
+    # its waiter, which takes the lock next.
+    continue
+  elif [ "$VALIAS_RC" -ne 0 ]; then
+    _ans="$VALIAS_RC ${VALIAS_REFUSAL:-valias NOT regenerated by run $$ (see its stderr)}"
+  else
+    if [ "$_m" = a ]; then
+      _ans="0 run $$ wrote $VALIAS from a read made after this request"
+    else
+      _ans="0 run $$ wrote $VMAILBOX and $VALIAS from a read made after this request"
+    fi
+  fi
+  { printf '%s\n' "${_ans//$'\n'/ }" > "$DONEDIR/.$_b" && mv -f "$DONEDIR/.$_b" "$DONEDIR/$_b"; } 2>/dev/null || true
+  rm -f "$REQDIR/$_b"
+done
 exit "$VALIAS_RC"

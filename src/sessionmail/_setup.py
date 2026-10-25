@@ -23,6 +23,11 @@ The steps, in this order:
   (`_maildir.root`) and the drop's (`_drop.mail_root(env) / "agents"`)
   differ, setup REFUSES before applying anything: the drop would deliver into
   a tree the readers never open.
+- `host`: this host's NAME, pinned once in the host settings file
+  (`host_step`). A `host` already set is never touched; a file not
+  there yet is DONE, because the hook that creates it writes the pin
+  (`_settings.fresh_body`); a file with no `host` gains the live short
+  hostname, lowercased, and no other change.
 - `box:<name>`: the first boxes the mail drop needs: the
   operator's (`_operator.read()`: `mailbox`, else `default`) and every
   `--box NAME`. Made with `_seat.birth_box`, the birth's own box maker. The
@@ -37,10 +42,21 @@ The steps, in this order:
   root, only when no notmuch database is in the mail root: setup adopts no
   database (MANUAL), and never writes over a file. A notmuch config that is
   not sessionmail's, `~/.notmuch-config` included, is never read or written.
+- `notmuch-index`: sessionmail's own index, built ONCE. DONE when notmuch
+  reports a `database.hook_dir` for the profile (it opened a database).
+  Otherwise it runs `notmuch --config=<profile> new --no-hooks`, and only
+  on an EMPTY index: the profile is written in this same run (over a mail
+  root with no database, by `notmuch-profile`'s own rule), or notmuch
+  reports no hook dir AND no `.notmuch` is at the `database.path` it
+  reports. A database already there is BLOCKED: setup runs no `new` over
+  it. With no binary the step is BLOCKED and still names the `new` setup
+  will run once notmuch is found, so one run names every link left.
 - `notmuch-hook:post-new` and `notmuch-hook:post-insert`: links to the
   packaged post-new hook, in the `database.hook_dir` notmuch reports for
   that profile, asked with `--config=<profile>` and notmuch's own override
-  variables dropped. With no profile the step is BLOCKED and nothing is
+  variables dropped. When the hook dir cannot be known while the plan is
+  built, ONE `notmuch-hook` step waits on `notmuch-index`: it asks the hook
+  dir after the index is built, in the same run. With no profile nothing is
   linked anywhere. A different file there is never replaced.
 - `carrier`: DONE whatever the carrier, naming its value and where it came
   from (the variable, the host file, or the template's default). MANUAL only
@@ -58,6 +74,9 @@ The steps, in this order:
   Otherwise the listener must answer (BLOCKED if not), then apply writes,
   lints (`plutil -lint`), boots out our loaded job and bootstraps it.
 
+When steps are left, the run ends with ONE next-steps block: every step not
+DONE, numbered, in plan order, with its detail, then the line to re-run.
+
 No privileged step is registered in this build: on a host with no postfix,
 nothing setup does needs root. The engine's privileged path (print first;
 `sudo -- ARGV` only at a tty, else left for the human) is tested with a fake
@@ -68,8 +87,10 @@ The carrier and the suffix go through ONE seam, `settings(env)` and
 `_settings.carrier` (the variable, else the settings file, else the drop);
 a carrier that is not one refuses the plan before any step runs.
 
-Setup writes NO key into the settings file. A MANUAL line names the key to
-write, and the variable that beats it. Postfix is never edited: on a host
+Setup writes ONE key into the settings file, `host`, and only when it is
+absent. Every other key it
+leaves to a MANUAL line naming the key to write, and the variable that
+beats it. Postfix is never edited: on a host
 with no maps, setup writes none unless `--write-maps` asks.
 """
 from __future__ import annotations
@@ -118,7 +139,17 @@ REPAIRABLE_TAIL = "sessionmail/notmuch/post-new"
 #: What notmuch is asked for the hook dir. It reads empty until the first
 #: `notmuch new`.
 HOOK_DIR_KEY = "database.hook_dir"
+#: Where the profile's database is. Asked only when the hook dir reads empty:
+#: a notmuch older than 0.32 has no `database.hook_dir` key at all.
+DATABASE_PATH_KEY = "database.path"
 NOTMUCH_TIMEOUT = 10.0
+#: The one `notmuch new` setup runs indexes the mail root, so it gets minutes,
+#: not NOTMUCH_TIMEOUT's seconds.
+NOTMUCH_NEW_TIMEOUT = 600.0
+#: The step that builds the empty index, and the argv tail it runs. No hook
+#: runs in the run that links the hooks (as `store-index` builds its own).
+INDEX_STEP = "notmuch-index"
+NEW_ARGS = ("new", "--no-hooks")
 
 #: The generator's own fold (`vmailbox-gen`, `san()`): a box whose name it
 #: would rewrite gets no map row, so the drop would still refuse mail to it.
@@ -238,18 +269,27 @@ def run_plan(steps: list[Step], env: Mapping[str, str], out: TextIO, *, dry_run:
     todo = [s for s in steps if s.state == TODO]
     if dry_run:
         print(f"dry run: nothing applied ({len(todo)} step(s) TODO)", file=out)
+        human = [s for s in steps if s.state not in (DONE, TODO)]
+        last = (f"run `{COMMAND}` to apply the {len(todo)} TODO step(s)." if todo
+                else f"then run `{COMMAND}` again.")
+        if human:
+            next_steps(human, out, f"{COMMAND}: {len(human)} step(s) left for you:", last)
+        elif todo:
+            print(last, file=out)
         return EX_OK if not todo and _all_done(steps) else EX_REMAINS
     if todo:
         print("applying:", file=out)
     for s in todo:
         if s.privileged:
             line = _apply_privileged(s, env, tty)
+            if s.state != DONE:
+                s.detail = line
             print(f"  {s.id:<{width}}  {line}", file=out)
             continue
         try:
             line = s.apply() if s.apply else "nothing to do"
         except Left as exc:
-            s.state = BLOCKED
+            s.state, s.detail = BLOCKED, str(exc)
             print(f"  {s.id:<{width}}  BLOCKED: {exc}", file=out)
             continue
         except (OSError, Failed) as exc:
@@ -261,11 +301,22 @@ def run_plan(steps: list[Step], env: Mapping[str, str], out: TextIO, *, dry_run:
         print(f"  {s.id:<{width}}  {line}", file=out)
     left = [s for s in steps if s.state != DONE]
     if left:
-        print(f"{COMMAND}: done what it can; {len(left)} step(s) left for you: "
-              + ", ".join(f"{s.id} ({s.state})" for s in left), file=out)
+        next_steps(left, out, f"{COMMAND}: done what it can; {len(left)} step(s) left for you:",
+                   f"then run `{COMMAND}` again.")
         return EX_REMAINS
     print(f"{COMMAND}: every step DONE", file=out)
     return EX_OK
+
+
+def next_steps(left: Sequence[Step], out: TextIO, head: str, last: str) -> None:
+    """The ONE next-steps block, printed once at the end of a run that leaves
+    steps: every step not DONE, in plan order, one numbered line each, with
+    the same detail as its row, then LAST. A step that waits on another says
+    so in its detail ("waits on <id>"), so one cause reads as one cause."""
+    print(head, file=out)
+    for n, s in enumerate(left, 1):
+        print(f"  {n}. {s.id} ({s.state}): {s.detail}", file=out)
+    print(last, file=out)
 
 
 def _all_done(steps: Sequence[Step]) -> bool:
@@ -318,6 +369,73 @@ def mail_root_step(agents: Path) -> Step:
         _maildir.make_private_dirs(agents)
         return f"made {agents} (0700)"
     return Step("mail-root", f"the agents root, {agents}", check=check, apply=apply)
+
+
+#: The `host` step's line on a host whose settings file is not there yet.
+HOST_AT_BIRTH = ("pinned when the first session creates the settings file "
+                 "(the pager's hook writes it with \"host\": the live hostname, lowercased)")
+
+
+def host_step(env: Mapping[str, str]) -> Step:
+    """`host`: pin this host's NAME once (the host-rule spec's "setup
+    pins the name once"), so a later hostname change cannot move it.
+
+    - DONE, nothing written: a non-empty string `host` is set in the template
+      or host layers, whatever it is ("never over a user's host"); or the host
+      file is not there yet (`HOST_AT_BIRTH`: the hook that alone creates it,
+      `_settings.ensure`, writes the pin into it).
+    - TODO: the host file has no `host`. Apply adds `"host": <the live short
+      hostname, lowercased>` and nothing else (`_settings.add_key`). A set
+      $SESSIONMAIL_HOST still beats the pin, and the line says so.
+    - MANUAL: the host file's `host` is there but is not a non-empty string.
+    - BLOCKED: the live hostname is empty, or the host file cannot be read or
+      is not a JSON object. Never written."""
+    from . import _host, _operator, _settings
+    target = _operator.settings_home() / _settings.RELATIVE
+    shown = _settings.SHOWN
+    pinned = _host.setting(env)
+    if pinned:
+        return Step("host", "", check=lambda: (DONE, f"{pinned!r}, from {shown}"))
+    try:
+        raw = target.read_bytes()
+    except FileNotFoundError:
+        if os.path.lexists(target):
+            why = f"{shown} is a symlink to nothing: setup never writes it"
+            return Step("host", why, check=lambda: (BLOCKED, why))
+        return Step("host", "", check=lambda: (DONE, HOST_AT_BIRTH))
+    except OSError as exc:
+        why = f"{shown} could not be read ({exc.strerror or exc}): setup never writes it"
+        return Step("host", why, check=lambda: (BLOCKED, why))
+    try:
+        data = json.loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, ValueError):
+        data = None
+    if not isinstance(data, dict):
+        why = f"{shown} is not a JSON object: setup never writes it"
+        return Step("host", why, check=lambda: (BLOCKED, why))
+    if _settings.HOST_KEY in data:
+        return Step("host", f'"{_settings.HOST_KEY}": {json.dumps(data[_settings.HOST_KEY])} in '
+                    f"{shown} is not a host name (a non-empty string): set it to this host's "
+                    "name, or remove it and re-run setup to pin the hostname", manual=True)
+    live = _host.live()
+    if not live:
+        why = "the hostname is empty, so there is no name to pin: set SESSIONMAIL_HOST"
+        return Step("host", why, check=lambda: (BLOCKED, why))
+    var = _host._variable(env)
+    beaten = f" (${_host.VAR}={var} still wins while it is set)" if var else ""
+
+    def check() -> tuple[str, str]:
+        return TODO, f'write "{_settings.HOST_KEY}": "{live}" in {shown}{beaten}'
+
+    def apply() -> str:
+        try:
+            wrote = _settings.add_key(target, _settings.HOST_KEY, live)
+        except ValueError as exc:
+            raise Failed(f"{shown}: {exc}; nothing was written") from None
+        if not wrote:
+            return f"{shown} gained a host while setup ran; left as it is"
+        return f'wrote "{_settings.HOST_KEY}": "{live}" in {shown}{beaten}'
+    return Step("host", f"this host's name, pinned in {shown}", check=check, apply=apply)
 
 
 def box_name_problem(name: str) -> str | None:
@@ -459,32 +577,112 @@ def profile_step(mail_root: Path, env: Mapping[str, str]) -> Step:
     return Step("notmuch-profile", f"the notmuch profile {name}", check=check, apply=apply)
 
 
+class NotAsked(Exception):
+    """A `notmuch config get` could not run; its message is the line to print."""
+
+
+def notmuch_exe(env: Mapping[str, str]) -> tuple[str, str | None]:
+    """(the name setup asks for, its path on PATH or None). The name is the
+    variable, else the settings file's `notmuch.command`, else notmuch."""
+    from . import _notmuch
+    name = _notmuch.binary(dict(env))
+    return name, shutil.which(name, path=env.get("PATH"))
+
+
+def not_found(name: str, new_line: str) -> str:
+    """What was measured when the binary is not there, and what setup does
+    once it is. It states the measurement only (the HOLD on notmuch wording)."""
+    from . import _notmuch
+    return (f"notmuch: {name!r} not found (${_notmuch.BINARY_VAR}, else PATH), so the index "
+            f"and hook steps are left. Once it is found, setup runs `{new_line}` once and "
+            "links the hooks")
+
+
+def config_get(prefix: Sequence[str], child: Mapping[str, str], key: str) -> str:
+    """`<prefix> config get KEY`, stripped. Raises NotAsked when it cannot
+    run. `notmuch config get` exits 0 with no database, so its exit proves
+    nothing: only a value does."""
+    shown = f"{' '.join(prefix)} config get {key}"
+    try:
+        proc = subprocess.run([*prefix, "config", "get", key], capture_output=True,
+                              text=True, env=dict(child), timeout=NOTMUCH_TIMEOUT, check=False)
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise NotAsked(f"`{shown}` could not run: {exc}") from None
+    return proc.stdout.strip()
+
+
 def hook_dir(env: Mapping[str, str]) -> tuple[Path | None, str]:
     """The hook dir notmuch reports for the host's profile, or (None, why).
     Asked through the one resolution (`_notmuch._engine`): `--config=<the
     profile>`, with notmuch's own override variables out of the child's
     environment, so a notmuch config that is not sessionmail's is never
-    read. No profile is a refusal, never a fallback. `notmuch config get`
-    exits 0 with no database, so its exit proves nothing: only a path does."""
+    read. No profile is a refusal, never a fallback."""
     from . import _notmuch
-    name = _notmuch.binary(dict(env))
-    exe = shutil.which(name, path=env.get("PATH"))
+    name, exe = notmuch_exe(env)
     if exe is None:
-        return None, f"install notmuch: {name!r} is not found (${_notmuch.BINARY_VAR}, else PATH)"
+        return None, f"notmuch: {name!r} not found (${_notmuch.BINARY_VAR}, else PATH)"
     try:
         prefix, child = _notmuch._engine(exe, dict(env))
     except _notmuch.CouldNotLook as exc:
         return None, f"{exc}; no hook is linked anywhere until it exists"
     try:
-        proc = subprocess.run([*prefix, "config", "get", HOOK_DIR_KEY], capture_output=True,
-                              text=True, env=child, timeout=NOTMUCH_TIMEOUT, check=False)
-    except (OSError, subprocess.SubprocessError) as exc:
-        return None, f"`{' '.join(prefix)} config get {HOOK_DIR_KEY}` could not run: {exc}"
-    got = proc.stdout.strip()
+        got = config_get(prefix, child, HOOK_DIR_KEY)
+    except NotAsked as exc:
+        return None, str(exc)
     if not got:
-        return None, (f"notmuch reports no {HOOK_DIR_KEY}: it has no database yet. Run "
-                      f"`{name} {prefix[1]} new` once, then {COMMAND} again")
+        return None, f"notmuch reports no {HOOK_DIR_KEY} for {prefix[1]}: it opened no database"
     return Path(got).expanduser(), ""
+
+
+def existing_database(path: str) -> str:
+    """The line for guard (ii): a database is there, so setup runs no `new`."""
+    database = Path(path).expanduser() / ".notmuch"
+    return (f"a notmuch database is at {database}, and notmuch reports no {HOOK_DIR_KEY} for "
+            f"it (a notmuch older than 0.32 has no such key): setup runs no `notmuch new` over "
+            "an existing database. Link post-new and post-insert into its hook dir by hand")
+
+
+def build_index(env: Mapping[str, str]) -> str:
+    """The `notmuch-index` apply: `<exe> --config=<profile> new --no-hooks`,
+    ONCE, and only on an EMPTY index of sessionmail's own profile.
+
+    Everything is asked again here, after the profile step's apply: the
+    binary, the one resolution (`_notmuch._engine`: `--config=<profile>`,
+    notmuch's override variables dropped, so `~/.notmuch-config` is never
+    read), then the database path. A `.notmuch` already at that path is
+    `Left` (BLOCKED, the run goes on): setup never runs `new` over a
+    database. A `new` that fails, times out or cannot start is `Failed`."""
+    from . import _notmuch
+    name, exe = notmuch_exe(env)
+    if exe is None:
+        raise Left(f"notmuch: {name!r} not found (${_notmuch.BINARY_VAR}, else PATH)")
+    try:
+        prefix, child = _notmuch._engine(exe, dict(env))
+    except _notmuch.CouldNotLook as exc:
+        raise Left(f"{exc}; setup runs no `notmuch new` without its own profile") from None
+    try:
+        path = config_get(prefix, child, DATABASE_PATH_KEY)
+    except NotAsked as exc:
+        raise Left(str(exc)) from None
+    if not path:
+        raise Left(f"notmuch reports no {DATABASE_PATH_KEY} for {prefix[1]}: setup does not "
+                   "guess where the index is")
+    database = Path(path).expanduser() / ".notmuch"
+    if os.path.lexists(database):
+        raise Left(existing_database(path))
+    argv = [*prefix, *NEW_ARGS]
+    shown = " ".join(shlex.quote(a) for a in argv)
+    try:
+        proc = subprocess.run(argv, capture_output=True, text=True, env=child,
+                              timeout=NOTMUCH_NEW_TIMEOUT, check=False)
+    except subprocess.TimeoutExpired:
+        raise Failed(f"`{shown}` did not finish within {NOTMUCH_NEW_TIMEOUT:g}s") from None
+    except OSError as exc:
+        raise Failed(f"`{shown}` could not start: {exc}") from None
+    if proc.returncode != 0:
+        said = (proc.stderr or proc.stdout or "").strip().splitlines()
+        raise Failed(f"`{shown}` exited {proc.returncode}" + (f": {said[-1]}" if said else ""))
+    return f"ran `{shown}`: the index is at {database}"
 
 
 def hook_step(directory: Path, name: str) -> Step:
@@ -522,17 +720,126 @@ def hook_step(directory: Path, name: str) -> Step:
     return Step(f"notmuch-hook:{name}", f"notmuch's {name} hook", check=check, apply=apply)
 
 
-def notmuch_steps(env: Mapping[str, str]) -> list[Step]:
-    directory, why = hook_dir(env)
-    if directory is None:
-        return [Step("notmuch-hook", why, check=lambda: (BLOCKED, why))]
-    return [hook_step(directory, name) for name in HOOK_NAMES]
+def deferred_hook_step(env: Mapping[str, str], index: Step) -> Step:
+    """ONE `notmuch-hook` step, for when the hook dir cannot be known while
+    the plan is built (no binary, no profile yet, or no index yet). It waits
+    on INDEX: TODO when the index step is, else BLOCKED naming it. Its apply
+    runs after the index step's: it asks the hook dir then, and links each
+    of HOOK_NAMES that is TODO. Nothing after it depends on it, so what it
+    cannot finish is `Left`, not `Failed`."""
+    waits = f"waits on {index.id}"
+
+    def check() -> tuple[str, str]:
+        if index.state == TODO:
+            return TODO, ("link post-new and post-insert in the hook dir notmuch reports once "
+                          "the index exists")
+        return BLOCKED, waits
+
+    def apply() -> str:
+        if index.state != DONE:
+            raise Left(waits)
+        directory, why = hook_dir(env)
+        if directory is None:
+            raise Left(f"{why}; no hook is linked")
+        done, blocked = [], []
+        for name in HOOK_NAMES:
+            link = hook_step(directory, name)
+            link.read()
+            if link.state == TODO:
+                done.append(link.apply())
+            elif link.state == DONE:
+                done.append(link.detail)
+            else:
+                blocked.append(link.detail)
+        if blocked:
+            raise Left("; ".join(done + blocked))
+        return "; ".join(done)
+    return Step("notmuch-hook", "notmuch's post-new and post-insert hooks", check=check,
+                apply=apply)
 
 
-#: Nothing in sessionmail schedules `notmuch new` (SC3: the requirement is
-#: named, not shipped). A note, not a step: it would never be DONE.
-NOTMUCH_NEW_NOTE = ("nothing here runs `notmuch new`: `message mark` and `memory` read an "
-                    "empty index until something does (launchd, cron, or by hand)")
+def profile_shown(env: Mapping[str, str]) -> str:
+    """The host profile's path, for a line that forecasts a call on it."""
+    from . import _index
+    name, _via = _index.host_profile(dict(env))
+    if _index.profile_name_problem(name):
+        return "<the profile>"
+    found, _tried = _index.profile_file(name, dict(env))
+    return str(found or _index.profile_config(name, dict(env)))
+
+
+def notmuch_steps(env: Mapping[str, str], profile: Step) -> list[Step]:
+    """`notmuch-index`, then the hook step(s). The chain (binary, profile,
+    index, hook dir, links) is one step per link, so ONE run names every
+    link that is left, and a link this run fills in (the profile, the index)
+    is not reported as missing by the steps after it.
+
+    The index step runs `notmuch --config=<profile> new --no-hooks` once
+    (`build_index`), and only when the index is EMPTY by both guards: (i)
+    notmuch reports no `database.hook_dir` (or the profile is being written
+    this run, over a mail root with no `.notmuch`: `profile_step` refuses
+    otherwise), and (ii) no `.notmuch` is at the `database.path` notmuch
+    reports. Every check here reads only."""
+    from . import _notmuch
+    name, exe = notmuch_exe(env)
+    if exe is None:
+        why = not_found(name, f"{name} --config={profile_shown(env)} {' '.join(NEW_ARGS)}")
+        index = Step(INDEX_STEP, why, check=lambda: (BLOCKED, why))
+        return [index, deferred_hook_step(env, index)]
+    try:
+        prefix, child = _notmuch._engine(exe, dict(env))
+    except _notmuch.CouldNotLook as exc:
+        refusal = str(exc)
+        new_line = f"{name} --config={profile_shown(env)} {' '.join(NEW_ARGS)}"
+
+        def check() -> tuple[str, str]:
+            if not profile.state:
+                profile.read()
+            if profile.state == TODO:          # no database by construction (profile_step)
+                return TODO, (f"run `{new_line}` once, after the profile is written: the "
+                              "index is empty")
+            if profile.state == DONE:
+                return BLOCKED, f"{refusal}; setup runs no `notmuch new` without its profile"
+            return BLOCKED, f"waits on {profile.id}"
+        index = Step(INDEX_STEP, "the notmuch index", check=check, apply=lambda: build_index(env))
+        return [index, deferred_hook_step(env, index)]
+
+    def blocked(line: str) -> list[Step]:
+        index = Step(INDEX_STEP, line, check=lambda: (BLOCKED, line))
+        return [index, deferred_hook_step(env, index)]
+    try:
+        got = config_get(prefix, child, HOOK_DIR_KEY)
+    except NotAsked as exc:
+        return blocked(str(exc))
+    if got:
+        directory = Path(got).expanduser()
+        index = Step(INDEX_STEP, "", check=lambda: (
+            DONE, f"the database notmuch opened for {prefix[1]} (hook dir {directory})"))
+        return [index, *(hook_step(directory, n) for n in HOOK_NAMES)]
+    try:
+        path = config_get(prefix, child, DATABASE_PATH_KEY)
+    except NotAsked as exc:
+        return blocked(str(exc))
+    if not path:
+        return blocked(f"notmuch reports no {HOOK_DIR_KEY} and no {DATABASE_PATH_KEY} for "
+                       f"{prefix[1]}: setup does not guess where the index is")
+    if os.path.lexists(Path(path).expanduser() / ".notmuch"):
+        return blocked(existing_database(path))
+    new_line = f"{name} {prefix[1]} {' '.join(NEW_ARGS)}"
+    database = Path(path).expanduser() / ".notmuch"
+    index = Step(INDEX_STEP, "the notmuch index", check=lambda: (
+        TODO, f"run `{new_line}` once: no index is at {database} yet"),
+        apply=lambda: build_index(env))
+    return [index, deferred_hook_step(env, index)]
+
+
+#: Setup builds the empty index once (`notmuch-index`); nothing in
+#: sessionmail keeps it fresh (SC3: the requirement is named, not shipped).
+#: A note, not a step: it would never be DONE.
+NOTMUCH_NEW_NOTE = ("setup runs `notmuch new` once, to build an empty index; nothing here "
+                    "keeps it fresh: `message mark` and `memory` read what was indexed until "
+                    "something runs `notmuch --config=<profile> new` again (launchd, cron, or "
+                    "by hand)")
 
 
 def carrier_steps(env: Mapping[str, str]) -> list[Step]:
@@ -578,7 +885,7 @@ def plan(env: Mapping[str, str], boxes: Sequence[str], *, write_maps: bool = Fal
             raise PlanRefused(f"--box {name!r}: {problem}")
     job = pull_job(env) if pull else None
     agents = roots(env)
-    steps = [mail_root_step(agents)]
+    steps = [mail_root_step(agents), host_step(env)]
     names: list[str] = []
     op, op_why = operator_box()
     if op is None:
@@ -593,8 +900,9 @@ def plan(env: Mapping[str, str], boxes: Sequence[str], *, write_maps: bool = Fal
     made_steps = [box_step(agents, name, made) for name in names]
     steps += made_steps
     steps.append(regen_step(agents, env, made_steps, made, write_maps=write_maps))
-    steps.append(profile_step(agents.parent, env))
-    steps += notmuch_steps(env)
+    profile = profile_step(agents.parent, env)
+    steps.append(profile)
+    steps += notmuch_steps(env, profile)
     steps += carrier_steps(env)
     if job is not None:
         steps.append(pull_step(job, env))

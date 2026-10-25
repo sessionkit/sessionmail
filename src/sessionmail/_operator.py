@@ -64,8 +64,9 @@ from ._maildir import strict_mode
 TOOL, BLOCK = "session", "operator"
 #: The package that ships the `session` tool, as sessiontools' map names it
 #: (`PACKAGES["session"] == "tools"`). sessionmail spells it here,
-#: and does not ask sessiontools: the published sessiontools (0.1.0, the
-#: floor) has no map, and its settings root is the old, deprecated tree.
+#: and does not ask sessiontools. The floor (sessiontools 0.3.0) has the
+#: map. sessiontools 0.1.0, the floor when this was written, had
+#: none, and its settings root was the old, deprecated tree.
 #: tests/test_operator_home.py holds this to sessiontools' map whenever the
 #: installed sessiontools has one.
 PACKAGE = "tools"

@@ -10,6 +10,11 @@ body can carry backticks, so there is a body box): an agent has WORDS, not
 a file, so it takes `body` where the page takes `-f FILE`. It still RUNS the
 click command, in a fresh process, so the model is one; see `_send_handler`.
 
+EVERY tool runs its verb that way: a fresh process per call, through ONE
+runner (`run_child`), D10 extended from send to the rest. In-process
+`CliRunner().invoke` swapped the process-global `sys.stdout`/`sys.stderr`, so
+two calls that overlapped in time swapped or merged their replies.
+
 Every other tool is read off a click command:
 its name, its arguments and flags (types, defaults, per-flag help) and
 the prose of its authored page. The help page IS the tool description,
@@ -75,6 +80,34 @@ SERVING_VERB = "mcp"
 #: with the seat's identity and its signing key. Python >= 3.11, which is this
 #: package's floor. The console scripts are not affected; only `-m` is.
 SEND_COMMAND = [sys.executable, "-P", "-m", "sessionmail.message", "send"]
+
+#: How every OTHER tool's child starts the package's module, as `-m` would:
+#: click's help width pinned first. In-process, `CliRunner` pinned it at 80
+#: (`click.testing`, `formatting.FORCED_WIDTH = 80`), so a usage error's reply
+#: wrapped the same for every caller; a child left alone wraps at its
+#: terminal's width, which a seat's COLUMNS moves (measured: 76 bare, 50 at
+#: COLUMNS=40). Pinned, the reply is the text it was.
+#:
+#: Its two streams are pinned the same way: CliRunner wrote both as UTF-8
+#: whatever the locale, stdout strict and stderr `backslashreplace`. A child
+#: left alone writes in its LOCALE's encoding, and this server reads UTF-8,
+#: so under a latin-1 locale a sender's em dash in a subject crashed the verb
+#: and a latin-1 letter came back as U+FFFD (measured). Not
+#: `-X utf8`: that would also move `open()`'s default encoding inside the verb,
+#: which CliRunner never touched.
+CHILD_BOOT = ("import runpy, sys, click.formatting; click.formatting.FORCED_WIDTH = 80; "
+              "sys.stdout.reconfigure(encoding='utf-8', errors='strict'); "
+              "sys.stderr.reconfigure(encoding='utf-8', errors='backslashreplace'); "
+              "runpy.run_module(sys.argv.pop(1), run_name='__main__', alter_sys=True)")
+
+#: What every OTHER tool's child starts with, by command: the same interpreter,
+#: the same `-P` (C1 above), and the package's own module, which IS the command
+#: (`if __name__ == "__main__": cli(prog_name=...)` in each), run by
+#: CHILD_BOOT. The tool's verb and flags follow. Like SEND_COMMAND, a module
+#: attribute and nothing in the environment; a test registers a group of its
+#: own here.
+COMMANDS = {name: [sys.executable, "-P", "-c", CHILD_BOOT, f"sessionmail.{name}"]
+            for name in ("message", "pager", "memory")}
 
 #: Once the child has EXITED, how long its output may take to finish arriving.
 #: Anything it started that still holds the pipe keeps the drains from seeing
@@ -166,6 +199,63 @@ def read_outcome(code: int | None, stdout: str, stderr: str) -> tuple[list[str],
     return ["\n".join([first, *evidence])], True
 
 
+async def run_child(argv: list[str], limit: float | None = None) -> tuple[int | None, bytes, bytes]:
+    """Run ARGV as a FRESH PROCESS and return (exit code, stdout, stderr).
+    The one runner every tool goes through, `message_send` included (D09,
+    D10: no tool runs its verb in-process through `CliRunner` any more).
+
+    Its stdin is /dev/null, never this server's fd 0: over stdio that is the
+    JSON-RPC wire. Its OWN session, so a kill takes the GROUP: what wedges is
+    a postmap, a sendmail, a renderer - a GRANDCHILD, which a kill of the
+    child alone orphans, and it is the one that may still deliver (code
+    review, C2). LIMIT is send's; None is no limit (a `pager listen` blocks
+    by design, under its own --timeout). The code is None only when the
+    limit stopped a child that never exited. On EVERY path, a client's cancel
+    included, the group is killed and the child REAPED before this returns or
+    raises, shielded, or a cancel would skip it."""
+    import anyio                                        # lazy: see the module note
+
+    out: list[bytes] = []
+    err: list[bytes] = []
+    process = None
+    code: int | None = None
+
+    async def drain(stream, into: list[bytes], done) -> None:
+        async for chunk in stream:
+            into.append(chunk)
+        done.set()
+
+    try:
+        process = await anyio.open_process(argv, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                                           stderr=subprocess.PIPE, start_new_session=True)
+        try:
+            with anyio.fail_after(limit):
+                async with anyio.create_task_group() as group:
+                    ends = [anyio.Event(), anyio.Event()]
+                    group.start_soon(drain, process.stdout, out, ends[0])
+                    group.start_soon(drain, process.stderr, err, ends[1])
+                    code = await process.wait()
+                    # The child has SPOKEN. Its output gets a moment to
+                    # finish arriving, never the rest of the limit (C3).
+                    with anyio.move_on_after(DRAIN_GRACE_SECONDS):
+                        for end in ends:
+                            await end.wait()
+                    group.cancel_scope.cancel()
+        except TimeoutError:
+            code = process.returncode           # None only if it never exited
+    finally:
+        with anyio.CancelScope(shield=True):
+            if process is not None:
+                if process.returncode is None:
+                    try:
+                        os.killpg(process.pid, signal.SIGKILL)
+                    except (ProcessLookupError, PermissionError):
+                        process.kill()
+                await process.wait()
+                await process.aclose()
+    return code, b"".join(out), b"".join(err)
+
+
 def _send_handler(group: click.Group, group_name: str, cmd: click.Command, transport: str):
     """`message_send`: the page's flags, but `body` where the page has
     `-f FILE`. Each call is a FRESH PROCESS running the door (D10): an
@@ -180,8 +270,7 @@ def _send_handler(group: click.Group, group_name: str, cmd: click.Command, trans
     never answered - the protocol's behaviour, not a bug to fix."""
 
     async def run(**kwargs: Any):
-        import anyio                                    # lazy: see the module note
-        from mcp.types import CallToolResult, TextContent
+        from mcp.types import CallToolResult, TextContent  # lazy: see the module note
 
         def result(blocks: list[str], is_error: bool):
             return CallToolResult(content=[TextContent(type="text", text=b) for b in blocks],
@@ -204,17 +293,7 @@ def _send_handler(group: click.Group, group_name: str, cmd: click.Command, trans
 
         limit, limit_notice = send_limit()
         body = kwargs.pop("body", None)
-        out: list[bytes] = []
-        err: list[bytes] = []
-        process = None
         body_file = None
-        code: int | None = None
-
-        async def drain(stream, into: list[bytes], done) -> None:
-            async for chunk in stream:
-                into.append(chunk)
-            done.set()
-
         try:
             if body is not None:
                 # 0600 from the instant it exists; no newline translation:
@@ -225,44 +304,16 @@ def _send_handler(group: click.Group, group_name: str, cmd: click.Command, trans
                     handle.write(body)
             tail = _argv(cmd, {**kwargs, "body_file": body_file, "as_json": True})[1:]
             argv = [*SEND_COMMAND, *tail[:len(tail) - recipients], "--", *tail[len(tail) - recipients:]]
-            # Its OWN session, so the limit can kill the GROUP: what wedges is
-            # a postmap, a sendmail, a renderer - a GRANDCHILD, which a kill of
-            # the child alone orphans, and it is the one that may still deliver
-            # (code review, C2).
-            process = await anyio.open_process(argv, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
-                                               stderr=subprocess.PIPE, start_new_session=True)
-            try:
-                with anyio.fail_after(limit):
-                    async with anyio.create_task_group() as group_:
-                        ends = [anyio.Event(), anyio.Event()]
-                        group_.start_soon(drain, process.stdout, out, ends[0])
-                        group_.start_soon(drain, process.stderr, err, ends[1])
-                        code = await process.wait()
-                        # The child has SPOKEN. Its output gets a moment to
-                        # finish arriving, never the rest of the limit (C3).
-                        with anyio.move_on_after(DRAIN_GRACE_SECONDS):
-                            for end in ends:
-                                await end.wait()
-                        group_.cancel_scope.cancel()
-            except TimeoutError:
-                code = process.returncode       # None only if it never exited
+            code, out, err = await run_child(argv, limit)
         finally:
-            # On EVERY path, a cancel included: kill the group, REAP, and only
-            # then let go of the body. Shielded, or a cancel would skip it.
-            with anyio.CancelScope(shield=True):
-                if process is not None:
-                    if process.returncode is None:
-                        try:
-                            os.killpg(process.pid, signal.SIGKILL)
-                        except (ProcessLookupError, PermissionError):
-                            process.kill()
-                    await process.wait()
-                    await process.aclose()
-                if body_file is not None:
-                    Path(body_file).unlink(missing_ok=True)
+            # The runner has killed and REAPED the child on every path, a
+            # cancel included, before it returns or raises: only now let go
+            # of the body.
+            if body_file is not None:
+                Path(body_file).unlink(missing_ok=True)
 
-        blocks, is_error = read_outcome(code, b"".join(out).decode("utf-8", "replace"),
-                                        b"".join(err).decode("utf-8", "replace"))
+        blocks, is_error = read_outcome(code, out.decode("utf-8", "replace"),
+                                        err.decode("utf-8", "replace"))
         if limit_notice:
             blocks = [*blocks, limit_notice] if len(blocks) == 1 else [blocks[0], f"{blocks[1]}\n{limit_notice}"]
         return result(blocks, is_error)
@@ -433,26 +484,32 @@ def _handler(group: click.Group, group_name: str, cmd: click.Command,
     VIA is the noun a verb sits under (`("box",)` for `box list`)."""
     name = "_".join([group_name, *via, cmd.name or ""])
 
-    def run(**kwargs: Any) -> str:
+    async def run(**kwargs: Any) -> str:
         from mcp.server.mcpserver.exceptions import ToolError  # lazy: see module note
 
         if transport != "stdio" and name in IDENTITY_WRITES:
             raise ToolError(f"not done: identity: over {transport} this server cannot know who "
                             f"is calling, and will not write as its own seat. Use the stdio "
                             f"server (`{group_name} mcp`), started by your own client.")
-        result = CliRunner().invoke(group, [*via, *_argv(cmd, kwargs)], prog_name=group_name)
-        if result.exit_code == 0:
-            return result.stdout
-        if result.exception and not isinstance(result.exception, SystemExit):
-            raise result.exception
+        # A FRESH PROCESS per call, never CliRunner in this one: its
+        # isolation swaps the process-global sys.stdout/sys.stderr, and two
+        # calls that overlapped crossed their swaps. The child inherits this
+        # server's environment, which over stdio is the caller's seat.
+        code, out, err = await run_child([*COMMANDS[group_name], *via, *_argv(cmd, kwargs)])
+        # Decoded as CliRunner's Result did, so a reply is the text it was.
+        stdout = out.decode("utf-8", "replace").replace("\r\n", "\n")
+        stderr = err.decode("utf-8", "replace").replace("\r\n", "\n")
+        if code == 0:
+            return stdout
         # Both streams: a verdict can sit on stdout while its reason is on
         # stderr (`message verify`: signer, session and the TRUST line on
         # stdout, "incorrect signature" on stderr), so either one alone
-        # loses half of it.
-        detail = "\n".join(s for s in (result.stderr.strip(), result.stdout.strip()) if s)
-        if result.exit_code == EX_UNIMPLEMENTED:
+        # loses half of it. A verb that RAISES is a crash exit here (1, its
+        # traceback on stderr): an error that shows the traceback, never a pass.
+        detail = "\n".join(s for s in (stderr.strip(), stdout.strip()) if s)
+        if code == EX_UNIMPLEMENTED:
             raise ToolError(detail)
-        raise ToolError(f"exit {result.exit_code}: {detail}")
+        raise ToolError(f"exit {code}: {detail}")
 
     from pydantic import Field  # lazy: see module note
 

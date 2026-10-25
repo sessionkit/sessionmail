@@ -72,7 +72,18 @@ def sh(args, resolve=False):
         print(f"  {tag}: {shlex.join(args)}")
         if not resolve:
             return ""
-    return subprocess.run(args, capture_output=True, text=True).stdout
+    try:
+        return subprocess.run(args, capture_output=True, text=True).stdout
+    except FileNotFoundError:
+        # No notmuch on PATH. `memory ls|tree|cat` refuses this in
+        # `_mhs.run` before the script starts; this is the same refusal for
+        # a run by path. Exit 2, the memory door's EX_REFUSED: it shares 2
+        # with "not found", and the words say which 2 this is.
+        sys.stdout.flush()
+        sys.stderr.write("memory: %s is not installed (no `%s` on PATH), and %s reads "
+                         "the mail index through it: nothing was read. Install %s.\n"
+                         % (args[0], args[0], VERB, args[0]))
+        sys.exit(2)
 
 # One `notmuch show` per query per process. A path read used to fetch
 # the root thread TWICE, both times with bodies (the walk, then render): on
@@ -361,7 +372,7 @@ VERIFY = (shlex.split(os.environ.get("SESSION_MAIL_VERIFY") or "")
 # (`python3 -` put the cwd first on sys.path). The reference ignores both now.
 # In each case the port's GOOD is the right answer for the mail, and the
 # reference's BAD is the environment's fault.
-VERIFY_PORT_PIN = "6ac2dbf22e85f65ef2228372059504b6653bbf60b7b62a523cb27bdd9d937e8e"
+VERIFY_PORT_PIN = "c58ec4dbf59b10db0c3833175c0de2399b3b34de9a81944be87f7b400dd6fe96"
 _PORT = []    # [namespace] once loaded, [None] when the port is off
 _PORT_LOCK = threading.Lock()   # prefetch() verifies from 8 threads
 

@@ -19,13 +19,15 @@ import datetime
 import json
 import os
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
+import tool_call
 from fake_launchctl import FakeLaunchctl
-from fakes import write_fake
+from fakes import fake_scutil_only, write_fake  # fake_scutil_only: re-exported (test_host_rule)
 from sessionmail import _launchd, _magicdns, _maildir, _mhs, _notmuch, _operator, _seat, _sig, _voice, pager, rules
-from sessionmail import _settings
+from sessionmail import _host, _settings
 
 #: The operator block hq and nas carry after SM-727 deploys (design §f): the
 #: suite's default host. `stranger` removes it.
@@ -174,6 +176,11 @@ def hermetic(tmp_path_factory, monkeypatch):
     # <sid>/mail/`, or `$SESSIONS_DIR/<sid>/mail/` - a launcher may set
     # that for its sessions, so a suite run from one would write into its tree.
     monkeypatch.delenv("SESSIONS_DIR", raising=False)
+    # The writing model (SM-918) is read from Claude Code's transcript under
+    # `$CLAUDE_CONFIG_DIR/projects/`, else `$HOME/.claude/projects/`. HOME is the
+    # sandbox's above; a runner's CLAUDE_CONFIG_DIR would point every send at the
+    # seat's REAL transcript and stamp its model on a test's mail.
+    monkeypatch.delenv("CLAUDE_CONFIG_DIR", raising=False)
     # And the runner's git config (SM-866, SK-126's form). A seat exports
     # GIT_CONFIG_COUNT with GIT_CONFIG_KEY_n/VALUE_n (Claude Code sets
     # commit.gpgsign=true through the session signer): those are COMMAND
@@ -210,6 +217,12 @@ def hermetic(tmp_path_factory, monkeypatch):
     # fake name, so no test reads the real account: on a real host that can
     # be a live seat's name. `stranger(None)` is the host it shows on.
     monkeypatch.setattr(_operator, "account_name", lambda: ACCOUNT_DEFAULT)
+    # The macOS NAMES (SM-941): the drop's IS-ME set asks `scutil --get`
+    # LocalHostName and ComputerName. Its one seam is `_host.scutil_binary`,
+    # patched here so a test is answered by a fake `scutil` on the PATH it
+    # hands over, and NEVER by the host's own (/usr/sbin/scutil, which the
+    # runner's PATH names on a Mac): no test reads this machine's names.
+    monkeypatch.setattr(_host, "scutil_binary", fake_scutil_only)
     # The pager's CONFIRMATION MAILS (pager-filters D9, tasks 4.2; SM-474
     # do-007): every `pager listen` arm now sends one "listening" mail
     # through the MTA. Its one seam is `pager._mta_send`, pointed here at a
@@ -217,8 +230,7 @@ def hermetic(tmp_path_factory, monkeypatch):
     # /usr/sbin/sendmail. A seam and not a variable, because a test that
     # blanks SESSIONMAIL_* (the pull test does) would otherwise fall back to
     # the real MTA. A test that wants the sends patches its own recorder.
-    monkeypatch.setattr(pager, "_mta_send", lambda req, env, mint=None: "<no-send@test.invalid>",
-                        raising=False)
+    monkeypatch.setattr(pager, "_mta_send", _no_send, raising=False)
     # ...and the MTA ITSELF, for what the seam cannot reach: a test that runs
     # `pager listen` as a real CHILD PROCESS (`_spawn_listener`, the caller-
     # going test) imports a fresh `pager`, unpatched, and its arm calls the
@@ -346,6 +358,30 @@ def hermetic(tmp_path_factory, monkeypatch):
     monkeypatch.setenv("SESSION_SIDECAR_DIR", str(sandbox / "no-sidecars-here"))
 
 
+#: What the conftest's `pager._mta_send` answers: a receipt for nothing sent.
+NO_SEND_ID = "<no-send@test.invalid>"
+
+
+def _no_send(req, env, mint=None) -> str:
+    """The conftest's `pager._mta_send`: records nothing, sends nothing."""
+    return NO_SEND_ID
+
+
+@pytest.fixture(autouse=True)
+def tool_child(hermetic, monkeypatch):
+    """SM-926: a tool's verb runs in a CHILD, where the test process's patches
+    never land. Every `_mcp.run_child` this test makes hands the child the
+    seams this test patched (`tests/tool_call.py`), and refuses one it cannot.
+    A test whose OWN child program sets a seam names it in `.covered`
+    (`"sessionmail.pager.confirm_focus"`). A refusal fails the test here, at
+    teardown, even if a server turned the raise into a tool error."""
+    state = SimpleNamespace(covered=set(), refused=[])
+    tool_call.install(monkeypatch, state.covered, state.refused)
+    yield state
+    if state.refused:
+        pytest.fail("\n".join(dict.fromkeys(state.refused)), pytrace=False)
+
+
 @pytest.fixture(autouse=True)
 def launchctl_fake(hermetic, tmp_path_factory, monkeypatch):
     """No test ever reaches the real launchd. `message seat agent
@@ -370,6 +406,18 @@ REAL_CLAUDE_FOR = _seat.claude_for
 def _claude_up(session, ps=None, me=None, live=None):
     """The conftest pin: a claude is running for every session (our pid)."""
     return os.getpid()
+
+
+#: How a tool's child gets the conftest's own function seams (SM-926,
+#: `tests/tool_call.py`): the claude pin is "this process's pid" there too; the
+#: no-send MTA answers the same receipt, and in a `pager` child, which runs
+#: `pager` as `__main__` where no patch lands, SESSIONMAIL_SENDMAIL (set above,
+#: naming no MTA) is what stops a send instead.
+tool_call.CARRIED_FNS[_claude_up] = ("pid", None, None)
+tool_call.CARRIED_FNS[_no_send] = ("returns", NO_SEND_ID, "SESSIONMAIL_SENDMAIL names no MTA")
+# The macOS-names seam (SM-941) takes an ENV, so it is no constant: the child
+# imports the same function by reference (SM-964), from tests/fakes.py.
+tool_call.CARRIED_FNS[fake_scutil_only] = ("ref", "fakes:fake_scutil_only", None)
 
 
 @pytest.fixture

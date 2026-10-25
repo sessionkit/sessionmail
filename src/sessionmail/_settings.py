@@ -600,6 +600,81 @@ def _publish(target: Path, body: bytes) -> bool:
                 pass
 
 
+#: The key `ensure` pins in a file it makes from the template, and `message
+#: setup` adds to one that lacks it (KEY and FILE unchanged: sessiontools
+#: reads them).
+HOST_KEY = "host"
+
+
+def with_key(raw: bytes, key: str, value: object) -> bytes | None:
+    """RAW (a JSON object's bytes) with `"KEY": VALUE` added as its LAST
+    member, every other byte as it was; None when KEY is already there.
+    Raises ValueError when RAW is not UTF-8 JSON whose top level is an
+    object. One line stays one line; a file with a member per line gets the
+    new member on its own line, at the last member's indent."""
+    text = raw.decode("utf-8")
+    data = json.loads(text)
+    if not isinstance(data, dict):
+        kind = _JSON_KIND.get(type(data), type(data).__name__)
+        raise ValueError(f"the top level is a {kind}, not an object")
+    if key in data:
+        return None
+    close = len(text.rstrip()) - 1                 # the object's own `}`
+    head = text[:close].rstrip()
+    gap, tail = text[len(head):close], text[close:]
+    pair = f"{json.dumps(key)}: {json.dumps(value)}"
+    if head.endswith("{"):
+        out = head + pair + gap + tail
+    elif "\n" in gap:
+        last = head.rsplit("\n", 1)[-1]
+        out = head + ",\n" + last[:len(last) - len(last.lstrip())] + pair + gap + tail
+    else:
+        out = head + ", " + pair + gap + tail
+    if json.loads(out) != {**data, key: value}:     # never write what was not meant
+        raise ValueError("the key could not be added without changing the file's meaning")
+    return out.encode("utf-8")
+
+
+def fresh_body() -> bytes:
+    """What `ensure` makes a missing file from: the template, with
+    `"host"` pinned to the live short hostname, lowercased (`_host.live`).
+    The template itself when the hostname is empty: no pin beats a wrong one."""
+    from . import _host
+    body = template().encode("utf-8")
+    pinned = _host.live()
+    return (with_key(body, HOST_KEY, pinned) or body) if pinned else body
+
+
+def add_key(target: Path, key: str, value: object) -> bool:
+    """Add `"KEY": VALUE` to the JSON object at TARGET, only if KEY is
+    absent (`with_key`). True if written, False if KEY was already there.
+    Raises OSError (missing, unreadable) or ValueError (not a JSON object):
+    either way nothing is written. A symlink is written through, to its
+    target. One step: a temp file in the same directory, fsync'd, given the
+    file's mode, then `os.replace`. The window: a hand edit saved between
+    the read and the replace is lost."""
+    real = target.resolve()
+    st = os.stat(real)
+    body = with_key(real.read_bytes(), key, value)
+    if body is None:
+        return False
+    tmp = real.with_name(f".{real.name}.{os.getpid()}.{secrets.token_hex(4)}")
+    try:
+        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        with os.fdopen(fd, "wb") as f:
+            f.write(body)
+            f.flush()
+            os.fsync(f.fileno())
+        os.chmod(tmp, stat.S_IMODE(st.st_mode))
+        os.replace(tmp, real)
+    finally:
+        try:
+            tmp.unlink()
+        except OSError:
+            pass
+    return True
+
+
 def _link_old(env: Mapping[str, str] | None) -> None:
     """The third thing a move ships: the old path becomes a
     symlink to the new file, for readers not yet updated. Only a REAL old
@@ -700,6 +775,11 @@ def ensure(env: Mapping[str, str] | None = None) -> tuple[Settings, bool]:
     created)`; `created` is True for exactly one caller however many race
     (D4), and only when the file came from the TEMPLATE.
 
+    A file made from the template carries the host PIN
+    (`fresh_body`): `"host"`, the live short hostname, lowercased, so the
+    name can never drift after the first session. The conversion adds
+    nothing.
+
     The CONVERSION (session-settings 3.1): when the old file
     `~/.session/mail/settings.json` is a real file, its bytes - whatever
     they say, a fault included - become the new file, and `created` is
@@ -733,7 +813,7 @@ def ensure(env: Mapping[str, str] | None = None) -> tuple[Settings, bool]:
     body = _old_body(env)
     converted = body is not None
     if body is None:
-        body = template().encode("utf-8")
+        body = fresh_body()
     try:
         published = _publish(path(env), body)
     except OSError as err:

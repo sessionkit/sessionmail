@@ -77,7 +77,8 @@ def _no_box(box: str | None, verb: str) -> None:
     epilog=unwrapped(
         """Every name it prints is a valid next segment of PATH.
 
-Exit: 0 ok · 1 usage · 2 path not found or ambiguous"""
+Exit: 0 ok · 1 usage · 2 path not found or ambiguous, or the index cannot
+be read (no notmuch on PATH, or no profile); the stderr line says which"""
     ),
 )
 @click.argument("path", required=False, metavar="PATH")
@@ -99,7 +100,8 @@ def ls(path: str | None, show_all: bool, box: str | None) -> None:
         """Ends with its own token cost. /today and /yesterday resolve to ISO
 dates first; a segment matching two spellings is refused as ambiguous.
 
-Exit: 0 ok · 1 usage · 2 path not found or ambiguous"""
+Exit: 0 ok · 1 usage · 2 path not found or ambiguous, or the index cannot
+be read (no notmuch on PATH, or no profile); the stderr line says which"""
     ),
 )
 @click.argument("path", metavar="PATH")
@@ -137,8 +139,9 @@ signer NOT pinned": the key is the one the mail carries, and nothing yet
 says whose it is.
 
 Exit: 0 ok · 1 no such child, an ambiguous spelling, a verify timeout, or
-the executor's usage · 2 a FORK, or click's usage (a missing PATH, an
-unknown flag) · 3 signature refused"""
+the executor's usage · 2 a FORK, click's usage (a missing PATH, an
+unknown flag), or the index cannot be read (no notmuch on PATH, or no
+profile); the stderr line says which · 3 signature refused"""
     ),
 )
 @click.argument("path", metavar="PATH")

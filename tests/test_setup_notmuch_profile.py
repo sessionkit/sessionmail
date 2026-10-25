@@ -1,5 +1,7 @@
 """`message setup` and notmuch: the sessionkit profile, never a stranger's.
 
+- The one `notmuch new --no-hooks` (SM-899) and every query run through the
+  one resolution, on OUR profile and a temp mail root only.
 - The hook-dir query runs through the one resolution (`_notmuch._engine`):
   `[exe, --config=<profile>, config, get, database.hook_dir]`, with
   NOTMUCH_CONFIG, NOTMUCH_DATABASE and NOTMUCH_PROFILE out of the child's
@@ -33,10 +35,11 @@ from sessionmail import _index, _operator, _setup
 NOTMUCH = shutil.which("notmuch")
 OVERRIDES = ("NOTMUCH_CONFIG", "NOTMUCH_DATABASE", "NOTMUCH_PROFILE")
 
-#: notmuch, as far as setup asks it. Under `--config=FILE` the hook dir is
-#: `<FILE's database.path>/.notmuch/hooks`, notmuch's own default; with no
-#: `--config` it is the stranger's (the default config's). It logs its argv
-#: and the overrides it was handed to a baked-in log.
+#: notmuch, as far as setup asks it. Under `--config=FILE`: `database.path`
+#: is FILE's; the hook dir is `<path>/.notmuch/hooks`, notmuch's own default,
+#: once that database exists (empty before); `new --no-hooks` makes it. With
+#: no `--config` the hook dir is the stranger's (the default config's). It
+#: logs its argv and the overrides it was handed to a baked-in log.
 FAKE = """#!{python}
 import json, os, sys
 args = sys.argv[1:]
@@ -46,16 +49,24 @@ with open(@LOG@, "a") as log:
 config = None
 if args and args[0].startswith("--config="):
     config, args = args[0][len("--config="):], args[1:]
-if args != ["config", "get", "database.hook_dir"]:
-    sys.exit(1)
 if config is None:
-    print(@DEFAULT_HOOKS@)
-    sys.exit(0)
+    if args == ["config", "get", "database.hook_dir"]:
+        print(@DEFAULT_HOOKS@)
+        sys.exit(0)
+    sys.exit(1)
 path = ""
 for line in open(config):
     if line.startswith("path="):
         path = line.strip()[len("path="):]
-print(os.path.join(path, ".notmuch", "hooks"))
+database = os.path.join(path, ".notmuch")
+if args == ["config", "get", "database.path"]:
+    print(path)
+elif args == ["config", "get", "database.hook_dir"]:
+    print(os.path.join(database, "hooks") if os.path.isdir(database) else "")
+elif args == ["new", "--no-hooks"]:
+    os.makedirs(database, exist_ok=True)
+else:
+    sys.exit(1)
 """
 
 
@@ -203,12 +214,24 @@ def test_setup_never_touches_stranger_hook_dir(tmp_path, engine, profile):
                                                "database.hook_dir"] for c in calls)
             assert all(c["env"] == {} for c in calls), "an inherited override reached notmuch"
     else:
-        assert state(out, "notmuch-hook") == "BLOCKED", out
-        assert 'no notmuch profile for this host: profile "sessionkit" (the default)' in out
-        assert "The default notmuch config is never read" in out
-        assert not host.ours.exists(), "a hook was linked with no profile"
-        assert host.calls() == [], "notmuch ran with no profile"
-        assert rc == _setup.EX_REMAINS, (out, err)
+        # SM-899: the run that writes our profile builds OUR empty index once
+        # (`new --no-hooks`, `--config=<our profile>`, overrides dropped) and
+        # links the hooks there. Before, it took three runs.
+        path = _index.profile_config(env=host.env)
+        assert state(out, "notmuch-profile") == "TODO" and path.is_file()
+        assert state(out, "notmuch-index") == "TODO", out
+        assert state(out, "notmuch-hook") == "TODO", out
+        assert (host.mailroot / ".notmuch").is_dir()
+        for name in _setup.HOOK_NAMES:
+            assert os.readlink(host.ours / name) == str(_setup.PACKAGED_HOOK)
+        assert rc == _setup.EX_OK, (out, err)
+        if engine == "fake":
+            calls = host.calls()
+            assert [c["argv"][1:] for c in calls] == [
+                ["config", "get", "database.path"], ["new", "--no-hooks"],
+                ["config", "get", "database.hook_dir"]], calls
+            assert all(c["argv"][0] == f"--config={path}" for c in calls)
+            assert all(c["env"] == {} for c in calls), "an inherited override reached notmuch"
 
 
 # ── 6.8: setup adopts no database ───────────────────────────────────────────

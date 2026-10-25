@@ -35,6 +35,7 @@ from click.testing import CliRunner
 
 from sessionmail import _mcp, _seat, pager, rules
 from sessionmail.pager import cli
+from tool_call import call
 from test_pager_listen_judges import SESSION, rig  # noqa: F401  (the rig is a fixture)
 
 EX_OK, EX_REFUSED = 0, 2
@@ -499,16 +500,49 @@ def test_for_and_fleet_name_two_targets(rig, sent, monkeypatch):
 
 # ── the MCP door: the verb is a tool, and an identity write ────────────────
 
-def test_the_tool_writes_as_the_caller_over_stdio(rig, sent):
+#: The tool's verb runs in a CHILD (SM-926), where `sent`'s in-process
+#: recorder never lands. The conftest carries the suite's seams into the child
+#: (the locked file, the operator, the rig's ps: tests/tool_call.py); this
+#: program puts a recorder of its own in `confirm_focus`, and says so in
+#: `tool_child.covered`. It runs `pager.cli` itself, not as `__main__`, so the
+#: patch lands on the module the verb runs in.
+CHILD_SEAMS = """
+import json, os, sys
+from sessionmail import pager
+def record(*args, **kwargs):
+    with open(os.environ["FOCUS_TEST_SENT"], "a") as fh:
+        fh.write(json.dumps([list(args), kwargs], default=str) + "\\n")
+    return "<focus-child@test.invalid>"
+pager.confirm_focus = record
+pager.cli(prog_name="pager")
+"""
+
+
+@pytest.fixture
+def child_sent(monkeypatch, tmp_path, tool_child):
+    """What the tool's child would have sent, as (args, kwargs). Nothing is sent."""
+    import json
+    import sys
+
+    log = tmp_path / "child-sent.jsonl"
+    monkeypatch.setenv("FOCUS_TEST_SENT", str(log))
+    tool_child.covered.add("sessionmail.pager.confirm_focus")
+    monkeypatch.setitem(_mcp.COMMANDS, "pager", [sys.executable, "-P", "-c", CHILD_SEAMS])
+    return lambda: [json.loads(line) for line in log.read_text().splitlines()] if log.exists() else []
+
+
+def test_the_tool_writes_as_the_caller_over_stdio(rig, sent, child_sent):
     tools = {n: fn for n, fn, _ in _mcp.tools(cli, "pager")}
     assert "pager_focus" in tools
-    tools["pager_focus"](mode="sleep")
+    call(tools["pager_focus"], mode="sleep")
     assert focus_file(rig).read_text() == "sleep\n"
+    confirmed = child_sent()
+    assert len(confirmed) == 1 and confirmed[0][0][:2] == [SESSION, "sleep"], confirmed
 
 
-def test_the_tool_refuses_over_http_where_it_cannot_know_the_caller(rig, sent):
+def test_the_tool_refuses_over_http_where_it_cannot_know_the_caller(rig, sent, child_sent):
     from mcp.server.mcpserver.exceptions import ToolError
     tools = {n: fn for n, fn, _ in _mcp.tools(cli, "pager", transport="streamable-http")}
     with pytest.raises(ToolError, match="identity"):
-        tools["pager_focus"](mode="sleep")
-    assert not focus_file(rig).exists() and not sent
+        call(tools["pager_focus"], mode="sleep")
+    assert not focus_file(rig).exists() and not sent and not child_sent()

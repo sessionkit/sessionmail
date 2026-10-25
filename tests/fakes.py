@@ -11,6 +11,7 @@ host - `slipbox/project-conventions.md` convention 9.
 from __future__ import annotations
 
 import stat
+import subprocess
 import sys
 from pathlib import Path
 
@@ -91,3 +92,37 @@ def write_fake(path: Path, source: str = FAKE_NOTMUCH) -> Path:
     path.write_text(source.format(python=sys.executable))
     path.chmod(path.stat().st_mode | stat.S_IEXEC)
     return path
+
+
+def fake_sign_bytes(data: bytes, env, ns: str) -> str | None:
+    """`_sender.sign_bytes`, faked: signs with the private half beside
+    $CLAUDE_SESSION_PUB when an agent socket is named, as the real one signs
+    under that socket. The bare base64, or None, exactly as the real one.
+    Here, not in tests/test_init_mint.py, so a tool's child can import it
+    (SM-926: this module imports no command module)."""
+    pub = env.get("CLAUDE_SESSION_PUB", "")
+    if not (env.get("CLAUDE_SESSION_AGENT_SOCK") and pub.endswith(".pub")
+            and Path(pub[:-4]).is_file()):
+        return None
+    done = subprocess.run(["ssh-keygen", "-Y", "sign", "-f", pub[:-4], "-n", ns, "-"],
+                          input=data, capture_output=True)
+    if done.returncode != 0:
+        return None
+    return "".join(l for l in done.stdout.decode().splitlines() if "SSH SIGNATURE" not in l)
+
+
+def fake_scutil_only(env=None):
+    """`_host.scutil_binary` for the suite (SM-941): a `scutil` on ENV's PATH,
+    unless it is the host's own (`_host.SCUTIL`); else None. Here, not in
+    tests/conftest.py, so a tool's child can import it by reference (SM-964:
+    this module imports no command module, and `_host` only when called)."""
+    import os
+    import shutil
+
+    from sessionmail import _host
+
+    env = os.environ if env is None else env
+    found = shutil.which("scutil", path=env.get("PATH"))
+    if found is None or os.path.realpath(found) == os.path.realpath(_host.SCUTIL):
+        return None
+    return found

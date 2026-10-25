@@ -47,9 +47,10 @@ NEVER = ("x-original-subject", "x-session-signature", "bcc", "content-transfer-e
 #: Claim headers are required in h= WHEN PRESENT, or a relay could add one
 #: unsigned. `atom-*` is the claim headers' prefix; type, id, project and parent are openspec change
 #: atoms-by-headers' unprefixed names. A new atom header name joins CLAIM_NAMES in the same
-#: change that adds it.
+#: change that adds it. `session-model` names the model that wrote the mail: a
+#: claim, so an unsigned one added in transit is refused, and a mail without one is not.
 CLAIM_PREFIXES = ("atom-",)
-CLAIM_NAMES = ("type", "id", "project", "parent")
+CLAIM_NAMES = ("type", "id", "project", "parent", "session-model")
 #: RFC 5322 3.6.8 field name (the same rule as `_sender.FIELD_NAME`).
 FIELD_NAME = re.compile(rb"[!-9;-~]+")
 #: The address headers postfix's cleanup rewrites (cleanup_message.c's sender and recipient

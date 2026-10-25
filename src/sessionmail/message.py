@@ -1908,10 +1908,15 @@ def subscription_list(box_: str | None, for_: str | None, depth: int) -> None:
         live = set(live) | {session}          # the caller is running: count it live
         g = _reach.graph(root, live=live)
     t = _reach.tree(g, session=session, seat=seat, limit=depth)
+    # Each row says what the MAP routes now, not only what the settings say:
+    # a generator run that missed this session drops its rows, and a list of
+    # the settings alone would say subscribed while the seat hears nothing.
+    # Read-only.
+    unmeasured = _reach.mark_map(t.root, _seat.rows_in_map)
     for line in _reach.render(t.root, limit=depth):
         click.echo(line)
     boxed = not session or (root / session / "new").is_dir()
-    click.echo(_reach.footer(t, limit=depth, boxed=boxed))
+    click.echo(_reach.footer(t, limit=depth, boxed=boxed, unmeasured=unmeasured))
 
 
 def _list_whose(for_: str | None) -> tuple[str, str]:
@@ -2415,8 +2420,8 @@ then applies what is TODO; a sudo step runs only at a tty. Re-run safely.
   --write-maps write postfix maps on a host with none (an MTA carrier)
   --pull       install the mail puller's LaunchAgent (macOS; docs/pull.md)
 
-Makes the agents root, the drop's boxes and its own notmuch profile
-(never over a file or a database); links the hooks into its hook_dir.
+Makes the agents root, the drop's boxes, its notmuch profile, hook links and
+an empty index once (notmuch new --no-hooks); never over a file or database.
 Never edits postfix, a settings key, your notmuch config or a session box.
 
 Exit: 0 every step DONE · 1 a step failed (what ran stays) · 2 usage

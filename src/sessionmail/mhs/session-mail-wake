@@ -18,6 +18,11 @@ Sections, budget-capped, each ending with its own token cost:
   RECENT  threads touching <box> in the last 2 days, one line each, noise-
           filtered, closed-loop threads dropped (a newer post resurfaces
           them — mute semantics, query-time projection, nothing to rot).
+  ADDRESSED  each letter resting in the base box's new/ whose delivery stamp
+          is THIS seat (its address, or its session id), newest first, as a
+          pointer: Message-ID, subject, age, and the line that reads it. A
+          kick brief that landed before the seat's own box existed rests
+          only in the base box; this is where the seat finds it.
   COUNTS  what rests unread in the box, and the next hop (list -> read).
 
 Box resolution, first hit wins, printed: argv box, else SESSION_SEAT ->
@@ -49,7 +54,7 @@ nothing here is agent-specific —
 conventions derive from the box name. print-thread remains the richer
 thread-reader; this verb is the boot slice every agent gets for free.
 """
-import email, email.policy, email.utils, json, os, re, shlex, shutil, subprocess, sys
+import email, email.header, email.policy, email.utils, json, os, re, shlex, shutil, subprocess, sys, time
 
 # Python 3.11 or later (requires-python), checked before anything that needs
 # it. The package starts this script on its own interpreter; a run by hand
@@ -292,12 +297,15 @@ def require_box(box, root):
     is told its predecessor left nothing while the handover sits in the box
     next door: precisely the failure the succession design exists to close.
 
-    Resolution is NOT reimplemented here. It shells out to mail-box.lib.sh —
-    the same function session-mail-list and session-mail-read source — so a
-    short session id expands to its full-uuid box, and a name that resolves
-    to nothing produces ONE refusal wording across all three verbs. Two
-    languages, one rail; a python copy of the rule would be a fourth copy of
-    exactly the kind that made E7.
+    Resolution is NOT reimplemented here. It shells out to mail-box.lib.sh,
+    the shell rail. `message list` and `message read` resolve through the
+    Python rail, `_maildir.resolve_box`; the two apply ONE rule (a maildir is
+    `new/` and `cur/`; two boxes of one name resolve to the one postfix
+    delivers to), so wake and list/read land on one box (specs/message, "One
+    physical box, on both sides"). A short session id expands to its
+    full-uuid box, and a name that resolves to nothing is refused in one
+    wording. When the rail finds two boxes of one name it says so on stderr,
+    and that line is passed through here: a stray box is a fault to clear.
 
     A `+extension` is an ADDRESS within a box: it is stripped for resolution
     and re-attached, so `wake <sid>+boot` still reads the shelf.
@@ -329,6 +337,8 @@ def require_box(box, root):
     if p.returncode != 0:
         sys.exit("memory wake: " + (p.stderr.strip() or
                  f"no such mailbox '{base}' under {root}"))
+    if p.stderr.strip():
+        print(p.stderr.strip(), file=sys.stderr)
     path = p.stdout.strip()
     return os.path.basename(path) + sep + ext, os.path.dirname(path)
 
@@ -645,6 +655,101 @@ def recent_section(box):
     print(f"— {len(rec)} threads shown of {len(raw)} · ≈{cost} tok\n")
     return cost
 
+#: The env names that carry this seat's ADDRESS or its session id: the
+#: resolve_box cascade's own variables. A letter copied to this seat keeps
+#: the address it was sent to as its stamp, so a wake of the session-id box
+#: must match the address too, or it shows nothing of its own subscription
+#: copies.
+SELF_VARS = ("SESSION_SEAT", "TM_AGENT_ADDRESS", "CLAUDE_CODE_AGENT",
+             "CLAUDE_CODE_SESSION_ID", "CLAUDE_SESSION_ID")
+ADDRESSED_CAP = 10
+
+def delivery_stamp(block):
+    """The local part this copy was delivered for: the FIRST X-Original-To or
+    Delivered-To, as postfix writes them (X-Original-To first). Lowercased;
+    "" when the copy carries neither."""
+    m = re.search(r'(?im)^(?:X-Original-To|Delivered-To):\s*<?([^>\s@]+)', block)
+    return m.group(1).lower() if m else ""
+
+def seat_names(box):
+    """Every local part that is THIS seat: the wake box, and, when the wake box
+    IS this seat, each address or session id the cascade's variables carry (the
+    domain dropped). A wake of ANOTHER box (`memory wake <other>`) matches that
+    box alone: the caller's own names would list the caller's letters under the
+    other box's heading, as if they were addressed to it."""
+    boxl = box.lower()
+    mine = set()
+    for var in SELF_VARS:
+        v = os.environ.get(var, "").strip().lower()
+        if v:
+            mine.add(v.split("@", 1)[0])
+    return {boxl} | mine if boxl in mine else {boxl}
+
+def decoded(value):
+    try:
+        return str(email.header.make_header(email.header.decode_header(value)))
+    except Exception:
+        return value
+
+def age(seconds):
+    s = max(0, int(seconds))
+    for unit, n in (("d", 86400), ("h", 3600), ("m", 60)):
+        if s >= n:
+            return f"{s // n}{unit}"
+    return f"{s}s"
+
+def addressed_section(box, root):
+    """ADDRESSED: the letters resting in the base box's new/ whose delivery
+    stamp is this seat, newest first, each as a pointer with the line that
+    reads it by Message-ID (no index number, so nothing here can point at the
+    wrong row). PEEK-ONLY: it opens files to read their headers and moves,
+    marks and claims nothing. Every copy rests in new/ until someone moves
+    it, so "resting" is not "unread by you": a read is recorded in the
+    reader's session, never in the maildir."""
+    base = box.split("+", 1)[0]
+    d = os.path.join(root, base, "new")
+    me = seat_names(box)
+    hits = []
+    if os.path.isdir(d):
+        for fn in os.listdir(d):
+            path = os.path.join(d, fn)
+            try:
+                st = os.stat(path)
+            except OSError:
+                continue
+            if not os.path.isfile(path):
+                continue
+            block = header_block(path)
+            if delivery_stamp(block) not in me:
+                continue
+            hits.append((st.st_mtime, fn, block))
+    hits.sort(key=lambda h: (h[0], h[1]), reverse=True)
+    print(f"═══ ADDRESSED — to {box} exactly, resting in {base}'s new/ "
+          f"(newest first) ═══")
+    if DRY:
+        return 0
+    if not hits:
+        print("(none)")
+        print("— 0 shown · ≈0 tok\n")
+        return 0
+    lines = []
+    now = time.time()
+    for mtime, fn, block in hits[:ADDRESSED_CAP]:
+        mid = hdr(block, "Message-ID").strip().strip("<>")
+        subject = decoded(hdr(block, "Subject")) or "(no subject)"
+        lines.append(f"{age(now - mtime):>4}  {subject}")
+        if mid:
+            lines.append(f"      message read {base} {mid} --peek")
+        else:
+            lines.append(f"      (no Message-ID: message list {base}, then read it by number)")
+    text = "\n".join(lines)
+    print(text)
+    if len(hits) > ADDRESSED_CAP:
+        print(f"…and {len(hits) - ADDRESSED_CAP} more: message list {base}")
+    cost = len(text) // 4
+    print(f"— {min(len(hits), ADDRESSED_CAP)} shown of {len(hits)} · ≈{cost} tok\n")
+    return cost
+
 def counts_section(box, root):
     """R7/AC7: TWO figures, separately LABELLED, each naming its
     scope. The old single figure counted everything in the basedir's new/ and
@@ -716,6 +821,7 @@ def main():
     total = 0
     total += boot_section(box, root)
     total += recent_section(box)
+    total += addressed_section(box, root)
     total += counts_section(box, root)
     print(f"═══ wake total ≈{total} tok ═══")
     if BOOT_REFUSED:

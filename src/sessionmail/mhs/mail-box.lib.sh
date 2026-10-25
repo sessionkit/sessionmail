@@ -185,6 +185,40 @@ mbl_directed_ext_sid() {
   printf '%s' "$_tail"
 }
 
+# _mbl_two_boxes <root> <lc-name>
+#   rc 0: two or more directories answer to <lc-name> (the flat `$root/<name>`
+#         and/or `$root/<store>/<name>` under marker stores). MAIL_BOX_PATH
+#         holds the one whose relative path sorts first in C order, the one
+#         postfix delivers to, and ONE line on stderr names every candidate.
+#   rc 1: zero or one candidate; nothing is set or printed.
+# Bash 3.2 safe: no `[[ < ]]` (it collates by locale); the order is `sort`'s,
+# with LC_ALL=C, as the generator's.
+_mbl_two_boxes() {
+  local root="$1" me="$2" c s rels="" n=0 first others=""
+  [ -d "$root/$me" ] && { rels="$me/"; n=1; }
+  # The glob skips dot-directories, as the generator does; an unmatched glob
+  # stays literal and fails the -d test.
+  for c in "$root"/*/"$me"/; do
+    [ -d "$c" ] || continue
+    s="${c%/}"; s="${s%/*}"                   # the store directory
+    [ -f "$s/$_MBL_STORE_MARKER" ] || continue
+    rels="$rels
+${s##*/}/$me/"; n=$((n + 1))
+  done
+  [ "$n" -ge 2 ] || return 1
+  while IFS= read -r c; do
+    [ -n "$c" ] || continue
+    if [ -z "$first" ]; then first="$c"; continue; fi
+    others="${others:+$others, }$root/${c%/}"
+  done <<EOF
+$(printf '%s\n' "$rels" | LC_ALL=C sort)
+EOF
+  MAIL_BOX_PATH="$root/${first%/}"
+  printf "mail-box: '%s' is %d boxes; postfix delivers to the first in C order, %s, so it resolves there. Never delivered to: %s. Move it aside.\n" \
+    "$me" "$n" "$MAIL_BOX_PATH" "$others" >&2
+  return 0
+}
+
 # mail_box_resolve <name> <root>
 #   rc 0: the resolved maildir path is in $MAIL_BOX_PATH
 #   rc 1: nothing resolved — the refusal sentence is in $MAIL_BOX_ERR
@@ -195,7 +229,10 @@ mbl_directed_ext_sid() {
 # to abolish, reintroduced in its own call site.
 #
 # Resolution order (first hit wins):
-#   1. the canonical lowercase directory — FLAT, `$root/<name>`
+#   0. TWO BOXES OF ONE NAME (flat and/or under marker stores): the one
+#      postfix delivers to, by the generator's C-order rule, named on stderr
+#   1. the canonical lowercase directory — FLAT, `$root/<name>`, a maildir
+#      (`new/` and `cur/`)
 #   2. NESTED: `$root/<store>/<name>`, for a `<store>` carrying the
 #      `.tm-store` marker file — marker-bearing directories only, exactly one
 #      level deep, no inference
@@ -224,8 +261,30 @@ mail_box_resolve() {
 
   lc_me="$(_mbl_lc "$name")"
 
-  # 1 — canonical, FLAT.
-  if [ -d "$root/$lc_me" ]; then MAIL_BOX_PATH="$root/$lc_me"; return 0; fi
+  # 0b — TWO BOXES OF ONE NAME: resolve to the one postfix delivers to.
+  # A flat `$root/<name>` beside a marker store's `$root/<store>/<name>` (or
+  # two stores holding one name) gives the generator two map lines with one
+  # key. It pipes them through `LC_ALL=C sort -u`, and `postmap` keeps the
+  # FIRST, so delivery goes to whichever RELATIVE PATH sorts first in C order
+  # (`<name>/` against `<store>/<name>/`). That rule is read from the TREE
+  # here, exactly as the generator applies it, so it agrees with the map by
+  # construction without reading the map. The fixed flat-first tie-break
+  # below was NOT delivery-accurate: a stray flat copy of a project box that
+  # nests under a store sorting before it (`kit-store/` < `mail/`) took every
+  # read, while every delivery went to the nested box. The collision is
+  # named on stderr, once, because it is a fault to clear rather than a
+  # layout: provisioning refuses to create it, so a second box got there
+  # some other way.
+  _mbl_two_boxes "$root" "$lc_me" && return 0
+
+  # 1 — canonical, FLAT: a MAILDIR, `new/` and `cur/` both. This is the
+  # Python rail's `_is_maildir` (`_maildir.resolve_box`), so `message list`
+  # and this rail accept the same directory. A bare directory of the name
+  # that is not a maildir does not win here; step 2 below still takes it
+  # when nothing else answers, so a lone partial box resolves as before.
+  if [ -d "$root/$lc_me/new" ] && [ -d "$root/$lc_me/cur" ]; then
+    MAIL_BOX_PATH="$root/$lc_me"; return 0
+  fi
 
   # 1b — NESTED: `$root/<store>/<name>`.
   #
@@ -251,33 +310,25 @@ mail_box_resolve() {
   #     with a stray subdir as a path component and resolve names out of it.
   #   * EXACTLY ONE LEVEL. The generator descends one level and no further, so
   #     a deeper directory is not a box and must not resolve to one.
-  #   * FLAT FIRST — a TIE-BREAK WE CHOOSE, and it is worth being exact about
-  #     what it is NOT. A flat box and a nested project whose names sanitize
-  #     alike produce two map lines with one key; the map is `LC_ALL=C sort -u`'d
-  #     and `postmap` keeps the FIRST. It is tempting to conclude that flat is
-  #     therefore always the delivered one — an earlier analysis concluded that, and
-  #     it is FALSE. `sort` compares the WHOLE line, so past the common `agents/`
-  #     the comparison is `<name>/` against `<store>/<name>/`: it is decided by
-  #     the store name's first character against the BOX name's, and flat wins
-  #     only when the store name sorts AFTER the box name. Measured both ways:
+  #   * NO FIXED TIE-BREAK. A flat box and a nested project whose names
+  #     sanitize alike produce two map lines with one key; the map is
+  #     `LC_ALL=C sort -u`'d and `postmap` keeps the FIRST. `sort` compares the
+  #     WHOLE line, so past the common `agents/` it is `<name>/` against
+  #     `<store>/<name>/`, and flat wins only when the store name sorts AFTER
+  #     the box name:
   #
   #        agents/foo/  vs  agents/store1/foo/   -> flat   line first
   #        agents/foo/  vs  agents/astore/foo/   -> NESTED line first
   #
-  #     and the second is the LIVE case, not the exotic one: a registered store
-  #     whose name begins with `a` exists on this fleet today. So NEITHER
-  #     precedence is delivery-accurate in general, and a resolver cannot become
-  #     so without reading the map — which the paragraph below rejects for
-  #     reasons that still hold. Flat-first is chosen for the reason that
-  #     survives: it leaves step 1 untouched, which is what keeps the flat-box
-  #     regression bar byte-identical.
+  #     So neither fixed precedence is delivery-accurate. This step once used
+  #     flat-first and was wrong in the second case: a stray flat copy took
+  #     every read while every delivery went nested. Step 0b now applies the
+  #     generator's own order, read from the tree, before this step runs, so
+  #     by the time we are here the name has at most one candidate.
   #
-  #     ⇒ THE COLLISION REFUSAL AT PROVISIONING IS LOAD-BEARING, NOT
-  #     BELT-AND-BRACES. `provision_project_box()` / `flat_box_collision()`
-  #     refusing to CREATE the collision is the only thing that makes either
-  #     precedence safe, and it is where the decision genuinely belongs. If that
-  #     refusal is ever weakened, this tie-break does not save you.
-  #     (Corrected after review.)
+  #     ⇒ THE COLLISION REFUSAL AT PROVISIONING STILL MATTERS. Resolving a
+  #     collision correctly is not the same as it being harmless: the second
+  #     box holds mail nobody routes to it, and step 0b says so on stderr.
   #
   # We read the TREE, never the postfix map: the map is generated FROM this
   # tree (a downstream cache that can be stale), its keys are host-qualified,

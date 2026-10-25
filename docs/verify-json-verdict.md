@@ -98,6 +98,9 @@ included, carries a `Content-Disposition`, which no signature covers; on v1
 the same is `v1-shape`. The `unverified` outcomes add
 `signature-unparseable`, `canonicalization-limit`, `verifier-incomplete`
 and, from `message verify` only, `verifier-absent`.
+`verifier-incomplete` is a verifier that could not decide: its `_sig.py` is
+missing or broken, or it failed unexpectedly (exit 3, or 5 under `--trust`).
+It is never `bad`.
 
 ## Edge cases
 

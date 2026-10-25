@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "sessionmail"
-version = "0.3.0"
+version = "0.3.1"
 description = "sessionmail - mail for coding agents: message, pager and memory over one maildir."
 readme = "README.md"
 requires-python = ">=3.11,<3.15"
@@ -20,7 +20,7 @@ dependencies = [
     "markdown>=3.6",
     "mcp>=2.2.0",
     "pymdown-extensions>=10.0",
-    "sessiontools>=0.1.0",
+    "sessiontools>=0.3.0",
 ]
 
 # One package, three commands (openspec/specs/package/spec.md):
@@ -51,8 +51,9 @@ Repository = "https://github.com/sessionkit/sessionmail"
 
 # ── Version: one source of truth ──────────────────────────────────────
 # The ONE version is `version` in [project] above, static. scripts/release.py
-# is its single writer (through `uv version`, which keeps uv.lock in step)
-# and mirrors it into .claude-plugin/plugin.json and marketplace.json. This
+# is its single writer (through `uv version --frozen`, which never re-locks,
+# plus a textual edit of uv.lock's own root version line) and mirrors it
+# into .claude-plugin/plugin.json and marketplace.json. This
 # is the family rule (the kit's docs/family-release.md): the version lives
 # in pyproject.toml and the release mirrors it.
 

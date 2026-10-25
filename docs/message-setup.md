@@ -22,6 +22,11 @@ message setup --pull                 # also install the mail puller's LaunchAgen
 - **Exit:** 0 every step is DONE · 1 a step failed (what ran before it
   stays; re-run) · 2 usage, or refused before anything was applied · 4
   what setup can do is done, and steps are left for you.
+- **It ends with one list of what is left.** When steps are left, the
+  last lines are one numbered block, every step that is not `DONE`, in
+  order, each with its state and why. A step that waits on another names
+  it. The block ends with the line to run next. A box it did not make is
+  in the block, with why.
 
 ## What it does
 
@@ -57,13 +62,24 @@ message setup --pull                 # also install the mail puller's LaunchAgen
   over a file. If the mail root already holds a notmuch database
   (`<root>/.notmuch`), it writes nothing and prints a `MANUAL` line: setup
   adopts no database. More: [notmuch settings][notmuch-settings].
+- **The notmuch index** (`notmuch-index`): sessionmail's own index, built
+  once. When the profile has no database yet, setup runs
+  `notmuch --config=<profile> new --no-hooks` once, in the same run that
+  writes the profile, and the dry run prints that line. It runs it only on
+  an EMPTY index: notmuch reports no hook folder for the profile, and no
+  `.notmuch` is at the `database.path` it reports. If a database is already
+  there, it runs nothing and the step is `BLOCKED`, saying what it found. If
+  notmuch is not found, the step is `BLOCKED` and names the line it will
+  run once notmuch is found. A `new` that fails stops the run (exit 1).
 - **The notmuch hook.** It links `post-new` and `post-insert` to the
   packaged [post-new hook][post-new-hook], in the folder notmuch reports
   for the profile (`notmuch --config=<profile> config get
-  database.hook_dir`). With no profile, the step is `BLOCKED` and nothing
-  is linked anywhere. It never replaces a different file. A link to
-  another sessionmail copy of the hook is left as is. A link to our own
-  hook that now points nowhere (a rebuilt tool venv) is repaired.
+  database.hook_dir`), after the index step, in the same run. Until the
+  index exists it is one `notmuch-hook` step that waits on
+  `notmuch-index`. With no profile nothing is linked anywhere. It never
+  replaces a different file. A link to another sessionmail copy of the
+  hook is left as is. A link to our own hook that now points nowhere (a
+  rebuilt tool venv) is repaired.
 - **What sends your mail** (`carrier`). It reports the carrier and where
   its value came from, such as `the mail drop (the default, from
   ~/.sessionkit/mail/settings/mail.template.json)` or `the MTA at
@@ -90,12 +106,11 @@ message setup --pull                 # also install the mail puller's LaunchAgen
 - **It never reads or writes your own notmuch config.** `~/.notmuch-config`
   and any other profile are left exactly as they are, and no hook is linked
   into their folders.
-- **It does not run `notmuch new`, and nothing else in sessionmail does.**
-  notmuch reports no hook folder until the profile's first `notmuch new`,
-  so on a fresh host the hook step is left for you: run the line it prints
-  (`notmuch --config=<profile> new`), then `message setup` again. Until
-  something runs it (launchd, cron, or by hand), `message mark` and
-  `memory` read an empty index.
+- **It runs `notmuch new` once, while no index exists.** That one run builds
+  the empty index the hook folder needs. Nothing in setup keeps the index
+  fresh: until something runs `notmuch --config=<profile> new` again
+  (launchd, cron, or by hand), `message mark` and `memory` read what was
+  indexed.
 - It never makes a session box, and it never touches another host.
 - It does not install the puller unless you pass `--pull`, and it never
   boots out a puller job it did not write.

@@ -32,18 +32,41 @@ from sessionmail.message import cli as message_cli
 
 HOST = "testhost"
 
-#: notmuch, as far as setup asks it: `config get database.hook_dir` prints
-#: $FAKE_HOOK_DIR (empty: no database yet). Every call is logged.
+#: notmuch, as far as setup asks it. Every call is logged.
+#: - `config get database.path`: the `path=` in the `--config` file.
+#: - `config get database.hook_dir`: $FAKE_HOOK_DIR when set; else
+#:   `<path>/.notmuch/hooks` once a database is there (as notmuch answers
+#:   after its first `new`), else empty. $FAKE_OLD_NOTMUCH: always empty
+#:   (a notmuch older than 0.32 has no such key).
+#: - `new --no-hooks`: makes `<path>/.notmuch/`, or exits $FAKE_NEW_EXIT.
 FAKE_NOTMUCH = """#!{python}
 import os, sys
 with open(os.environ["FAKE_NOTMUCH_LOG"], "a") as log:
     log.write(" ".join(sys.argv[1:]) + "\\n")
 args = sys.argv[1:]
+path = ""
 if args and args[0].startswith("--config="):
-    args = args[1:]     # setup asks the host's profile (test_setup_notmuch_profile)
+    config, args = args[0][len("--config="):], args[1:]
+    if os.path.isfile(config):
+        for line in open(config):
+            if line.startswith("path="):
+                path = line.strip()[len("path="):]
+database = os.path.join(path, ".notmuch") if path else ""
+if args == ["config", "get", "database.path"]:
+    sys.stdout.write(path + ("\\n" if path else ""))
+    sys.exit(0)
 if args == ["config", "get", "database.hook_dir"]:
     value = os.environ.get("FAKE_HOOK_DIR", "")
+    if not value and database and os.path.isdir(database) and not os.environ.get("FAKE_OLD_NOTMUCH"):
+        value = os.path.join(database, "hooks")
     sys.stdout.write(value + ("\\n" if value else ""))
+    sys.exit(0)
+if args == ["new", "--no-hooks"] and database:
+    code = int(os.environ.get("FAKE_NEW_EXIT", "0"))
+    if code:
+        sys.stderr.write("fake notmuch: new failed\\n")
+        sys.exit(code)
+    os.makedirs(database, exist_ok=True)
     sys.exit(0)
 sys.exit(1)
 """
@@ -158,7 +181,8 @@ def test_dry_run_prints_the_whole_plan_and_writes_nothing(env, tmp_path, mailroo
     assert state(out, "carrier") == "DONE"
     assert "dry run: nothing applied" in out
     assert "applying:" not in out
-    assert "nothing here runs `notmuch new`" in out
+    assert state(out, "notmuch-index") == "DONE"
+    assert "setup runs `notmuch new` once, to build an empty index" in out
 
 
 def test_a_run_makes_the_root_the_boxes_and_the_hooks(env, mailroot, hooks):
@@ -390,10 +414,12 @@ def test_the_carrier_step_names_its_value_and_source(env, tmp_path, where):
     assert detail(out, "carrier") == want, out
 
 
-@pytest.mark.parametrize("host_file", [None, '{"version": 1, "hooks": true}\n'])
+@pytest.mark.parametrize("host_file", [None, '{"version": 1, "hooks": true, "host": "Pinned"}\n'])
 def test_setup_writes_no_settings_key(env, host_file):
     """Applied in full, setup leaves the settings folder exactly as it was:
-    no host file made, and an existing one byte for byte unchanged."""
+    no host file made, and an existing one byte for byte unchanged. Its one
+    key, `host` (SM-941), is written only into a file that lacks it: the
+    file here either is not there or already pins a host (the tests below)."""
     home = _operator.settings_home()
     path = write_mail_settings(home, host_file)
     folder = path.parent
@@ -404,21 +430,143 @@ def test_setup_writes_no_settings_key(env, host_file):
     assert (snapshot(folder) if folder.exists() else None) == before
 
 
+# ── the host pin (SM-941) ────────────────────────────────────────────────────
+
+def host_steps(out: str) -> tuple[str, str]:
+    return state(out, "host"), detail(out, "host")
+
+
+def test_the_host_step_comes_after_the_mail_root(env):
+    _rc, out, _ = setup(env, "--dry-run")
+    lines = out.split("\nsteps:\n", 1)[1].splitlines()
+    ids = [line.split()[0] for line in lines if line.startswith("  ")]
+    assert ids[:2] == ["mail-root", "host"], ids
+
+
+def test_no_settings_file_yet_is_done_and_writes_nothing(env):
+    """The fresh Mac before its first session: the hook that alone creates the
+    file pins the host when it does (`_settings.fresh_body`), so the step is
+    DONE, setup's exit is unchanged, and no settings file is made."""
+    home = _operator.settings_home()
+    path = write_mail_settings(home, None)
+    before = snapshot(home)
+    rc, out, _ = setup(env, "--box", "alpha")
+    assert rc == _setup.EX_OK, out
+    assert host_steps(out) == ("DONE", _setup.HOST_AT_BIRTH)
+    assert "pinned when the first session creates the settings file" in out
+    assert not path.exists()
+    assert snapshot(home) == before
+
+
+@pytest.mark.parametrize("text", [
+    '{"version": 1, "hooks": true}\n',
+    '{\n  "version": 1,\n  "hooks": true,\n  "sendmail": "drop"\n}\n',
+    "{}",
+])
+def test_a_file_with_no_host_gains_the_live_name_and_nothing_else(env, monkeypatch, text):
+    """The pin is the live short hostname, LOWERCASED, added as the file's
+    last key; every other byte is kept. --dry-run shows the step and writes
+    nothing; the run writes it; a second run is DONE and changes nothing."""
+    import socket
+    monkeypatch.setattr(socket, "gethostname", lambda: "MacBook-Air.local")
+    path = write_mail_settings(_operator.settings_home(), text)
+    path.chmod(0o640)
+    rc, out, _ = setup(env, "--dry-run")
+    assert host_steps(out) == ("TODO", f'write "host": "macbook-air" in {_settings.SHOWN} '
+                                       f"($SESSIONMAIL_HOST={HOST} still wins while it is set)")
+    assert path.read_text() == text
+    rc, out, _ = setup(env)
+    assert rc == _setup.EX_OK, out
+    got = path.read_text()
+    assert json.loads(got) == {**json.loads(text), "host": "macbook-air"}
+    assert list(json.loads(got))[-1] == "host"
+    assert got.replace(', "host": "macbook-air"', "").replace(',\n  "host": "macbook-air"', "") \
+        .replace('"host": "macbook-air"', "") == text, "every other byte kept"
+    assert path.stat().st_mode & 0o777 == 0o640, "the file's mode kept"
+    assert [n for n in os.listdir(path.parent) if n.startswith(".")] == [], "no temp left"
+    before = path.read_bytes()
+    rc, out, _ = setup(env)
+    assert rc == _setup.EX_OK and "applying:" not in out, out
+    assert host_steps(out) == ("DONE", f"'macbook-air', from {_settings.SHOWN}")
+    assert path.read_bytes() == before
+
+
+def test_the_pin_line_says_nothing_of_a_variable_when_none_is_set(env, monkeypatch):
+    import socket
+    monkeypatch.setattr(socket, "gethostname", lambda: "box1.lan")
+    write_mail_settings(_operator.settings_home(), '{"version": 1, "hooks": true}\n')
+    bare = {k: v for k, v in env.items() if k not in ("SESSIONMAIL_HOST", "SESSION_MAIL_HOST")}
+    _rc, out, _ = setup(bare, "--dry-run")
+    assert host_steps(out) == ("TODO", f'write "host": "box1" in {_settings.SHOWN}')
+
+
+@pytest.mark.parametrize("given", ["MacBook-Air", " host.lan "])
+def test_a_host_already_set_is_never_overwritten(env, monkeypatch, given):
+    import socket
+    monkeypatch.setattr(socket, "gethostname", lambda: "admins-Air.localdomain")
+    text = json.dumps({"version": 1, "hooks": True, "host": given}) + "\n"
+    path = write_mail_settings(_operator.settings_home(), text)
+    rc, out, _ = setup(env)
+    assert rc == _setup.EX_OK, out
+    assert host_steps(out) == ("DONE", f"{given.strip().lower()!r}, from {_settings.SHOWN}")
+    assert path.read_text() == text
+
+
+@pytest.mark.parametrize("value", ["", "  ", 42, None])
+def test_a_host_that_is_not_a_name_is_manual_and_never_rewritten(env, value):
+    text = json.dumps({"version": 1, "hooks": True, "host": value}) + "\n"
+    path = write_mail_settings(_operator.settings_home(), text)
+    rc, out, _ = setup(env)
+    assert rc == _setup.EX_REMAINS, out
+    assert state(out, "host") == "MANUAL", out
+    assert f'"host": {json.dumps(value)} in {_settings.SHOWN} is not a host name' in out
+    assert path.read_text() == text
+
+
+@pytest.mark.parametrize("text", ["{not json", "[1, 2]", "\xff"])
+def test_a_host_file_that_is_not_an_object_is_blocked_and_never_written(env, text):
+    path = write_mail_settings(_operator.settings_home(), "")
+    path.write_bytes(text.encode("latin-1"))
+    before = path.read_bytes()
+    rc, out, _ = setup(env)
+    assert rc == _setup.EX_REMAINS, out
+    assert host_steps(out) == ("BLOCKED", f"{_settings.SHOWN} is not a JSON object: setup "
+                                          "never writes it")
+    assert path.read_bytes() == before
+
+
+def test_an_empty_hostname_is_blocked(env, monkeypatch):
+    import socket
+    monkeypatch.setattr(socket, "gethostname", lambda: "")
+    write_mail_settings(_operator.settings_home(), '{"version": 1, "hooks": true}\n')
+    _rc, out, _ = setup(env, "--dry-run")
+    assert state(out, "host") == "BLOCKED", out
+    assert "the hostname is empty" in out
+
+
 # ── the notmuch hook ─────────────────────────────────────────────────────────
 
-def test_no_hook_dir_yet_is_blocked_and_names_notmuch_new(env, hooks):
+def test_no_hook_dir_yet_builds_the_index_once_then_links(env, tmp_path, mailroot, hooks):
+    """SM-899: notmuch reports no hook dir and no database is at its
+    database.path: setup runs `new --no-hooks` once, then links the hooks
+    in the dir notmuch reports after it. (Before: BLOCKED, naming the `new`.)"""
     rc, out, _ = setup({**env, "FAKE_HOOK_DIR": ""})
-    assert rc == _setup.EX_REMAINS, out
-    assert state(out, "notmuch-hook") == "BLOCKED"
+    assert rc == _setup.EX_OK, out
+    assert state(out, "notmuch-index") == "TODO" and state(out, "notmuch-hook") == "TODO"
     profile = _index.profile_config(env=env)
-    assert f"Run `{env['SESSIONMAIL_NOTMUCH']} --config={profile} new` once" in out
+    calls = (tmp_path / "notmuch.log").read_text().splitlines()
+    assert calls.count(f"--config={profile} new --no-hooks") == 1, calls
+    for name in _setup.HOOK_NAMES:
+        assert os.readlink(mailroot / ".notmuch" / "hooks" / name) == str(_setup.PACKAGED_HOOK)
     assert not hooks.exists()
 
 
 def test_no_notmuch_is_blocked(env, tmp_path):
     rc, out, _ = setup({**env, "SESSIONMAIL_NOTMUCH": str(tmp_path / "no-notmuch")})
     assert rc == _setup.EX_REMAINS
-    assert state(out, "notmuch-hook") == "BLOCKED" and "install notmuch" in out
+    assert state(out, "notmuch-index") == "BLOCKED" and "'" + str(tmp_path / "no-notmuch") + \
+        "' not found ($SESSIONMAIL_NOTMUCH, else PATH)" in out
+    assert state(out, "notmuch-hook") == "BLOCKED"
 
 
 def test_setup_only_reads_notmuch(env, tmp_path):

@@ -33,6 +33,7 @@ from pathlib import Path
 import pytest
 from click.testing import CliRunner
 from conftest import SC6_SETTINGS
+import tool_call
 
 from sessionmail import _seat, pager, rules
 from sessionmail import _settings
@@ -67,6 +68,21 @@ def later(seconds: float, fn, *args) -> threading.Thread:
     return t
 
 
+def _no_ps():
+    """The rig's `_seat._ps_table`: no process at all."""
+    return ({}, {})
+
+
+def _not_idle(session, now=None):
+    """The rig's `_seat.idle_seconds`: no idle reading for any session."""
+    return None
+
+
+#: Named, so a tool's child gets the same two answers (SM-926, tests/tool_call.py).
+tool_call.CARRIED_FNS[_no_ps] = ("returns", ({}, {}), None)
+tool_call.CARRIED_FNS[_not_idle] = ("returns", None, None)
+
+
 @pytest.fixture
 def rig(tmp_path, monkeypatch):
     root = tmp_path / "mail"
@@ -84,8 +100,8 @@ def rig(tmp_path, monkeypatch):
     monkeypatch.setenv(pager.PAGE_AGE_VAR, str(RUNNING_T))
     monkeypatch.setenv(_seat.IDLE_SECONDS_VAR, str(IDLE_T))
     monkeypatch.delenv(pager.PAGE_LIST_VAR, raising=False)
-    monkeypatch.setattr(_seat, "_ps_table", lambda: ({}, {}))
-    monkeypatch.setattr(_seat, "idle_seconds", lambda session, now=None: None)
+    monkeypatch.setattr(_seat, "_ps_table", _no_ps)
+    monkeypatch.setattr(_seat, "idle_seconds", _not_idle)
     # SM-450 (refresh-002): the hooks ON in the sandbox HOME (conftest). The
     # ride-along tests built on this rig (SM-474 / SM-442) are about WHAT the
     # ride-along says, and under the settings file an off hook says nothing at

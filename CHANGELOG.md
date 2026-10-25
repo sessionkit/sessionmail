@@ -9,6 +9,142 @@ writer and mirrors it into `.claude-plugin/plugin.json` and `marketplace.json`.
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-10-25
+
+### Added
+
+- **Every mail names the model that wrote it** (SM-918). `message send`
+  writes `Session-Model: <exact id>`, for example `claude-opus-5-5`,
+  beside `X-Session-From`, and the signature covers it. A changed or
+  removed header fails `message verify`, and so does one added to a mail
+  signed without it. On Claude Code the id is the last assistant turn's
+  model in the session's transcript. Any other harness sets
+  `SESSIONMAIL_MODEL` when it launches the agent. With neither, no header
+  is written. The id is never typed: `--header` and structured headers
+  refuse it. Mail without the header verifies as before.
+  [docs/session-model.md](docs/session-model.md).
+- **What sessionmail depends on, in one place.** The README has a
+  `## Requirements` section: the operating systems, and a link to the new
+  [docs/dependencies.md](docs/dependencies.md), which lists every
+  dependency with what needs it, whether you need it, where it comes from
+  and how to upgrade it. `.github/dependabot.yml` asks Dependabot for a
+  daily look at the Python dependencies in `uv.lock`. The README no longer
+  says `message mark` and `memory` read the maildir directly: they read the
+  notmuch index.
+- **`message subscription list` says whether each row is in the alias map**
+  (SM-938): `in map`, `NOT in map`, or `map not measured` (with why, in the
+  footer) when there is no map to ask. It never guesses. Before, it listed
+  the settings only, so a seat could read "subscribed" while it heard nothing.
+
+### Fixed
+
+- **A burst of births no longer makes queued regens give up on the lock**
+  (SM-939). With the alias text read under the lock, each run held it
+  longer, and in a burst of concurrent writing runs over a large tree many
+  gave up after the 10 s spin (exit 2, `could not acquire regen lock`).
+  Queued runs now coalesce. Each writing run leaves a request beside the
+  lock; the run holding the lock lists the requests before its read and,
+  once its maps are written, answers each one with the exit code that run
+  would have had. An answered run writes nothing and exits with that code,
+  so exit 0 still means the maps on disk come from a read made after the
+  call began. A run refused for valias passes its reason on as the last
+  stderr line, so callers still report why. A request made after the
+  holder's listing waits for the next holder; one from a session the
+  holder's live list does not show is answered 3, as its own self-check
+  would have. A holder whose valias is refused only because its OWN session
+  is not in the list answers no alias request whose session is: that waiter
+  takes the lock and writes valias itself. Only runs whose inputs match coalesce (root, host, map path,
+  static file, sidecar and settings dirs, and the generator itself). A
+  holder that dies before its write answers nothing, and its waiters run for
+  themselves. The spin's 10 s bound stays as the backstop, now a clock
+  rather than a count of `sleep` forks. `regen-failures.log` gets one
+  `REFUSED` row per run that read, not per queued run.
+- **A subscription set by `SESSIONMAIL_SUBSCRIBE` at session start is live
+  by the first listener, or that listener says loudly `NOT in map`**
+  (SM-938). This is not "live before the start returns": a SessionStart
+  hook cannot wait out a generator. The detached generator at birth now
+  measures the session's subscription rows after its run, runs once more
+  when one is missing, and writes what it found to the born record. The
+  first `pager listen` (the monitor's included, seated or not) measures
+  them again, rebuilds once, and prints `subscribe  : <box> NOT in map` if
+  a row is still missing, or `subscribe  : <box> map not measured (<why>)`
+  when there is no map to ask (the mail drop keeps none, so it stays
+  quiet). Behind it, `vmailbox-gen` now builds the alias
+  text under its lock, so an older run can no longer write last and drop a
+  newer session's rows; and it reads a sidecar that is empty or will not
+  parse once more before it stops counting that session live, naming the
+  file on stderr if it still fails.
+
+### Fixed
+
+- **Two MCP tool calls that overlap on one server no longer swap or merge
+  their replies** (SM-926). Every tool but `message_send` ran its verb
+  in-process through click's `CliRunner`, which swaps the process-global
+  `sys.stdout`/`sys.stderr`; two calls in flight at once crossed their swaps,
+  so one came back blank and the other carried both verbs' output (measured:
+  95 runs in 100 for `message_list` beside `message_mark`). Every tool now runs
+  its verb in a fresh process through the one runner `message_send` already
+  used: D10 (*a long-running door starts each send afresh*) extended to every
+  tool, on D09's one shared core. Replies are unchanged (exit 0 is stdout;
+  otherwise `exit N: ` + stderr + stdout, a stub's line bare). A verb that
+  crashes is now that error with its traceback, and a client's cancel kills
+  any tool's child, not only send's.
+
+### Changed
+
+- **sessionmail needs sessiontools 0.3.0 or later** (SM-947). The floor
+  was 0.1.0, so `uv.lock` stayed at 0.1.0 while a fresh `uv tool install`
+  takes the newest release. The tests ran against a sessiontools version
+  that no new install gets, and the four SM-875 agreement tests in
+  `tests/test_operator_home.py` were skipped. The lock now resolves 0.3.0.
+- **`message setup` runs `notmuch new --no-hooks` once, on its own empty
+  profile, and one run names every step left** (SM-899). A fresh host took
+  three runs before. A new step, `notmuch-index`, builds sessionmail's own
+  index once, through `--config=<profile>`, and only when no database is
+  there. A database already there is left alone, and the step says so.
+  With no notmuch found, the plan still names that `new` and the hook step
+  that waits on it. The run ends with one numbered list of what is left
+  and the line to run next. Exit codes are unchanged. This changes a
+  documented promise: setup used to run no `notmuch new`.
+  [docs/message-setup.md](docs/message-setup.md).
+
+### Fixed
+
+- **`pager -h` states the default and its real exits** (SM-466). The top
+  page now says that mail to this session's id wakes this session and
+  other mail in its box rides along, and points at `pager rule` for what
+  pages and what rides. It no longer names postfix as the carrier. Its
+  exit line said `1 usage`, but `pager` exits 2 for a usage error, the
+  same code as could-not-look; it now reads `0 ok · 2 usage, or could not
+  look`. Help text only: no behaviour changed.
+
+### Fixed
+
+- **`memory wake` shows a seat the letters addressed to it, from the box
+  postfix delivers to.** A stray flat directory with a project's name, beside
+  the project box under its store, took wake's reads while every delivery went
+  to the store's box, so a kick brief resting there counted 0. When two boxes
+  answer to one name, both box rails (wake's, and `message list`/`read`'s) now
+  resolve to the one the map delivers to, by the generator's own C-order rule
+  read from the tree. Wake says so on stderr, naming the stray to move aside,
+  and `message box path --why` names it too. A flat box must now be a maildir
+  (`new/` and `cur/`) to win outright, as it already had to for `message list`.
+  Wake has a new section, ADDRESSED: each letter resting in the base box whose
+  delivery stamp is this seat (its address or its session id), newest first,
+  with its subject, its age and the `message read <box> <Message-ID> --peek`
+  line that opens it. It claims and marks nothing.
+- **A release no longer re-locks uv.lock** (SM-937, the kit's SK-180).
+  `scripts/release.py` ran `uv version X --no-sync`, and `--no-sync` does
+  not stop a re-lock: a bump re-resolved against the index, so a release
+  cut before the family's releases were on PyPI failed as unsatisfiable,
+  and an offline bump failed. It now runs `uv version X --frozen` on the
+  dry and the real path alike, then edits only uv.lock's own root
+  `sessionmail` version line, as text. That line is checked before
+  `uv version` writes anything: with no root block, two, or a root block
+  without exactly one version line, the release refuses and pyproject is
+  untouched. A missing uv.lock is refused too. A bump needs no network,
+  changes no other uv.lock line, and `uv lock --check` passes.
+
 ## [0.3.0] - 2026-10-24
 
 ### Added
@@ -18,6 +154,15 @@ writer and mirrors it into `.claude-plugin/plugin.json` and `marketplace.json`.
 
 ### Fixed
 
+- **A verifier fault no longer reads as a forged mail** (SM-901). An
+  unexpected error inside `session-mail-verify`, for example no
+  `ssh-keygen` on PATH, printed a traceback and exited 1, the code for a
+  bad signature. Every caller then reported the mail as forged. It now
+  exits as a broken install already did: 3, `verifier-incomplete` (it
+  could not decide). Under `--trust` the exit is 5 with
+  `TRUST: ERROR reason=verifier-incomplete`, and under `--json` the one
+  object is still written. stderr names the error in one line, with no
+  traceback. A genuine bad signature still exits 1.
 - **A new session is no longer told "pager is not listening" before its
   pager monitor arms** (SM-891, SK-104 F8). The SessionStart hook ran
   beside the monitor's start and could read the state first, so a seat

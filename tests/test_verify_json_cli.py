@@ -31,6 +31,7 @@ from sessionmail.message import cli
 from test_message_list import box, deliver  # noqa: F401  (fixture reused)
 from test_message_verify import oracle  # noqa: F401  (fixture reused)
 from test_verify_json import SCRUB, VERIFIER, Rig, base, wire
+from tool_call import call
 
 TOP = {"schema", "rc", "result", "reason", "signature", "trust"}
 TRUST = {"verdict", "leg", "reason", "line", "agent"}
@@ -172,7 +173,7 @@ def test_mcp_rc_0_hands_back_the_bare_object_byte_for_byte(clean_env, rig):
     f.write_bytes(rig.v2(wire("mcpgood")))
     direct = subprocess.run([str(VERIFIER), str(f), "--json"], capture_output=True, text=True,
                             env={k: v for k, v in os.environ.items() if k not in SCRUB})
-    got = tool()(args=[str(f)], as_json=True)
+    got = call(tool(), args=[str(f)], as_json=True)
     assert got == direct.stdout                      # the verifier's stdout, unchanged
     obj = json.loads(got)
     assert obj["rc"] == 0 and obj["signature"] is not None
@@ -188,7 +189,7 @@ def test_mcp_nonzero_rc_is_a_tool_error_with_the_object_last(clean_env, rig, qui
     f = rig.d / "mcp-unsigned.eml"
     f.write_bytes(base("mcpuns", "hi\n").encode())
     with pytest.raises(ToolError) as err:
-        tool()(args=[str(f)], as_json=True, quiet=quiet)
+        call(tool(), args=[str(f)], as_json=True, quiet=quiet)
     text = str(err.value)
     assert text.startswith("exit 2: ")
     last = text.splitlines()[-1]
@@ -212,7 +213,7 @@ def test_mcp_unblessed_is_a_success_yet_arrives_as_a_tool_error(clean_env, rig, 
     f = rig.d / "mcp-unblessed.eml"
     f.write_bytes(rig.v2(wire("mcpunbl")))
     with pytest.raises(ToolError) as err:
-        tool()(args=[str(f)], as_json=True, trust=True)
+        call(tool(), args=[str(f)], as_json=True, trust=True)
     text = str(err.value)
     assert text.startswith("exit 4: ")
     obj = json.loads(text.splitlines()[-1])

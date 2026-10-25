@@ -229,18 +229,76 @@ def _write_born(session: str, env: Mapping[str, str] | None, source: str, regen:
     return path
 
 
+@dataclass
+class SubCheck:
+    """SESSION's own subscriptions, measured in the alias map."""
+    boxes: list[str] = field(default_factory=list)     # each row key the generator routes
+    missing: list[str] = field(default_factory=list)   # the keys whose row does not copy here
+    why: str = ""                                      # not "" when the map was not measured
+
+    def line(self) -> str:
+        """`subscriptions: N/N in map`, `NOT in map: <box> ...`, or why not measured."""
+        n = len(self.boxes)
+        if self.why:
+            return f"subscriptions: map not measured ({self.why})"
+        if self.missing:
+            return (f"subscriptions: {n - len(self.missing)}/{n} in map; "
+                    f"NOT in map: {', '.join(self.missing)}")
+        return f"subscriptions: {n}/{n} in map"
+
+
+def subscription_check(session: str, env: Mapping[str, str] | None = None) -> SubCheck:
+    """Is each of SESSION's own subscriptions in the alias map postfix reads?
+    The rows asked are the ones the generator ROUTES for the session
+    (`_boxes.routed`, the predicate `subscription list` shares), so a box that
+    does not resolve is never reported missing. Read-only: no generator runs.
+
+    Why: every generator run rebuilds the whole alias map, and a run that
+    missed this session dropped its rows while exiting 0. Nothing measured a
+    subscription row after the birth, so a seat stayed deaf while
+    `subscription list` said subscribed. This is that measure."""
+    from . import _boxes, _maildir, _subscription
+    env_ = os.environ if env is None else env
+    check = SubCheck()
+    if session in ("", "-"):
+        return check
+    root = _maildir.root(env_)
+    try:
+        scan = _subscription.scan(live={session}, env=dict(env_))
+        routed = _boxes.routed(_boxes.walk(root), scan)
+    except Exception as exc:  # noqa: BLE001 - a measure never fails a birth
+        check.why = f"the session's subscriptions could not be read: {exc}"
+        return check
+    keys = sorted({r.key for r in routed
+                   if r.entry.kind == "session" and r.entry.subscriber.lower() == session.lower()})
+    check.boxes = keys
+    if not keys:
+        return check
+    states, why = _seat.rows_in_map([(k, session) for k in keys], dict(env_))
+    if states is None:
+        check.why = why
+        return check
+    check.missing = [k for k, ok in zip(keys, states) if not ok]
+    return check
+
+
 def detach_regen(root: Path, env: Mapping[str, str] | None = None,
-                 record: Path | None = None) -> tuple[bool, str]:
+                 record: Path | None = None, session: str = "") -> tuple[bool, str]:
     """Start the generator in a DETACHED child and return at once: (started,
     one line). The child is `python -m sessionmail._birth --regen ROOT
     [--record PATH]`: its own session (`start_new_session`), stdio on
     /dev/null and no inherited fds, so a SessionStart hook's caller never
     waits for it (measured: a detached grandchild did not
     delay `claude -p`). It runs `_seat.regen_maps` - bounded, TERM never
-    KILL - and appends its line to RECORD. Never raises."""
+    KILL - and appends its line to RECORD. With SESSION, the child then
+    measures the session's subscription rows (`subscription_check`), runs the
+    generator once more if one is missing, and appends what it found.
+    Never raises."""
     argv = [sys.executable, "-m", "sessionmail._birth", "--regen", str(root)]
     if record is not None:
         argv += ["--record", str(record)]
+    if session not in ("", "-"):
+        argv += ["--session", session]
     try:
         child = subprocess.Popen(argv, env=None if env is None else dict(env),
                                  stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
@@ -415,11 +473,66 @@ def ensure_session_box(session: str, seat: "Seat | None", *,
         birth.sub_lines.append(f"  map        : {line} (--valias-only)" if ok else
                                f"  map        : NOT rebuilt - {line}; the subscriptions stand, "
                                "and the next rebuild (any add, remove or birth) routes them")
+    if not detach and session_box is not None and not birth.suffix_unknown:
+        _settle_listen(birth, session, env)
     if birth.born and record_source is not None and birth.record is None:
         # Born, and no generator was started (a seatless birth with nothing
         # to route): the record still says when, with regen=skipped.
         birth.record = _write_born(session, env, record_source, birth.regen)
     return birth
+
+
+def _settle_listen(birth: Birth, session: str, env: Mapping[str, str] | None) -> None:
+    """The WAIT path (`pager listen`, the monitor's included), seated
+    or seatless, a box born now or long ago: measure the session's own
+    subscription rows. A row missing rebuilds the alias map ONCE
+    (`--valias-only`, the add path's rebuild), and is measured again. A row
+    still missing is the loud refusal: a `subscribe  : <box> NOT in map`
+    line in the banner. Rows all in the map say nothing: the banner is
+    unchanged for a seat that hears. A map that cannot be measured (no
+    postconf/postmap, no alias map named, a refused carrier, unreadable
+    subscriptions) is never silence: one `subscribe  : <box> map not
+    measured (<why>)` line per box, in `subscription list`'s words.
+
+    The mail drop returns before measuring, and that silence is deliberate,
+    not an unmeasured map: the drop keeps no compiled map to fall behind
+    the settings. Its alias rows are the generator's, read per send
+    (`DROP_REGEN`), so a row the settings route is routed at the next send,
+    and no rebuild here could change that."""
+    from . import _subscribe
+    if _on_drop(env):
+        return
+    check = subscription_check(session, env)
+    if check.why:
+        _say_unmeasured(birth, check.boxes, check.why)
+        return
+    if not check.missing:
+        return
+    first = list(check.missing)
+    ok, line = _subscribe.rebuild(dict(env) if env is not None else None)
+    check = subscription_check(session, env)
+    if check.why:
+        _say_unmeasured(birth, first, check.why)
+        return
+    healed = [box for box in first if box not in check.missing]
+    if healed:
+        birth.sub_lines.append(f"  map        : {', '.join(healed)} NOT in map at this listen; "
+                               f"rebuilt: {line} (--valias-only) - now in map")
+    for box in check.missing:
+        birth.sub_lines.append(f"  subscribe  : {box} NOT in map - the alias map does not copy "
+                               f"{box} into this box, after one rebuild "
+                               f"({line if ok else 'NOT rebuilt - ' + line}); this session does "
+                               f"NOT hear {box}")
+
+
+def _say_unmeasured(birth: Birth, boxes: list[str], why: str) -> None:
+    """The banner's `subscribe  : <box> map not measured (<why>)` lines, one
+    per box, in `subscription list`'s words (`_reach.NOT_MEASURED`); one line
+    with no box when the subscriptions themselves could not be read (there is
+    no box list to name)."""
+    from ._reach import NOT_MEASURED
+    for box in boxes or [""]:
+        birth.sub_lines.append(f"  subscribe  : {box + ' ' if box else ''}{NOT_MEASURED} ({why})")
 
 
 def _detach(birth: Birth, session: str, env: Mapping[str, str] | None, root: Path,
@@ -428,7 +541,7 @@ def _detach(birth: Birth, session: str, env: Mapping[str, str] | None, root: Pat
     written FIRST, so the child's line 2 always has a line 1 to follow."""
     if birth.born and record_source is not None:
         birth.record = _write_born(session, env, record_source, "detached")
-    started, birth.regen_line = detach_regen(root, env, birth.record)
+    started, birth.regen_line = detach_regen(root, env, birth.record, session=session)
     birth.regen = "detached" if started else ""
     if not started and birth.record is not None:
         # Nothing will append line 2: say so in line 1 instead.
@@ -443,8 +556,10 @@ def _main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="python -m sessionmail._birth")
     parser.add_argument("--regen", required=True, metavar="ROOT")
     parser.add_argument("--record", metavar="PATH")
+    parser.add_argument("--session", metavar="SID", default="")
     args = parser.parse_args(argv)
     from . import _magicdns
+    lines: list[str] = []
     try:
         # The hook did not ask for the suffix (it costs the hook's
         # budget), so the child asks, and never runs the generator without
@@ -452,22 +567,45 @@ def _main(argv: list[str] | None = None) -> int:
         # On a mail-drop host no generator runs either way, so the line
         # names the carrier, not the suffix.
         suffix, why = _magicdns.lookup()
-        line = (_seat.regen_maps(Path(args.regen)) if suffix is not None
-                else DROP_REGEN if _on_drop(None)
-                else f"generator NOT run (MagicDNS suffix unknown: {why})")
+        ran = suffix is not None and not _on_drop(None)
+        lines.append(_seat.regen_maps(Path(args.regen)) if suffix is not None
+                     else DROP_REGEN if _on_drop(None)
+                     else f"generator NOT run (MagicDNS suffix unknown: {why})")
+        settled = _settle(args.session, Path(args.regen)) if ran and args.session else ""
+        if settled:
+            lines.append(settled)
     except Exception as exc:  # noqa: BLE001 - regen_maps never raises; a child that dies says why
-        line = f"generator failed in the background: {exc}"
+        lines.append(f"generator failed in the background: {exc}")
     if args.record:
         try:
+            # ONE write, line 2 and the measure's line 3 together, so a reader
+            # that waits for line 2 never reads the record mid-settle.
             with open(args.record, "a", encoding="utf-8") as fh:
-                fh.write(" ".join(line.splitlines()) + "\n")
+                fh.write("".join(" ".join(line.splitlines()) + "\n" for line in lines))
         except OSError:
             pass
     return 0
 
 
-__all__ = ["BORN_FILE", "DROP_REGEN", "SUBSCRIBE_VAR", "Birth", "BornRecord", "birth_subscriptions",
-           "born_record", "detach_regen", "ensure_session_box", "read_born"]
+def _settle(session: str, root: Path) -> str:
+    """In the detached child: after its run, measure SESSION's
+    subscription rows. A row missing runs the generator ONCE more (bounded:
+    one run, never a loop), then measures again. One line for the record, or
+    "" when the session subscribes to nothing."""
+    check = subscription_check(session)
+    if not check.boxes and not check.why:
+        return ""
+    if check.why or not check.missing:
+        return check.line()
+    missing = ", ".join(check.missing)
+    again = _seat.regen_maps(root)
+    check = subscription_check(session)
+    return f"{check.line()} (NOT in map after the first run: {missing}; ran again: {again})"
+
+
+__all__ = ["BORN_FILE", "DROP_REGEN", "SUBSCRIBE_VAR", "Birth", "BornRecord", "SubCheck",
+           "birth_subscriptions", "born_record", "detach_regen", "ensure_session_box", "read_born",
+           "subscription_check"]
 
 
 if __name__ == "__main__":

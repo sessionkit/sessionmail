@@ -48,14 +48,13 @@ this: the verb is the only gate (D5).
 from __future__ import annotations
 
 import os
-import socket
 import time
 from dataclasses import dataclass
 from pathlib import Path
 
 import sessiontools
 
-from . import _boxes, _layer, _maildir, _operator, _seat, _subscription
+from . import _boxes, _host, _layer, _maildir, _operator, _seat, _subscription
 from ._voice import KEEPER
 
 #: Who may write a seat subscription, or anyone's (D5), is config's to say:
@@ -550,7 +549,7 @@ def address_key(box: str) -> str:
 
 def row(box: str) -> str:
     """The row postfix holds NOW for BOX, asked of `virtual_alias_maps`."""
-    host = socket.gethostname().split(".")[0].lower()
+    host = _host.live()  # key as vmailbox-gen WRITES (hostname -s), not by NAME
     key = f"{address_key(box)}@{host}"
     maps = _seat._postfix_maps("virtual_alias_maps")
     if not maps:

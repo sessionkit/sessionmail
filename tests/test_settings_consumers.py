@@ -123,8 +123,8 @@ def test_root_a_value_that_is_not_a_path_is_the_default(bare, bad):
 def test_host_file_value_reaches_every_consumer(bare, monkeypatch):
     monkeypatch.setattr(socket, "gethostname", lambda: "real-host.lan")
     host_file(host="Host-File")
-    assert _sender.host_of(bare) == "Host-File"          # as today: case kept
-    assert _drop.short_host(bare) == "host-file"          # as today: lowered
+    assert _sender.host_of(bare) == "host-file"          # one rule, lowered (SM-941)
+    assert _drop.short_host(bare) == "host-file"
     host_file(magicdns_suffix="tail.example", host="host-file")
     assert _voice.host_forms(bare) == ("host-file", "host-file.tail.example")
 

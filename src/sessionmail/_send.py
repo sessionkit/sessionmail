@@ -178,7 +178,8 @@ def with_display_name(address: str, seat: str, session: str = "",
 #: refused, and the refusal names the header and the flag that sets it).
 #: The X-Session-* and X-Machine stamps are
 #: the transport's too - X-Session-From is the sender's attribution, and a
-#: caller who could write it could forge it.
+#: caller who could write it could forge it. So is Session-Model:
+#: the writing model's id is captured from the harness, never typed.
 OWNED = {
     "date": "the transport; no flag", "from": "--from (your seat)",
     "sender": "the transport; no flag", "to": "the TO argument", "cc": "--cc",
@@ -187,6 +188,7 @@ OWNED = {
     "supersedes": "--supersedes", "mime-version": "the transport; no flag",
     "received": "the transport; no flag", "return-path": "the transport; no flag",
     "x-machine": "the transport; no flag",
+    "session-model": "the harness (Claude Code's transcript, or $SESSIONMAIL_MODEL); no flag",
     "x-original-subject": "-s/--subject (send writes it when it changes the subject)",
 }
 OWNED_PREFIXES = {"content-": "the transport (and --raw/--renderer); no flag",
