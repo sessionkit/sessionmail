@@ -246,7 +246,8 @@ def test_the_plan_keeps_the_plus_in_label_plist_log_and_socket(plus_seat):
     label = f"dev.sessionkit.mail.seat-agent.{PLUS}"
     assert job.label == label and job.target == f"gui/{os.getuid()}/{label}"
     assert job.plist == os.path.join(home, "Library", "LaunchAgents", f"{label}.plist")
-    assert job.log == os.path.join(home, "Library", "Logs", f"seat-agent.{PLUS}.log")
+    assert job.log == os.path.join(home, ".sessionkit", "mail", "log", f"seat-agent.{PLUS}.log")
+    assert job.old_log == os.path.join(home, "Library", "Logs", f"seat-agent.{PLUS}.log")
     assert job.socket == plus_seat["sock"] and job.socket.endswith(f"/seat-keys/{PLUS}/agent.sock")
     rendered = plistlib.loads(_launchd.render(Path(_launchd.TEMPLATE).read_bytes(), job))
     assert rendered["Label"] == label
@@ -262,7 +263,7 @@ def test_install_and_uninstall_a_plus_seat(plus_seat, launchctl_fake):
     report = pairs(done.stdout)
     assert report["SEAT_LABEL"] == label and report["SEAT_SOCKET"] == plus_seat["sock"]
     assert report["SEAT_PLIST"].endswith(f"/Library/LaunchAgents/{label}.plist")
-    assert report["SEAT_LOG"].endswith(f"/Library/Logs/seat-agent.{PLUS}.log")
+    assert report["SEAT_LOG"].endswith(f"/.sessionkit/mail/log/seat-agent.{PLUS}.log")
     assert plistlib.loads(Path(report["SEAT_PLIST"]).read_bytes())["Label"] == label
     assert launchctl_fake.calls()[-1] == ["bootstrap", f"gui/{os.getuid()}", report["SEAT_PLIST"]]
     held = subprocess.run(["ssh-add", "-L"], capture_output=True, text=True,

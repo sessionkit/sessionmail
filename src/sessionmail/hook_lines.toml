@@ -70,6 +70,13 @@ not_yet = "pager cannot be listening yet: claude is not running for this session
 # file: where it was written, that it is off by default, and which skill to
 # load - something very minimal, and only when it creates a config.
 settings_created = "sessionmail: wrote {path}. Its hooks are OFF by default. When on, they hand this session its mail between tool calls and remind it to keep `pager listen` running. To turn them on, set \"hooks\": true in that file. For more, load the sessionmail:pager skill."
+# settings_created_person: the same run's ONE line for the PERSON: where it
+# wrote the file, that the hooks are off, and how to turn them on: the verb,
+# never a hand edit of the JSON. It goes out
+# as the hook's top-level systemMessage, which Claude Code shows as
+# `PostToolBatch says: <line>`, so it starts with the package's name and no
+# colon. Formatted with {path}.
+settings_created_person = "sessionmail wrote {path} with its hooks off. To turn them on, run `pager settings hooks on`."
 # settings_fault: a file that cannot be read, parsed or understood, or a
 # missing one that cannot be written, is OFF but not silent (provisional).
 # It must carry "treated as off" verbatim.

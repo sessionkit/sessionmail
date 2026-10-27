@@ -33,6 +33,14 @@ def context(result) -> list[str]:
     assert out["hookEventName"] == "PostToolBatch"
     return out["additionalContext"].splitlines()
 
+
+def person(result) -> str | None:
+    """The line a batch hook shows the PERSON: the top-level systemMessage
+    (SM-890). Claude Code 2.1.310 shows it as `PostToolBatch says: <line>`."""
+    if not result.stdout.strip():
+        return None
+    return json.loads(result.stdout).get("systemMessage")
+
 from _export import export_absent
 from sessionmail import _host, _seat, pager
 from sessionmail.pager import cli
@@ -110,7 +118,9 @@ def test_the_lines_live_in_one_file():
     # SM-498: plus the SessionStart hook's line about the box
     # SM-873: plus the stranded-host line (the old settings folder not moved yet),
     # and the copied line (both settings folders real)
-    assert set(lines) == {"not_listening", "listening", "off", "settings_created", "settings_fault",
+    # SM-890: plus the creation line for the PERSON (systemMessage)
+    assert set(lines) == {"not_listening", "listening", "off", "settings_created",
+                          "settings_created_person", "settings_fault",
                           "settings_stranded", "settings_copied", "settings_drift", "not_yet", "listening_monitor", "no_monitor",
                           "ways_out", "deaf_monitor_missing", "deaf_monitor_ended",
                           "deaf_not_listening", "monitor_ended", "born"}
@@ -1360,9 +1370,18 @@ def test_success_criterion_1_a_home_with_no_settings_file(seat):
     assert str(p) in lines[0] and '"hooks": true' in lines[0]
     assert "sessionmail:pager" in lines[0]                 # "load the skill for more"
     assert not stamps(None).exists(), "the creating run takes, marks and stamps nothing"
+    # SM-890: ONE line on the PERSON's screen,
+    # beside the agent note, which is unchanged.
+    seen = person(first)
+    assert seen == pager.SETTINGS_CREATED_PERSON.format(path=p)
+    assert "\n" not in seen and str(p) in seen
+    assert "off" in seen and "`pager settings hooks on`" in seen
+    assert '"hooks": true' not in seen                     # the verb, not a hand edit
+    assert json.loads(first.stdout)["hookSpecificOutput"]["additionalContext"] == note_for(p)
 
     second = batch()
     assert second.exit_code == 0 and second.stdout == "" and second.stderr == ""
+    assert person(second) is None
     assert stop().exit_code == 0 and stop().stderr == ""
 
 
@@ -1389,14 +1408,20 @@ def test_two_sessions_race_to_create_it_and_exactly_one_says_the_note(seat, tmp_
         procs.append(subprocess.Popen([sys.executable, "-c", RACE, str(go)], env=env_i,
                                       stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True))
     go.touch()
-    notes = 0
+    notes = people = 0
     for proc in procs:
         out, err = proc.communicate(timeout=60)
         assert proc.returncode == 0, err
         if out.strip():
-            assert json.loads(out)["hookSpecificOutput"]["additionalContext"] == note_for(settings_path())
+            data = json.loads(out)
+            assert data["hookSpecificOutput"]["additionalContext"] == note_for(settings_path())
             notes += 1
+            # SM-890: the racer that says the note, and only that one, shows
+            # the person the line.
+            assert data["systemMessage"] == pager.SETTINGS_CREATED_PERSON.format(path=settings_path())
+            people += 1
     assert notes == 1, "exactly one racer hands its agent the note"
+    assert people == 1, "exactly one racer shows the person the line, the same one"
     assert settings_path().read_text() == _settings.fresh_body().decode(), "created once, and whole"
     assert [n for n in os.listdir(settings_path().parent)
             if n not in ("mail.json", _settings.SCHEMA, _settings.INSTALLED_TEMPLATE)] == []
@@ -1412,6 +1437,7 @@ def test_an_existing_file_is_never_replaced(seat, data):
             assert r.exit_code in (0, 2)
             assert not any(ln.startswith("sessionmail: wrote") for ln in
                            (context(r) if r.stdout.strip() else [])), "no creation note"
+            assert person(r) is None, "SM-890: no person line for a file that exists"
     assert (p.read_bytes(), p.stat().st_mtime_ns, p.stat().st_ino) == before
 
 
@@ -1425,6 +1451,7 @@ def test_a_malformed_file_is_not_a_fresh_install(seat):
         r = batch()
         assert r.exit_code == 0
         said.update(context(r))
+        assert person(r) is None, "SM-890: only the creating run shows the person a line"
     assert said, "a malformed file is a fault, never a silent off"
     assert all("treated as off" in ln for ln in said), said
     assert not any("sessionmail: wrote" in ln for ln in said)

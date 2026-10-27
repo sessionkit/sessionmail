@@ -43,6 +43,12 @@ JOB_PATH = "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
 #: How the job runs the puller, after the interpreter.
 MODULE_ARGS = ("-u", "-m", "sessionmail._puller")
 THROTTLE_SECONDS = 30
+#: The job's log, in the package's log folder (`_settings.log_dir`), never
+#: under `pull.state_dir`: a log is not state, so moving the state dir does
+#: not move it. A puller installed before 0.3.2 logs to
+#: `<pull.state_dir>/log/puller.log` until `message setup --pull` renders its
+#: plist again; that old file is left where it is.
+LOG_NAME = "puller.log"
 
 #: The seam for plutil, as `_launchd.LAUNCHCTL_VAR` is for launchctl.
 PLUTIL_VAR = "SESSIONMAIL_PLUTIL"
@@ -72,7 +78,7 @@ class Job:
     label: str
     home: Path
     plist: Path             # <home>/Library/LaunchAgents/<label>.plist
-    log: Path               # <state_dir>/log/puller.log
+    log: Path               # <log_dir>/puller.log, whatever pull.state_dir is
     domain: str             # gui/<uid>
     body: bytes             # the rendered plist
 
@@ -173,7 +179,7 @@ def resolve(env: Mapping[str, str]) -> Job:
                       f"is unset. Write one box per line there (pull.boxes_file), or set "
                       f"pull.unsorted_box")
     plist = Path(home) / "Library" / "LaunchAgents" / f"{theirs.label}.plist"
-    log = theirs.state_dir / "log" / "puller.log"
+    log = _settings.log_dir(job_env(home)) / LOG_NAME
     body = render(theirs.label, interpreter(), home, log)
     return Job(config=theirs, label=theirs.label, home=Path(home), plist=plist, log=log,
                domain=f"gui/{uid()}", body=body)
@@ -279,7 +285,7 @@ def _gone(job: Job, env: Mapping[str, str], seconds: float) -> bool:
 def install(job: Job, env: Mapping[str, str]) -> str:
     """Write, lint, put in place, reload. Returns what it did; raises Failed
     naming what is left where."""
-    job.log.parent.mkdir(parents=True, exist_ok=True)
+    _settings.make_log_dir(job_env(str(job.home)))   # 0700 when made: a log names boxes
     job.plist.parent.mkdir(parents=True, exist_ok=True)
     fd, tmp = tempfile.mkstemp(prefix=f".{job.label}.", suffix=".plist",
                                dir=job.plist.parent)

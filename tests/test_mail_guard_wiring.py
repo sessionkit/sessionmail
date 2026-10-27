@@ -44,12 +44,13 @@ def run_shim(shim: Path, command: str, env: dict | None = None):
 
 
 def test_hooks_json_registers_the_guard_on_bash_through_the_shim():
-    """Bash, and (SM-815) the message and pager servers' MCP tools: the same
-    shim, so one guard judges both doors."""
+    """Bash, and (SM-815) the message and pager servers' MCP tools, and
+    (SM-837) `memory_init`: the same shim, so one guard judges both doors."""
     spec = json.loads((ROOT / "hooks/hooks.json").read_text())
     groups = spec["hooks"]["PreToolUse"]
     assert [g.get("matcher") for g in groups] == [
-        "Bash", "mcp__plugin_sessionmail_(message|pager)__.*"]
+        "Bash", "mcp__plugin_sessionmail_(message|pager)__.*"
+                "|mcp__plugin_sessionmail_memory__memory_init"]
     for group in groups:
         (hook,) = group["hooks"]
         assert hook["type"] == "command" and hook["command"] == ENTRY

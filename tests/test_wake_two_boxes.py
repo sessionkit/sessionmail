@@ -14,6 +14,12 @@ The live shape of the stray is `new/` and `tmp/` with no `cur/`; the tests
 also cover a full maildir, a store that sorts AFTER the name (flat is then the
 delivered box), two stores, and no marker. Temp roots only, and an environment
 built from nothing, as in test_wake_project_box_brief.py.
+
+Every test that runs the shell rail runs it on BOTH bashes (conftest's
+`rail_bash`, SM-963): `/bin/bash` (3.2 on a Mac) and the PATH bash (5.x on a
+Homebrew Mac or any Linux), which is the one `session-mail-wake` runs. Bash
+4.4+ reads a bare `local x` as unset under the lib's `set -u`; 3.2 does not,
+so a suite pinned to `/bin/bash` was green over a rail that exited 1.
 """
 from __future__ import annotations
 
@@ -39,7 +45,6 @@ HOST = "wake.invalid"
 DATE = "Sun, 09 Jun 2030 12:00:00 +0000"
 #: The letters' delivery time, derived from DATE: a clock on that day.
 T0 = email.utils.parsedate_to_datetime(DATE).timestamp()
-BASH = "/bin/bash" if Path("/bin/bash").exists() else "bash"
 
 
 def letter(mid: str, stamp: str, subject: str) -> str:
@@ -78,16 +83,20 @@ def drop(d: Path, name: str, text: str, mtime: float | None = None) -> Path:
     return p
 
 
-def shell_resolve(name: str, root: Path) -> subprocess.CompletedProcess:
-    return subprocess.run([BASH, str(LIB), name, str(root)], capture_output=True, text=True,
+def shell_resolve(bash: str, name: str, root: Path) -> subprocess.CompletedProcess:
+    """The lib's CLI form on BASH, as wake runs it (`bash mail-box.lib.sh <name> <root>`)."""
+    return subprocess.run([bash, str(LIB), name, str(root)], capture_output=True, text=True,
                           env={"PATH": "/usr/bin:/bin"})
 
 
 @pytest.fixture
-def env(tmp_path: Path) -> dict[str, str]:
-    """An environment built from nothing: a temp root, a stub notmuch."""
+def env(tmp_path: Path, rail_bash: str) -> dict[str, str]:
+    """An environment built from nothing: a temp root, a stub notmuch, and RAIL_BASH
+    first on PATH as `bash`, so wake's `system_bash` (the first bash on PATH) runs
+    the shell rail on it, and so does the verifier's `env bash` shebang."""
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
+    (bin_dir / "bash").symlink_to(rail_bash)
     notmuch = bin_dir / "notmuch"
     notmuch.write_text("#!/bin/sh\nexit 0\n")
     notmuch.chmod(0o755)
@@ -128,13 +137,13 @@ LAYOUTS = {
 
 
 @pytest.mark.parametrize("layout", sorted(LAYOUTS))
-def test_both_rails_resolve_two_boxes_to_the_delivered_one(tmp_path, layout):
+def test_both_rails_resolve_two_boxes_to_the_delivered_one(tmp_path, layout, rail_bash):
     root = tmp_path / "mail"
     build, delivered = LAYOUTS[layout]
     build(root)
     want = root / delivered
 
-    sh = shell_resolve(PROJECT, root)
+    sh = shell_resolve(rail_bash, PROJECT, root)
     assert sh.returncode == 0, sh.stderr
     assert sh.stdout.strip() == str(want)
     # ONE line on stderr, naming the delivered box and the stray.
@@ -150,27 +159,28 @@ def test_both_rails_resolve_two_boxes_to_the_delivered_one(tmp_path, layout):
 
 
 @pytest.mark.parametrize("layout", ["lone-full", "lone-partial", "no-marker"])
-def test_one_box_resolves_as_before_and_says_nothing(tmp_path, layout):
+def test_one_box_resolves_as_before_and_says_nothing(tmp_path, layout, rail_bash):
     """No collision, no stderr: a lone flat box (full or partial) and a flat box beside
     an UNMARKED directory of the same child name resolve flat, as they always did."""
     root = tmp_path / "mail"
     box(root / PROJECT, cur=(layout != "lone-partial"))
     if layout == "no-marker":
         box(root / "kit-store" / PROJECT)          # no .tm-store: a flat box, not a store
-    sh = shell_resolve(PROJECT, root)
+    sh = shell_resolve(rail_bash, PROJECT, root)
     assert sh.returncode == 0, sh.stderr
     assert sh.stdout.strip() == str(root / PROJECT)
     assert sh.stderr.strip() == ""
     assert _maildir.two_boxes(PROJECT, root) is None
 
 
-def test_a_nested_box_beside_a_partial_stray_wins_even_without_the_collision_rule(tmp_path):
+def test_a_nested_box_beside_a_partial_stray_wins_even_without_the_collision_rule(tmp_path,
+                                                                                     rail_bash):
     """Step 1's maildir predicate (new/ AND cur/, the Python rail's `_is_maildir`)
     on its own: a partial flat directory no longer wins step 1."""
     root = tmp_path / "mail"
     box(root / PROJECT, cur=False)
     nested = box(store(root, "kit-store") / PROJECT)
-    assert shell_resolve(PROJECT, root).stdout.strip() == str(nested)
+    assert shell_resolve(rail_bash, PROJECT, root).stdout.strip() == str(nested)
 
 
 def test_the_python_rail_marker_matches_the_boxes_module():
@@ -184,6 +194,111 @@ def test_a_store_made_after_a_resolution_is_seen(tmp_path):
     assert _maildir.resolve_box(PROJECT, {"SESSION_MAIL_ROOT": str(root)})[0] == flat
     nested = box(store(root, "kit-store") / PROJECT)
     assert _maildir.resolve_box(PROJECT, {"SESSION_MAIL_ROOT": str(root)})[0] == nested
+
+
+# ── the CLI under its own `set -u`, on both bashes (SM-963) ───────────────────────────
+
+SHORT_SID = SID[:8]
+SID_TWIN = SID[:9] + "0000" + SID[13:]          # shares the 8-hex prefix: ambiguous
+
+
+def cli_tree(root: Path) -> None:
+    """One root that reaches every resolution step of `mail_box_resolve`."""
+    box(root / "flat")
+    box(store(root, "kit-store") / "nested")
+    box(root / PROJECT)
+    box(root / "kit-store" / PROJECT)                # two boxes: flat + store
+    box(store(root, "a-store") / "pair")
+    box(store(root, "b-store") / "pair")             # two boxes: two stores
+    box(root / SID)
+    box(root / "Legacy")                             # a legacy mixed-case box
+    box(root / "abcd1234")                           # a HISTORY short box
+    box(root / "plainbox" / "orphan")                # unmarked: a near-miss
+
+
+CLI_CASES = {
+    # name: (argv name, rc)
+    "empty-name": ("", 2),
+    "flat": ("flat", 0),
+    "nested": ("nested", 0),
+    "two-boxes-flat-and-store": (PROJECT, 0),
+    "two-boxes-two-stores": ("pair", 0),
+    "full-uuid": (SID, 0),
+    "short-id-unique": (SHORT_SID, 0),
+    "short-id-no-match": ("deadbeef", 2),
+    "legacy-mixed-case": ("legacy", 0),
+    "upper-name": ("FLAT", 0),
+    "plus-ext-base-exists": ("flat+boot", 2),
+    "plus-ext-no-base": ("nobox+boot", 2),
+    "uuid-miss-history-box": ("abcd1234-0000-0000-0000-000000000000", 2),
+    "unmarked-near-miss": ("orphan", 2),
+    "missing": ("nobox", 2),
+}
+
+
+@pytest.mark.parametrize("case", sorted(CLI_CASES))
+def test_every_resolution_path_answers_under_set_u(tmp_path, case, rail_bash):
+    """Each step of the rail ends in its own answer (rc 0 or the rc 2 refusal), never
+    in bash aborting on an unset variable (rc 1): 4.4+ is strict where 3.2 is not."""
+    root = tmp_path / "mail"
+    cli_tree(root)
+    name, rc = CLI_CASES[case]
+    sh = shell_resolve(rail_bash, name, root)
+    assert "unbound variable" not in sh.stderr, sh.stderr
+    assert sh.returncode == rc, sh.stderr
+
+
+def test_an_ambiguous_short_id_is_refused_not_aborted(tmp_path, rail_bash):
+    root = tmp_path / "mail"
+    box(root / SID)
+    box(root / SID_TWIN)
+    sh = shell_resolve(rail_bash, SHORT_SID, root)
+    assert "unbound variable" not in sh.stderr, sh.stderr
+    assert sh.returncode == 2 and "ambiguous box" in sh.stderr, sh.stderr
+
+
+def test_no_root_and_no_home_is_the_clis_refusal_not_a_bash_abort(rail_bash):
+    """With no root argument, no SESSION_MAIL_ROOT and no HOME, the default root
+    cannot be built. That is a refusal (rc 2, saying what to pass), never bash's
+    "HOME: unbound variable" (rc 1) out of the CLI's own `set -u`."""
+    r = subprocess.run([rail_bash, str(LIB), PROJECT], capture_output=True, text=True,
+                       env={"PATH": "/usr/bin:/bin"})
+    assert "unbound variable" not in r.stderr, r.stderr
+    assert r.returncode == 2, r.stderr
+    assert "no root" in r.stderr and "SESSION_MAIL_ROOT" in r.stderr, r.stderr
+    assert "SESSIONMAIL_ROOT" in r.stderr, r.stderr
+
+
+@pytest.mark.parametrize("var", ["SESSIONMAIL_ROOT", "SESSION_MAIL_ROOT"])
+def test_a_root_variable_needs_no_home(tmp_path, rail_bash, var):
+    """An absolute root from either spelling resolves with HOME unset: the guard
+    sits inside mail_box_env_root, on the one branch that needs HOME."""
+    flat = box(tmp_path / "flat")
+    r = subprocess.run([rail_bash, str(LIB), "flat"], capture_output=True, text=True,
+                       env={"PATH": "/usr/bin:/bin", var: str(tmp_path)})
+    assert r.returncode == 0, r.stderr
+    assert r.stdout.strip() == str(flat)
+
+
+@pytest.mark.parametrize("given", [{}, {"SESSIONMAIL_ROOT": "~/m/agents"},
+                                   {"SESSIONMAIL_ROOT": "~"}])
+def test_env_root_without_home_is_the_clis_refusal(rail_bash, given):
+    """`--env-root`, and a tilde root, need HOME. With none, the CLI refuses (rc 2),
+    never bash's "HOME: unbound variable" (rc 1) and never a root built on ''."""
+    for argv in (["--env-root"], [PROJECT]):
+        r = subprocess.run([rail_bash, str(LIB), *argv], capture_output=True, text=True,
+                           env={"PATH": "/usr/bin:/bin", **given})
+        assert "unbound variable" not in r.stderr, (argv, r.stderr)
+        assert r.returncode == 2 and "no root" in r.stderr, (argv, r.stderr)
+        assert r.stdout == "", (argv, r.stdout)
+
+
+def test_the_default_root_is_under_home(tmp_path, rail_bash):
+    flat = box(tmp_path / ".mail" / "agents" / "flat")
+    r = subprocess.run([rail_bash, str(LIB), "flat"], capture_output=True, text=True,
+                       env={"PATH": "/usr/bin:/bin", "HOME": str(tmp_path)})
+    assert r.returncode == 0, r.stderr
+    assert r.stdout.strip() == str(flat)
 
 
 # ── wake: the pointer section ───────────────────────────────────────────────────────────

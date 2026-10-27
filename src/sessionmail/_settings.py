@@ -28,6 +28,8 @@ Four functions, and no I/O at import:
                 template - atomically, never replacing anything (D4); then
                 the old path becomes a symlink, and the schema and template
                 are installed beside the file
+- `set_hooks(on, env)` the one writer of `"hooks"`: `pager
+                settings hooks on|off`, through `ensure` and `with_value`
 
 This module decides nothing about what a hook says. It reports a state and,
 for a fault, why; the hooks choose their words (`hook_lines.toml`).
@@ -35,11 +37,13 @@ for a fault, why; the hooks choose their words (`hook_lines.toml`).
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import os
 import secrets
 import stat
 from dataclasses import dataclass
+from datetime import datetime
 from importlib.resources import files
 from pathlib import Path
 from typing import Literal, Mapping
@@ -73,6 +77,27 @@ RELATIVE = DIR / f"{TOOL}.json"
 #: account's home. Every help line, note and refusal derives from these.
 SHOWN_DIR = f"~/{DIR.as_posix()}/"
 SHOWN = f"~/{RELATIVE.as_posix()}"
+
+#: The package's LOG folder, `$HOME/<LOG_DIR>`, beside DIR (package first).
+#: The kit keeps its own logs, never in ~/Library/Logs. The ONE definition
+#: of where sessionmail's launch agents log; every log path is derived from
+#: `log_dir`, and nothing else spells it by hand. Never under
+#: SESSIONMAIL_HOME: logs are not state.
+LOG_DIR = ROOT / PACKAGE / "log"
+
+#: How user text shows LOG_DIR.
+SHOWN_LOG_DIR = f"~/{LOG_DIR.as_posix()}/"
+
+#: The log dir's mode when this tool creates it: a seat log can name
+#: addresses and mail subjects.
+LOG_MODE = 0o700
+
+#: Where the seat agent logged before 0.3.2, relative to `$HOME`: the ONE
+#: place the old path is named. A seat agent installed before 0.3.2 keeps
+#: writing it until it is uninstalled and installed again, so readers fall
+#: back to it. Nothing writes here, and nothing ever deletes or moves a file
+#: in it. The fallback is DROPPED in the next release, 0.3.3.
+OLD_LOG_DIR = Path("Library") / "Logs"
 
 #: The mail tool's settings folder before the kit's home (0.1.0), relative
 #: to `$HOME`: the ONE place the old path is named. While it is still a real
@@ -144,6 +169,71 @@ def old_path(env: Mapping[str, str] | None = None) -> Path:
     """`$HOME/.session/mail/settings.json`: where the file was, and after
     the conversion a symlink to `path()`."""
     return _home(env) / OLD_RELATIVE
+
+
+def log_dir(env: Mapping[str, str] | None = None) -> Path:
+    """`$HOME/.sessionkit/mail/log`: where sessionmail's logs go."""
+    return _home(env) / LOG_DIR
+
+
+def old_log_dir(env: Mapping[str, str] | None = None) -> Path:
+    """`$HOME/Library/Logs`: the pre-0.3.2 seat-agent log folder, read as a
+    fallback only, until 0.3.3."""
+    return _home(env) / OLD_LOG_DIR
+
+
+def make_log_dir(env: Mapping[str, str] | None = None) -> Path:
+    """Create `log_dir()` if it is missing, LOG_MODE (0700) whatever the
+    umask, and return it. The parents (~/.sessionkit, ~/.sessionkit/mail)
+    get the default mode, as `install` gives them. A folder that is already
+    there keeps its mode: an operator who widened it chose to, and this is
+    not the place to undo that silently. Raises OSError."""
+    d = log_dir(env)
+    if d.is_dir():
+        return d
+    d.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        d.mkdir(mode=LOG_MODE)
+    except FileExistsError:
+        if not d.is_dir():
+            raise
+        return d                    # a racing writer made it: its mode stands
+    os.chmod(d, LOG_MODE)           # mkdir's mode is masked by the umask
+    return d
+
+
+#: The hooks verb's audit file in LOG_DIR: ONE JSON line per flip of
+#: `"hooks"` (`pager settings hooks on|off`), from every run, seated or
+#: not, since the file it audits is host-wide. Append-only; sessionmail
+#: never reads, rotates or deletes it.
+AUDIT_LOG = "settings.jsonl"
+
+#: The audit file's mode when made: a row names a seat and a session.
+AUDIT_MODE = 0o600
+
+
+def audit_path(env: Mapping[str, str] | None = None) -> Path:
+    """`$HOME/.sessionkit/mail/log/settings.jsonl`: the hooks verb's audit."""
+    return log_dir(env) / AUDIT_LOG
+
+
+def audit(fields: Mapping[str, object], env: Mapping[str, str] | None = None) -> bool:
+    """Append one row to `audit_path()`: `ts` (local time, with its offset)
+    then FIELDS, as one JSON line. The log dir is made 0700 when missing
+    (`make_log_dir`), the file 0600. One write(2) under O_APPEND, so two
+    flips never interleave. True when the row was written; never raises:
+    a row is never why the verb fails."""
+    try:
+        row = {"ts": datetime.now().astimezone().isoformat(timespec="milliseconds"), **fields}
+        line = (json.dumps(row, ensure_ascii=False) + "\n").encode("utf-8")
+        make_log_dir(env)
+        fd = os.open(audit_path(env), os.O_WRONLY | os.O_APPEND | os.O_CREAT, AUDIT_MODE)
+        try:
+            return os.write(fd, line) == len(line)
+        finally:
+            os.close(fd)
+    except Exception:  # noqa: BLE001 - see above
+        return False
 
 
 def _real_dir(p: Path) -> bool:
@@ -635,6 +725,114 @@ def with_key(raw: bytes, key: str, value: object) -> bytes | None:
     return out.encode("utf-8")
 
 
+# ── one value, in place: `with_value`, and the verb's `set_hooks` ──────────
+
+_WS = " \t\n\r"
+
+
+def _members(text: str) -> list[tuple[str, int, int]]:
+    """The TOP-LEVEL members of the JSON object TEXT, in order: `(key, start,
+    end)`, where `text[start:end]` is the member's value exactly as written.
+    TEXT has already parsed as an object (`json.loads`), so this only finds
+    spans: `scanstring` for each key (escapes and all), `raw_decode` for
+    each value. A nested object's keys are never members."""
+    dec = json.JSONDecoder()
+    out: list[tuple[str, int, int]] = []
+
+    def skip(i: int) -> int:
+        while i < len(text) and text[i] in _WS:
+            i += 1
+        return i
+
+    i = skip(0)
+    if text[i:i + 1] != "{":
+        raise ValueError("the top level is not an object")
+    i = skip(i + 1)
+    if text[i:i + 1] == "}":
+        return out
+    while True:
+        if text[i:i + 1] != '"':
+            raise ValueError(f"expected a key at {i}")
+        key, i = json.decoder.scanstring(text, i + 1)
+        i = skip(i)
+        if text[i:i + 1] != ":":
+            raise ValueError(f"expected ':' at {i}")
+        start = skip(i + 1)
+        _value, end = dec.raw_decode(text, start)
+        out.append((key, start, end))
+        i = skip(end)
+        if text[i:i + 1] == ",":
+            i = skip(i + 1)
+            continue
+        if text[i:i + 1] == "}":
+            return out
+        raise ValueError(f"expected ',' or '}}' at {i}")
+
+
+def _is(have: object, want: object) -> bool:
+    """HAVE is WANT, type and all: `1 == True` in Python, and 1 is not on."""
+    return type(have) is type(want) and have == want
+
+
+def with_value(raw: bytes, key: str, value: object) -> bytes | None:
+    """RAW (a JSON object's bytes) with the TOP-LEVEL member KEY set to
+    VALUE, every other byte as it was; None when KEY already holds VALUE, of
+    VALUE's own type (so `{"hooks": 1}` is not already `true`). A member is
+    changed in place: only its value's span is replaced. A missing KEY is
+    added last, by `with_key`. Raises ValueError when RAW is not UTF-8 JSON
+    whose top level is an object, when KEY is a member more than once and a
+    write is needed, or when the result would not mean `{**data, KEY:
+    VALUE}`. With duplicates the LAST member is the one read, as `json`
+    reads it, so "already" asks the last."""
+    try:
+        text = raw.decode("utf-8")
+    except UnicodeDecodeError as err:
+        raise ValueError(f"not UTF-8: {err}") from err
+    try:
+        data = json.loads(text)
+    except ValueError as err:
+        raise ValueError(f"not JSON: {err}") from err
+    if not isinstance(data, dict):
+        kind = _JSON_KIND.get(type(data), type(data).__name__)
+        raise ValueError(f"the top level is a {kind}, not an object")
+    if key in data and _is(data[key], value):
+        return None
+    spans = [(s, e) for k, s, e in _members(text) if k == key]
+    if not spans:
+        return with_key(raw, key, value)
+    if len(spans) > 1:
+        raise ValueError(f"`{key}` is a member {len(spans)} times")
+    (start, end), = spans
+    out = text[:start] + json.dumps(value) + text[end:]
+    got = json.loads(out)
+    if got != {**data, key: value} or not _is(got[key], value):   # never write what was not meant
+        raise ValueError("the value could not be set without changing the file's meaning")
+    return out.encode("utf-8")
+
+
+def _replace(real: Path, body: bytes) -> None:
+    """BODY at REAL (a real file, never a symlink: the caller resolves) in
+    ONE step: a temp file in REAL's own directory, O_CREAT|O_EXCL at 0600,
+    written and fsync'd, given REAL's mode, then `os.replace`. A reader sees
+    the old file or the new one, never part of one. The temp file is
+    unlinked on every path. Raises OSError; then REAL is as it was."""
+    st = os.stat(real)
+    tmp = real.with_name(f".{real.name}.{os.getpid()}.{secrets.token_hex(4)}")
+    try:
+        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        with os.fdopen(fd, "wb") as f:
+            f.write(body)
+            f.flush()
+            os.fsync(f.fileno())
+        os.chmod(tmp, stat.S_IMODE(st.st_mode))
+        os.replace(tmp, real)
+    finally:
+        try:
+            tmp.unlink()
+        except OSError:
+            pass
+
+
 def fresh_body() -> bytes:
     """What `ensure` makes a missing file from: the template, with
     `"host"` pinned to the live short hostname, lowercased (`_host.live`).
@@ -651,27 +849,14 @@ def add_key(target: Path, key: str, value: object) -> bool:
     Raises OSError (missing, unreadable) or ValueError (not a JSON object):
     either way nothing is written. A symlink is written through, to its
     target. One step: a temp file in the same directory, fsync'd, given the
-    file's mode, then `os.replace`. The window: a hand edit saved between
-    the read and the replace is lost."""
+    file's mode, then `os.replace` (`_replace`, shared with `set_hooks`).
+    The window: a hand edit saved between the read and the replace is lost."""
     real = target.resolve()
-    st = os.stat(real)
+    os.stat(real)                     # missing: OSError before anything is read
     body = with_key(real.read_bytes(), key, value)
     if body is None:
         return False
-    tmp = real.with_name(f".{real.name}.{os.getpid()}.{secrets.token_hex(4)}")
-    try:
-        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-        with os.fdopen(fd, "wb") as f:
-            f.write(body)
-            f.flush()
-            os.fsync(f.fileno())
-        os.chmod(tmp, stat.S_IMODE(st.st_mode))
-        os.replace(tmp, real)
-    finally:
-        try:
-            tmp.unlink()
-        except OSError:
-            pass
+    _replace(real, body)
     return True
 
 
@@ -683,12 +868,20 @@ def _link_old(env: Mapping[str, str] | None) -> None:
     swap is one `os.replace` of a symlink made beside it. A missing old
     path gets no symlink: nothing read it, and no directory is made for
     nothing (slipbox `no-empty-dirs`). Best effort: a failure leaves the
-    old file where it was, and the next call tries again."""
+    old file where it was, and the next call tries again.
+
+    The new file must be a real file DISTINCT from the old one.
+    When mail.json is a symlink to the old file, the two hold the same
+    bytes because they are one file read twice; replacing the old file
+    then makes a two-node loop and loses the only copy. So the old file
+    is never replaced by a link to itself."""
     old, new = old_path(env), path(env)
     if old.is_symlink() or not old.is_file():
         return
     tmp: Path | None = None
     try:
+        if not new.is_file() or os.path.samefile(old, new):
+            return
         if old.read_bytes() != new.read_bytes():
             return
         tmp = old.with_name(f".{old.name}.{os.getpid()}.{secrets.token_hex(4)}")
@@ -735,8 +928,10 @@ def install(env: Mapping[str, str] | None = None, *, make: bool = False) -> list
     install` run before any hook has, and the launcher's birth writer reads
     SESSIONMAIL_SUBSCRIBE only from an INSTALLED schema. The directory is
     never left empty: the schema goes into it at once (no-empty-dirs).
-    Neither ever writes the host file `mail.json`: only `ensure`, from
-    `hook_batch`, creates it and says the first-run note.
+    Neither ever writes the host file `mail.json`: only `ensure` creates
+    it, from `hook_batch` (which says the first-run note) or from
+    `set_hooks` (`pager settings hooks on|off`, whose own line is the
+    person's notice).
 
     A STRANDED host (`stranded`) gets nothing, MAKE or not: moving the old
     folder must not find a second copy of either file in its way. Nor does
@@ -823,3 +1018,200 @@ def ensure(env: Mapping[str, str] | None = None) -> tuple[Settings, bool]:
     if not published:
         return read(env), False   # someone else created it; say what it holds
     return read(env), not converted
+
+
+#: Why `set_hooks` refused (`HooksResult.refused`); "" when it did not.
+REFUSED_ROOT = "root"            # euid 0, or SUDO_USER set (Q8)
+REFUSED_STRANDED = "stranded"    # the old settings folder is still a real folder
+REFUSED_COPIED = "copied"        # ... and the new one is real too
+REFUSED_UNCHECKED = "unchecked"  # either folder could not be stat'd
+REFUSED_FAULT = "fault"          # the file (or the old file) could not be read, judged or written
+REFUSED_READBACK = "readback"    # written, and the read-back disagrees: a race or a bug
+
+#: How user text shows OLD_RELATIVE.
+SHOWN_OLD = f"~/{OLD_RELATIVE.as_posix()}"
+
+#: `HooksResult.was` when there was no `hooks` member to report.
+class _NoKey:
+    def __repr__(self) -> str:
+        return "NO_KEY"
+
+
+NO_KEY = _NoKey()
+
+
+@dataclass(frozen=True)
+class HooksResult:
+    """What `set_hooks` did. The verb only prints it.
+
+    `want` is what was asked. `path` is the file judged: `path(env)`, or
+    the old file when it is the old file a conversion would carry that was
+    refused. `state` is what the file says when the call returns (`read`).
+    `before` is the state it said before (`missing` for no file, the
+    conversion included); `was` the JSON value of its `hooks` before
+    (`NO_KEY` for no member, None for no file or a file that did not
+    parse). `made` says this call found no file and left one (`converted`:
+    from the old file); `wrote` that this call replaced the file's bytes;
+    `already` that it said what was asked, so nothing was touched.
+    `refused` is a `REFUSED_*` or ""; `why` names it."""
+
+    want: bool
+    path: Path
+    state: State = MISSING
+    before: State = MISSING
+    was: object = None
+    made: bool = False
+    converted: bool = False
+    wrote: bool = False
+    already: bool = False
+    refused: str = ""
+    why: str = ""
+
+    @property
+    def flipped(self) -> bool:
+        """The file changed: made, or its value written (Q1: the audit
+        line is written on a flip only)."""
+        return self.made or self.wrote
+
+
+def _as_root(env: Mapping[str, str]) -> str:
+    """Why this run is root's, or "": euid 0, or SUDO_USER set (Q8). A
+    `sudo` that keeps HOME would leave a root-owned mail.json, and the
+    folders `ensure` makes, in a person's home."""
+    geteuid = getattr(os, "geteuid", None)
+    if geteuid is not None and geteuid() == 0:
+        return "this is root (euid 0)"
+    sudo = (env.get("SUDO_USER") or "").strip()
+    if sudo:
+        return f"this is sudo (SUDO_USER={sudo})"
+    return ""
+
+
+def _judge(p: Path) -> tuple[bytes | None, State, object, str]:
+    """The REAL file at P (a symlink followed): `(raw, state, was, why)`.
+    RAW is None and WHY the reason when it cannot be read: the OS error, or
+    a symlink to nothing. STATE and WAS are what it says, as `_parse` reads
+    it, and WAS the `hooks` member's value (`NO_KEY` without one)."""
+    try:
+        raw = p.resolve().read_bytes()
+    except FileNotFoundError as err:
+        if os.path.lexists(p):
+            return None, MALFORMED, None, f"{_os_why(err)} (a symlink to nothing)"
+        return None, MISSING, None, ""
+    except OSError as err:
+        return None, MALFORMED, None, _os_why(err)
+    try:
+        said = _parse(raw.decode("utf-8"))
+    except UnicodeDecodeError:
+        return raw, MALFORMED, None, ""
+    was: object = None
+    if said.state in (ON, OFF):
+        was = said.hooks
+    else:
+        try:
+            data = json.loads(raw.decode("utf-8"))
+            if isinstance(data, dict):
+                was = data.get("hooks", NO_KEY)
+        except ValueError:
+            pass
+    return raw, said.state, was, ""
+
+
+def set_hooks(on: bool, env: Mapping[str, str] | None = None) -> HooksResult:
+    """`"hooks": ON` in the host file, through `ensure`, `with_value` and
+    one atomic replace. Never raises for the file's
+    sake; every refusal is a `HooksResult` with `refused` set, and the
+    verb's own write never happened unless `wrote` is True.
+
+    0. Root, or sudo: refused (Q8), nothing written.
+    1. Stranded, or copied, or either folder could not be checked:
+       refused, nothing written (`install`'s checks, in its order).
+    2. Judged BEFORE anything is written: a file that is there and cannot
+       be read, or is not a JSON object, or needs a write it cannot take (a
+       duplicate member), is refused. One that already says ON is
+       "already": nothing is run, `ensure` included, so a second run
+       touches no file. No file, and an old file the conversion would
+       carry: those bytes are judged the same way.
+    3. `ensure`: the one creator (the template and the host pin, or the
+       old file), the old-path link and the schema, BEFORE the write, so
+       `_link_old` finds the bytes equal.
+    4-6. The real file read again, `with_value`, `_replace`.
+    7. The read-back, through `read`: a disagreement is the one refusal
+       after the write.
+
+    `SESSIONMAIL_PAGER` is never read here: the file is the host's switch."""
+    env = dict(os.environ if env is None else env)
+    p = path(env)
+    root = _as_root(env)
+    if root:
+        return HooksResult(on, p, refused=REFUSED_ROOT, why=root)
+    try:
+        is_stranded = stranded(env)
+    except OSError as err:
+        return HooksResult(on, p, refused=REFUSED_UNCHECKED, why=unchecked_why(err))
+    if is_stranded:
+        try:
+            is_copied = copied(env)
+        except OSError as err:
+            return HooksResult(on, p, refused=REFUSED_UNCHECKED, why=unchecked_why(err, SHOWN_DIR))
+        kind = REFUSED_COPIED if is_copied else REFUSED_STRANDED
+        return HooksResult(on, p, refused=kind, why=STRANDED_WHY)
+
+    there = os.path.lexists(p)
+    converting = False
+    if there:
+        raw, before, was, why = _judge(p)
+        if raw is None:
+            return HooksResult(on, p, before=before, refused=REFUSED_FAULT, why=why)
+        try:
+            body = with_value(raw, "hooks", on)
+        except ValueError as err:
+            return HooksResult(on, p, before=before, was=was, refused=REFUSED_FAULT, why=str(err))
+        if body is None:
+            return HooksResult(on, p, state=before, before=before, was=was, already=True)
+    else:
+        before, was = MISSING, None
+        old = _old_body(env)
+        if old is not None:
+            converting = True
+            try:
+                with_value(old, "hooks", on)
+            except ValueError as err:
+                return HooksResult(on, old_path(env), refused=REFUSED_FAULT, why=str(err))
+
+    made_now = False
+    if not there:
+        settings, _created = ensure(env)
+        if not os.path.lexists(p):
+            return HooksResult(on, p, refused=REFUSED_FAULT,
+                               why=settings.why or "the file could not be made")
+        made_now = True
+    else:
+        ensure(env)          # the old-path link and the schema; never touches the file
+
+    # From here a refusal comes after `ensure` (only a race, an I/O error or
+    # a bug reaches one): it says what the file reads as now.
+    done = {"before": before, "was": was, "made": made_now, "converted": converting and made_now}
+
+    def refuse(why: str) -> HooksResult:
+        return HooksResult(on, p, state=read(env).state, refused=REFUSED_FAULT, why=why, **done)
+
+    raw, _state, _was, why = _judge(p)
+    if raw is None:
+        return refuse(why)
+    try:
+        body = with_value(raw, "hooks", on)
+    except ValueError as err:
+        return refuse(str(err))
+    wrote = False
+    if body is not None:
+        try:
+            _replace(p.resolve(), body)
+        except OSError as err:
+            return refuse(f"could not be written ({_os_why(err)})")
+        wrote = True
+    after = read(env)
+    result = HooksResult(on, p, state=after.state, wrote=wrote, **done)
+    if after.state != (ON if on else OFF):
+        return dataclasses.replace(result, refused=REFUSED_READBACK, why=after.why)
+    return result

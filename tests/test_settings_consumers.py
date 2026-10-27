@@ -92,7 +92,9 @@ def test_root_each_consumers_variables_keep_their_order(bare, tmp_path):
     new = {**bare, "SESSIONMAIL_ROOT": str(tmp_path / "new" / "agents")}
     both = {**old, **new}
     mail = {**bare, "MAIL_ROOT": str(tmp_path / "mr")}
-    # _maildir reads SESSION_MAIL_ROOT, and never SESSIONMAIL_ROOT
+    # _maildir: SESSIONMAIL_ROOT, then SESSION_MAIL_ROOT, the drop's own order (SM-910)
+    assert _maildir.root(both) == tmp_path / "new" / "agents"
+    assert _maildir.root(new) == tmp_path / "new" / "agents"
     assert _maildir.root(old) == tmp_path / "old" / "agents"
     # the sender: SESSIONMAIL_ROOT, then SESSION_MAIL_ROOT
     assert _sender.root_of(both) == tmp_path / "new" / "agents"
@@ -103,13 +105,13 @@ def test_root_each_consumers_variables_keep_their_order(bare, tmp_path):
     assert _drop.mail_root(mail) == tmp_path / "mr"
 
 
-def test_root_the_keys_own_variable_beats_the_file_where_it_was_never_read(bare, tmp_path):
-    """`_maildir` never read SESSIONMAIL_ROOT. With it set, the variable
-    still beats the file, so `_maildir` keeps today's default; it
-    does not start reading a variable it never read (D4)."""
+def test_root_the_keys_own_variable_beats_the_file_for_the_readers_too(bare, tmp_path):
+    """`_maildir` reads SESSIONMAIL_ROOT since SM-910 (it read only the older
+    spelling, so `message path` missed the box `send` delivered to). The
+    variable beats the file, as the schema says."""
     host_file(root=str(tmp_path / "file"))
     env = {**bare, "SESSIONMAIL_ROOT": str(tmp_path / "new" / "agents")}
-    assert _maildir.root(env) == Path(_maildir.DEFAULT_ROOT).expanduser()
+    assert _maildir.root(env) == tmp_path / "new" / "agents"
 
 
 @pytest.mark.parametrize("bad", ["", "   ", 7, True, None, ["x"]])

@@ -63,8 +63,13 @@ it or runs launchctl. To render it by hand, replace each `@PLACEHOLDER@`, then l
       sed -e 's|@ADDRESS@|bot.alice|g' -e "s|@MESSAGE@|$(command -v message)|g" \
         -e "s|@SESSIONMAIL_HOME@|$HOME/.sessionmail|g" \
         -e "s|@SOCKET@|$HOME/.sessionmail/seat-keys/bot.alice/agent.sock|g" \
-        -e "s|@LOG_DIR@|$HOME/Library/Logs|g" > /some/scratch/dir/dev.sessionkit.mail.seat-agent.bot.alice.plist
+        -e "s|@LOG_DIR@|$HOME/.sessionkit/mail/log|g" > /some/scratch/dir/dev.sessionkit.mail.seat-agent.bot.alice.plist
     plutil -lint /some/scratch/dir/dev.sessionkit.mail.seat-agent.bot.alice.plist
+
+`@LOG_DIR@` must be a folder that exists before launchd loads the job; `--install` makes
+`~/.sessionkit/mail/log` mode 0700 when it is missing. An agent installed before 0.3.2
+logs to `~/Library/Logs` and keeps doing so until it is uninstalled and installed again
+(see "The log" in [`docs/message-seat.md`](../../docs/message-seat.md)).
 
 `@MESSAGE@` is the path `command -v message` prints, not resolved: `~/.local/bin/message`
 under uv tool or pipx, `<venv>/bin/message` in a venv. It stays the same across upgrades,

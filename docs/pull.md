@@ -115,7 +115,7 @@ not empty wins. Full rules: [settings][settings].
 | `listener` | yes | none | `HOST:PORT` of the local-only smtpd above |
 | `vmailbox` | yes | none | the postfix map that resolves `BOX@<local domain>` (`type:path`) |
 | `boxes_file` | no | `~/.sessionkit/mail/settings/pull.boxes` | the box list |
-| `state_dir` | no | `~/.sessionmail/puller` | cursors, the lock, and the job's log |
+| `state_dir` | no | `~/.sessionmail/puller` | cursors and the lock (not the job's log) |
 | `local_domain` | no | the `host` key, else the short host name | the domain in `BOX@<local domain>` |
 | `own_ips` | no | ask `tailscale ip` | this host's IPs, a list or comma-separated |
 | `unsorted_box` | no | none: general delivery off | the mail host's catch-all box |
@@ -162,9 +162,10 @@ step and does not read the pull config at all.
   `<python> -u -m sessionmail._puller`, where `<python>` is the interpreter
   that ran `message setup`. It is started at load and kept alive, with 30
   seconds between restarts. Its output goes to
-  `<pull.state_dir>/log/puller.log`. Its `PATH` holds the usual install
-  prefixes (`/opt/homebrew/bin`, `/usr/local/bin`) and the system ones, so
-  `postmap`, notmuch, `tailscale` and your secret command's tools are found.
+  `~/.sessionkit/mail/log/puller.log` (see "The log", below). Its `PATH`
+  holds the usual install prefixes (`/opt/homebrew/bin`, `/usr/local/bin`)
+  and the system ones, so `postmap`, notmuch, `tailscale` and your secret
+  command's tools are found.
 - **The check only reads.** The step is `DONE` when the plist on disk is
   exactly what setup would write *and* the job is loaded. A second run on
   an unchanged host writes nothing and calls no `launchctl` write.
@@ -176,18 +177,34 @@ step and does not read the pull config at all.
     other job by hand. Setup replaces only its own puller's plist;
   - nothing answers on `pull.listener`. This is asked only when the step
     has something to do.
-- **Applying:** setup makes `<state_dir>/log`, writes the plist to a
-  temporary file beside the target, and runs `plutil -lint` on it. If the
-  lint fails, nothing is installed. Otherwise the file is moved into place.
+- **Applying:** setup makes `~/.sessionkit/mail/log` if it is missing
+  (mode 0700), writes the plist to a temporary file beside the target, and
+  runs `plutil -lint` on it. If the lint fails, nothing is installed.
+  Otherwise the file is moved into place.
   A loaded job is booted out, and setup waits for it to go, up to a bound.
   Then the new plist is bootstrapped and must show as loaded. A job that
   does not go, or a bootstrap that fails, leaves the step `FAILED` (exit 1).
   The message names the plist left in place and what to re-run.
-- After you change `pull.label` or `pull.state_dir`, run `message setup
-  --pull` again: the changed plist is rewritten and the job restarted. Any
-  other key is not in the plist, so the step stays `DONE` and the job reads
-  the new value when it next starts. Restart it with `launchctl kickstart
-  -k gui/$(id -u)/<pull.label>`.
+- After you change `pull.label`, run `message setup --pull` again: the
+  changed plist is rewritten and the job restarted. Any other key, including
+  `pull.state_dir`, is not in the plist, so the step stays `DONE` and the
+  job reads the new value when it next starts. Restart it with
+  `launchctl kickstart -k gui/$(id -u)/<pull.label>`.
+
+### The log
+
+The job's stdout and stderr go to one file,
+`~/.sessionkit/mail/log/puller.log`, beside the kit's settings in `~/.sessionkit/mail/settings/`. It does not
+follow `pull.state_dir`: that folder holds state (cursors and the lock), and a
+log is not state. Setup makes the log folder mode 0700 when it is missing,
+because the log names boxes. A folder that is already there keeps its mode.
+
+Before 0.3.2 the job logged to `<pull.state_dir>/log/puller.log`. **A puller
+installed before 0.3.2 keeps writing that old path until its plist is
+rendered again:** run `message setup --pull`. The step sees our puller's plist
+with the old log path, replaces it, and restarts the job. The old log is left
+where it is; nothing deletes or moves a log, so remove it by hand when you no
+longer want it.
 
 ## Running it by hand
 

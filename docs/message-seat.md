@@ -75,14 +75,15 @@ registry or the cert.
    defaults to `agent.sock` beside the key. `message` is on PATH.
 2. **Render.** The packaged template, with each placeholder filled and
    XML-escaped: `@MESSAGE@` is what `command -v message` prints,
-   `@SESSIONMAIL_HOME@` is absolute, `@LOG_DIR@` is `$HOME/Library/Logs`.
+   `@SESSIONMAIL_HOME@` is absolute, `@LOG_DIR@` is `$HOME/.sessionkit/mail/log`
+   (see "The log", below).
    The render must parse as a plist, and its `Label` must be
    `dev.sessionkit.mail.seat-agent.ADDRESS`.
 3. **Compare.** `launchctl print gui/<uid>/<label>` says whether the job is
    loaded. Loaded with the same plist: a re-run, so it goes on to step 5.
    Loaded with any other plist, or a different plist at the path: refused.
    A job's plist is never overwritten; `--uninstall` it first.
-4. **Load.** It writes the plist to `$HOME/Library/LaunchAgents/<label>.plist`
+4. **Load.** It makes the log folder if it is missing (mode 0700), writes the plist to `$HOME/Library/LaunchAgents/<label>.plist`
    (mode 0644, through a temp file), then runs `launchctl bootstrap gui/<uid>
    <plist>`.
 5. **Verify the effect.** For up to 10 s it polls `ssh-add -L` on SOCKET, in a
@@ -96,7 +97,7 @@ SEAT_LABEL=dev.sessionkit.mail.seat-agent.<ADDRESS>
 SEAT_PLIST=<abs $HOME>/Library/LaunchAgents/dev.sessionkit.mail.seat-agent.<ADDRESS>.plist
 SEAT_SOCKET=<abs socket>
 SEAT_PUB=<abs $SESSIONMAIL_HOME>/seat-keys/<ADDRESS>/seat.pub
-SEAT_LOG=<abs $HOME>/Library/Logs/seat-agent.<ADDRESS>.log
+SEAT_LOG=<abs $HOME>/.sessionkit/mail/log/seat-agent.<ADDRESS>.log
 ```
 
 The sender's seam is `CLAUDE_SESSION_AGENT_SOCK=$SEAT_SOCKET` and
@@ -120,7 +121,8 @@ failure is `message seat agent: FAILED - <why>; <what was put back>`.
 
 If the job is loaded, it runs `launchctl bootout gui/<uid>/<label>` and waits
 up to 5 s for the job to go. Then it removes the plist, but only one whose
-`Label` is ours. The agent removes its own socket as it stops.
+`Label` is ours. The agent removes its own socket as it stops. It never
+deletes or moves a log, in `~/.sessionkit/mail/log/` or in `~/Library/Logs`.
 
 **stdout**: nothing. **stderr**: `message seat agent: booted out <label>; removed <plist>`
 (either part alone when only that was there), or
@@ -131,6 +133,26 @@ bootout failed, the job did not go, or the plist could not be removed; the
 plist is kept · 2 usage or
 refused: a plist at our path whose `Label` is not ours, or not macOS. Nothing
 is changed.
+
+### The log
+
+The agent's stdout and stderr go to one file,
+`~/.sessionkit/mail/log/seat-agent.<ADDRESS>.log`: the kit keeps its own logs,
+beside its settings in `~/.sessionkit/mail/settings/`, and writes nothing to
+`~/Library/Logs`. `--install` makes the folder mode 0700 when it is missing,
+because a seat log can name addresses and mail subjects. A folder that is
+already there keeps its mode.
+
+Before 0.3.2 the agent logged to `~/Library/Logs/seat-agent.<ADDRESS>.log`.
+**An agent installed before 0.3.2 keeps writing that old path until it is
+uninstalled and installed again** (`--uninstall ADDRESS`, then `--install
+ADDRESS`): `--install` never overwrites a job's plist, so an upgrade alone
+does not move it. Until then, when `--install` quotes the job's last log
+lines and finds no file at the new path, it reads the old one and says so.
+That fallback is dropped in the next release, 0.3.3.
+
+Nothing here deletes or moves a log. The old file stays in `~/Library/Logs`
+after the move; removing it is the operator's choice.
 
 ### Detecting the capability
 

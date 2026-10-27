@@ -392,6 +392,20 @@ def test_the_creation_note_says_the_five_things_on_one_line():
     assert pager.ARM_HOW not in note                       # never restates arm.txt
 
 
+def test_the_person_line_names_the_file_and_the_verb_on_one_line():
+    """SM-890 (RULED): ONE line on the PERSON's
+    screen says where. Claude Code shows it after `PostToolBatch says: `."""
+    where = "/home/x/.sessionkit/mail/settings/mail.json"
+    line = pager.SETTINGS_CREATED_PERSON.format(path=where)
+    assert "\n" not in line
+    assert where in line                                   # where it was written
+    assert "off" in line                                   # the hooks are off
+    assert "run `pager settings hooks on`" in line         # how to turn them on: the verb
+    assert '"hooks": true' not in line and "in that file" not in line   # never a hand edit
+    assert line != pager.SETTINGS_CREATED.format(path=where)   # its own words, not the agent's
+    assert pager.ARM_HOW not in line                       # an agent instruction, never the person's
+
+
 def test_the_fault_line_says_treated_as_off_verbatim():
     line = pager.SETTINGS_FAULT.format(path="/h/.sessionkit/mail/settings/mail.json", error="no `hooks` key")
     assert line == "sessionmail: /h/.sessionkit/mail/settings/mail.json is treated as off: no `hooks` key"
@@ -537,6 +551,52 @@ def test_an_old_file_that_differs_from_the_new_is_never_replaced(tmp_path):
     assert (s.state, created) == ("on", False)
     assert not old_file(tmp_path).is_symlink()
     assert old_file(tmp_path).read_text() == '{"version": 1, "hooks": false}\n'
+
+
+def test_a_new_file_that_links_to_the_old_one_never_replaces_it(tmp_path):
+    """SM-985, the FORWARD shape: a person made mail.json a symlink TO the
+    old file, a real file. The two read the same bytes because they ARE one
+    file, so the old file must not become a symlink to the new one: that is
+    a two-node loop, and the only copy of the settings would be gone."""
+    env = env_for(tmp_path)
+    body = b'{"version": 1, "hooks": true, "sendmail": "/usr/sbin/sendmail"}\n'
+    old = write_old(tmp_path, body.decode())
+    new = settings_file(tmp_path)
+    new.parent.mkdir(parents=True)
+    os.symlink(os.path.relpath(old, new.parent), new)       # mail.json -> the old file
+    link = os.readlink(new)
+    s, created = _settings.ensure(env)
+    assert (s.hooks, s.state, created) == (True, "on", False)
+    assert not old.is_symlink() and old.is_file()            # still the REAL file
+    assert old.read_bytes() == body                          # its bytes, whole
+    assert os.readlink(new) == link                          # the person's link, as it was
+    assert new.read_bytes() == body                          # no loop: both paths read
+    assert _settings.read(env).state == "on"
+    assert [n for n in os.listdir(old.parent) if n != "settings.json"] == []   # no temp left
+
+
+def test_the_two_hop_link_to_the_real_new_file_is_left_alone(tmp_path):
+    """SM-985, the REVERSE shape, as measured on two hosts: the old path is a
+    symlink into ~/.settings/mail, itself a symlink to the new folder, so
+    the chain ends at the REAL mail.json. One `ensure` changes neither link
+    and neither the bytes nor the inode of mail.json."""
+    env = env_for(tmp_path)
+    body = b'{"version": 1, "hooks": true}\n'
+    new = write(tmp_path, body)
+    hop = tmp_path / ".settings" / "mail"
+    hop.parent.mkdir(parents=True)
+    os.symlink("../.sessionkit/mail/settings", hop)
+    old = old_file(tmp_path)
+    old.parent.mkdir(parents=True)
+    os.symlink("../../.settings/mail/mail.json", old)
+    ino = os.stat(new).st_ino
+    s, created = _settings.ensure(env)
+    assert (s.hooks, s.state, created) == (True, "on", False)
+    assert os.readlink(old) == "../../.settings/mail/mail.json"
+    assert os.readlink(hop) == "../.sessionkit/mail/settings"
+    assert not new.is_symlink() and os.stat(new).st_ino == ino
+    assert new.read_bytes() == body and old.read_bytes() == body   # no loop
+    assert _settings.read(env).state == "on"
 
 
 

@@ -38,6 +38,39 @@ SEAT_INIT = (str(MESSAGE), "seat", "init")
 NAMESPACES = ("session-birth@example.com,session-bless@example.com,"
               "session-mail@example.com,session-death@example.com,git")
 TOOLS = ("ssh-keygen", "ssh-agent", "ssh-add", "git")
+PYPROJECT = Path(__file__).resolve().parents[1] / "pyproject.toml"
+#: The variable a store's release scan may set to the name it forbids (SM-986).
+FORBIDDEN_NAME_VAR = "SESSIONMAIL_FORBIDDEN_NAME"
+#: The runner's value, read at import: conftest's `hermetic` drops every
+#: SESSIONMAIL_* before a test runs, so a read inside one would never see it.
+RUNNER_ENV = {FORBIDDEN_NAME_VAR: os.environ.get(FORBIDDEN_NAME_VAR, "")}
+
+
+def forbidden_name(environ=RUNNER_ENV, pyproject: Path = PYPROJECT) -> str | None:
+    """The person's name seat-init's output must not carry (SM-795 D8), read at
+    test time so this file spells nobody's name (SM-986). The variable wins;
+    else the first word of pyproject's first author. None when neither says."""
+    named = environ.get(FORBIDDEN_NAME_VAR, "").strip()
+    if named:
+        return named
+    try:
+        return tomllib.loads(pyproject.read_text())["project"]["authors"][0]["name"].split()[0]
+    except (OSError, tomllib.TOMLDecodeError, KeyError, IndexError, TypeError, AttributeError):
+        return None
+
+
+def require_forbidden_name(environ=RUNNER_ENV, pyproject: Path = PYPROJECT) -> str:
+    """The forbidden name, or a skip naming both sources: never a silent pass."""
+    name = forbidden_name(environ, pyproject)
+    if not name:
+        pytest.skip(f"no name to forbid: {FORBIDDEN_NAME_VAR} is unset and "
+                    f"{pyproject.name} [project].authors[0].name gives none")
+    return name
+
+
+def names(out: str, name: str) -> bool:
+    """The guard: does `out` carry `name` as a word, in any case."""
+    return re.search(rf"\b{re.escape(name)}\b", out, re.I) is not None
 
 
 def mode(p: Path) -> int:
@@ -465,11 +498,11 @@ def test_it_prints_the_sid_fingerprint_and_the_bless_command_and_never_blesses(m
 def test_the_bless_principal_is_config_with_verifys_neutral_fallback(minted, git_env, registry):
     """SM-795 D8: no person's name is a default. With SESSION_BLESS_PRINCIPAL unset,
     the printed command names mhs/session-mail-verify's own neutral fallback,
-    `alice@bless`, and the output names nobody; with it set, both the blessed file
-    and the commit message follow it, the variable verify reads."""
+    `alice@bless`, and the output names nobody (the guard is the next test); with
+    it set, both the blessed file and the commit message follow it, the variable
+    verify reads."""
     out = minted["out"]
     assert "alice@bless" in out
-    assert not re.search(r"\bmike\b", out, re.I), "a person's name in seat-init's output"
     rc, out, err = seat_init({**git_env, "SESSION_BLESS_PRINCIPAL": "ops@bless"},
                              "--registry", registry, "desk.other")
     assert rc == 0, err
@@ -477,6 +510,54 @@ def test_the_bless_principal_is_config_with_verifys_neutral_fallback(minted, git
     assert f"certs/{sid}.cert.blessed-by.ops@bless.sig" in out
     assert f"seat {sid} (ops@bless)" in out and "the ops@bless key's holder only" in out
     assert "alice@bless" not in out
+
+
+def test_seat_inits_output_names_no_person(minted):
+    """SM-795 D8, the guard: with SESSION_BLESS_PRINCIPAL unset, seat-init's
+    output names nobody. The name is read at test time (SM-986)."""
+    name = require_forbidden_name()
+    assert not names(minted["out"], name), "a person's name in seat-init's output"
+
+
+def test_the_guard_matches_the_name_as_a_word_in_any_case():
+    assert names("blessed by Sample here", "sample")
+    assert names("SAMPLE's key", "sample")
+    assert names("seat (sample)", "Sample")
+    assert not names("samples and examples", "sample")
+    assert not names("resample", "sample")
+    assert names("a.b+c", "a.b+c") and not names("axb+c", "a.b+c"), "the name is literal, not a regex"
+
+
+def test_the_forbidden_name_comes_from_the_variable_first_then_the_first_author(tmp_path):
+    meta = tmp_path / "pyproject.toml"
+    meta.write_text('[project]\nauthors = [{ name = "Sample Author", email = "a@example.com" }]\n')
+    assert forbidden_name({}, meta) == "Sample"
+    assert forbidden_name({FORBIDDEN_NAME_VAR: "Other"}, meta) == "Other", "the variable wins"
+    assert forbidden_name({FORBIDDEN_NAME_VAR: "  "}, meta) == "Sample", "a blank variable is unset"
+
+
+def test_the_variable_is_read_before_the_hermetic_scrub_drops_it():
+    """`hermetic` has run by now, so the runner's SESSIONMAIL_* are gone from
+    os.environ; the guard still holds what the runner set."""
+    assert FORBIDDEN_NAME_VAR not in os.environ
+    assert forbidden_name.__defaults__[0] is RUNNER_ENV
+
+
+@pytest.mark.parametrize("text", [
+    None,                                                     # no file
+    "not = [toml",                                            # unreadable
+    '[project]\nname = "x"\n',                                # no authors
+    "[project]\nauthors = []\n",                              # an empty list
+    '[project]\nauthors = [{ email = "a@example.com" }]\n',   # an author with no name
+    '[project]\nauthors = [{ name = "  " }]\n',               # a blank name
+])
+def test_with_no_source_the_guard_skips_naming_both_sources(tmp_path, text):
+    meta = tmp_path / "pyproject.toml"
+    if text is not None:
+        meta.write_text(text)
+    assert forbidden_name({}, meta) is None
+    with pytest.raises(pytest.skip.Exception, match=rf"{FORBIDDEN_NAME_VAR} is unset.*authors"):
+        require_forbidden_name({}, meta)
 
 
 def test_a_second_run_refuses_and_leaves_the_registry_alone(minted, git_env):

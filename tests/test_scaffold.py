@@ -251,11 +251,15 @@ def test_three_groups_and_twenty_one_verbs():
     changes/memory-init; merged up at SM-186 do-011, do-013 and do-014):
     `memory init` - the fifth memory verb, RATIFIED, so 48. Plus one (Sun 2030-12-08, SM-660
     fix-003, design-001 C.1): the HIDDEN verb `message setup`, its name
-    PROVISIONAL (`_setup.VERB`) - on no group page and no MCP tool, so 49."""
+    PROVISIONAL (`_setup.VERB`) - on no group page and no MCP tool, so 49. Plus
+    one (Sun 2030-12-08, SM-983 do-001, its design as passed): `pager settings
+    hooks [on|off]`, the one verb that writes the host's `"hooks"` - under the
+    HIDDEN noun `pager settings`, so on no group page and no MCP tool; so 50."""
     groups = [label for label, argv, _ in PAGES if not argv]
     verbs = [label for label, argv, _ in PAGES if argv]
     assert len(groups) == 3, groups
-    assert len(verbs) == 49, verbs
+    assert len(verbs) == 50, verbs
+    assert "pager settings hooks" in verbs, verbs
     assert "message setup" in verbs, verbs
     assert "pager settings install" in verbs, verbs
     assert "memory init" in verbs, verbs

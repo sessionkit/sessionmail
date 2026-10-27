@@ -26,6 +26,8 @@ description: >-
 - `status` - the gauges (clock, context, runner tick) as lines; never
   mailed, never stored.
 
+Several agents in one seat? See the sessionkit skill's card, "Several agents in one seat".
+
 The runner's tick is a dead man switch: a tick older than its interval is
 an alert, so silent deafness cannot happen.
 
@@ -69,8 +71,10 @@ notification. **A seat its monitor hears for arms nothing.**
 The hooks are the pager's own verbs (`pager hook stop`, `pager hook batch`),
 registered by `hooks/hooks.json`; UserPromptSubmit runs the same
 `pager hook batch` as PostToolBatch. They speak only when
-`~/.sessionkit/mail/settings/mail.json` holds `"hooks": true`, the one setting. A
-fresh install has no file: the first ride-along writes it OFF
+`~/.sessionkit/mail/settings/mail.json` holds `"hooks": true`, the one
+setting (`pager settings hooks on|off` sets it: asked by a person to turn
+them on, run that, never a JSON edit; it is the person's act, not yours to
+choose). A fresh install has no file: the first ride-along writes it OFF
 (`{"version": 1, "hooks": false}`) and says so, once; a faulty file is off
 and says so once. `SESSIONMAIL_PAGER=off` wins over the file. The commands
 ignore it, and so does mail-guard (always on). Off is silent, mail

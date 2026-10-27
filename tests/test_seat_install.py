@@ -34,7 +34,7 @@ from pathlib import Path
 
 import pytest
 
-from sessionmail import _launchd
+from sessionmail import _launchd, _settings
 from test_seat_init import MESSAGE, git_env, registry, seat_init, tools  # noqa: F401
 
 ADDRESS = "bot.alice"
@@ -89,7 +89,8 @@ def seat(scratch, registry, tools):  # noqa: F811
     home = Path(env["SESSIONMAIL_HOME"]) / "seat-keys" / ADDRESS
     return dict(scratch, home=home, pub=home / "seat.pub", sock=str(home / "agent.sock"),
                 plist=Path(env["HOME"]) / "Library" / "LaunchAgents" / f"{LABEL}.plist",
-                log=Path(env["HOME"]) / "Library" / "Logs" / f"seat-agent.{ADDRESS}.log")
+                log=Path(env["HOME"]) / ".sessionkit" / "mail" / "log" / f"seat-agent.{ADDRESS}.log",
+                old_log=Path(env["HOME"]) / "Library" / "Logs" / f"seat-agent.{ADDRESS}.log")
 
 
 def message(env, *args: str, timeout: float = 60) -> subprocess.CompletedProcess:
@@ -139,7 +140,11 @@ def test_install_loads_the_agent_reinstall_is_idempotent_uninstall_takes_it_away
     assert job["Label"] == LABEL
     assert job["ProgramArguments"] == [str(MESSAGE), "seat", "agent", ADDRESS, seat["sock"]]
     assert job["EnvironmentVariables"]["SESSIONMAIL_HOME"] == env["SESSIONMAIL_HOME"]
-    assert job["StandardErrorPath"] == str(seat["log"])
+    assert job["StandardErrorPath"] == job["StandardOutPath"] == str(seat["log"])
+    # the log dir: the kit's, made 0700 (a seat log names addresses and subjects)
+    assert seat["log"].parent == _settings.log_dir(env)
+    assert stat.S_IMODE(seat["log"].parent.stat().st_mode) == 0o700
+    assert not seat["old_log"].parent.exists(), "nothing is written under ~/Library/Logs"
     uid = os.getuid()
     assert launchctl_fake.calls() == [["print", f"gui/{uid}/{LABEL}"],
                                       ["bootstrap", f"gui/{uid}", str(seat["plist"])]]
@@ -188,8 +193,8 @@ def test_install_with_a_named_socket(seat, launchctl_fake):
 def job(**over) -> _launchd.Job:
     values = dict(address=ADDRESS, label=LABEL, plist="/x/p.plist", socket="/x/a.sock",
                   pub="/x/seat.pub", key="/x/id_ed25519", log="/x/l/seat-agent.bot.alice.log",
-                  log_dir="/x/l", sessionmail_home="/x/h", message="/x/bin/message",
-                  domain="gui/501")
+                  log_dir="/x/l", old_log="/x/o/seat-agent.bot.alice.log",
+                  sessionmail_home="/x/h", message="/x/bin/message", domain="gui/501")
     values.update(over)
     return _launchd.Job(**values)
 
@@ -395,12 +400,13 @@ def test_a_log_dir_that_cannot_be_made_keeps_a_plist_that_was_there_before(seat,
     seat["plist"].parent.mkdir(parents=True)
     rendered = _launchd.render(TEMPLATE.read_bytes(), plan)
     seat["plist"].write_bytes(rendered)
-    library = seat["plist"].parent.parent
-    library.chmod(0o555)
+    kit = Path(env["HOME"]) / ".sessionkit"         # the log dir's top: unwritable
+    kit.mkdir()
+    kit.chmod(0o555)
     try:
         done = message(env, "seat", "agent", "--install", ADDRESS)
     finally:
-        library.chmod(0o755)
+        kit.chmod(0o755)
     assert done.returncode == 1 and done.stdout == ""
     assert done.stderr == (f"message seat agent: FAILED - could not write {seat['log'].parent} "
                            f"(Permission denied); nothing was loaded and the plist at "
@@ -472,6 +478,47 @@ def test_uninstall_removes_a_plist_that_was_never_loaded(seat, launchctl_fake):
     assert done.returncode == 0
     assert done.stderr == f"message seat agent: removed {seat['plist']}\n"
     assert "bootout" not in launchctl_fake.verbs()
+
+
+def _tree(top: Path) -> dict[str, tuple[int, bytes | None]]:
+    """Every path under TOP, with its mode and (for a file) its bytes."""
+    return {str(p.relative_to(top)): (p.lstat().st_mode, p.read_bytes() if p.is_file() else None)
+            for p in sorted(top.rglob("*"))}
+
+
+@darwin
+def test_uninstall_never_deletes_or_moves_a_log_old_or_new(seat, launchctl_fake):
+    """An uninstall removes the plist and nothing else. The new log dir and
+    ~/Library/Logs (the pre-0.3.2 seat log, a sibling's log, a stray subdir) are left
+    byte for byte, mode for mode, as found."""
+    env = seat["env"]
+    assert message(env, "seat", "agent", "--install", ADDRESS).returncode == 0
+    seat["log"].write_text("the new log\n")
+    old = seat["old_log"].parent
+    (old / "Other.app").mkdir(parents=True)
+    seat["old_log"].write_text("the pre-0.3.2 log\n")
+    (old / "seat-agent.bot.bob.log").write_text("a sibling seat's log\n")
+    (old / "Other.app" / "x.log").write_text("somebody else's\n")
+    new_before, old_before = _tree(seat["log"].parent), _tree(old)
+    gone = message(env, "seat", "agent", "--uninstall", ADDRESS)
+    assert gone.returncode == 0, gone.stderr
+    assert not seat["plist"].exists()
+    assert _tree(old) == old_before
+    # the new log is kept where it was; the agent itself may append its last words on TERM
+    new_after = _tree(seat["log"].parent)
+    assert {k: v[0] for k, v in new_after.items()} == {k: v[0] for k, v in new_before.items()}
+    assert new_after[seat["log"].name][1].startswith(b"the new log\n")
+    assert stat.S_IMODE(seat["log"].parent.stat().st_mode) == 0o700
+
+
+@darwin
+def test_install_keeps_the_mode_of_a_log_dir_that_is_already_there(seat, launchctl_fake):
+    """Made 0700 when this tool makes it; an operator's own dir is never chmod'd."""
+    seat["log"].parent.mkdir(parents=True)
+    seat["log"].parent.chmod(0o755)
+    done = message(seat["env"], "seat", "agent", "--install", ADDRESS)
+    assert done.returncode == 0, done.stderr
+    assert stat.S_IMODE(seat["log"].parent.stat().st_mode) == 0o755
 
 
 # ── the page and its marker ─────────────────────────────────────────────────

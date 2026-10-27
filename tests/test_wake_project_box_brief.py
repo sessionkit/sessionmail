@@ -91,10 +91,14 @@ def stale_flat_box(root: Path) -> Path:
 
 
 @pytest.fixture
-def env(tmp_path: Path) -> dict[str, str]:
-    """An environment built from nothing: the seat's address, a temp root, a stub notmuch."""
+def env(tmp_path: Path, rail_bash: str) -> dict[str, str]:
+    """An environment built from nothing: the seat's address, a temp root, a stub notmuch,
+    and RAIL_BASH first on PATH as `bash` (conftest's `rail_bash`, SM-963): wake runs the
+    shell rail on the first bash on PATH, so every wake here runs on /bin/bash AND on the
+    PATH bash, the one a Homebrew Mac or a Linux host hands it."""
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
+    (bin_dir / "bash").symlink_to(rail_bash)
     notmuch = bin_dir / "notmuch"
     notmuch.write_text("#!/bin/sh\nexit 0\n")
     notmuch.chmod(0o755)

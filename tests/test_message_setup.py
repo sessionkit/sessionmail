@@ -229,10 +229,13 @@ def test_unknown_arguments_are_usage(env):
 
 
 def test_the_roots_differing_is_refused(env, tmp_path):
-    rc, out, err = setup({**env, "SESSIONMAIL_ROOT": str(tmp_path / "other" / "agents")})
+    """The two root spellings no longer differ between the sides (SM-910:
+    both read SESSIONMAIL_ROOT first). What still differs is MAIL_ROOT, which
+    the drop reads and the readers do not."""
+    bare = {k: v for k, v in env.items() if k not in ("SESSIONMAIL_ROOT", "SESSION_MAIL_ROOT")}
+    rc, out, err = setup({**bare, "MAIL_ROOT": str(tmp_path / "other")})
     assert rc == _setup.EX_USAGE
     assert "REFUSED" in err and str(tmp_path / "other" / "agents") in err
-    assert str(tmp_path / "mailroot" / "agents") in err
     assert not (tmp_path / "mailroot").exists() and not (tmp_path / "other").exists()
 
 

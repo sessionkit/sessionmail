@@ -33,11 +33,12 @@ Two doors, one function (`detect()` is the wake; the loop is a wrapper):
     python -m sessionmail._detect BOX [--poll S] [--timeout S] [--settle S]
     python -m sessionmail._detect BOX --follow [--exec CMD]
 
-BOX is a maildir path, or a box name under $SESSION_MAIL_ROOT
-(~/.mail/agents). One-shot: print each Message-ID in new/ as `<id>` on
-its own line, exit 0; exit 124 on --timeout; exit 2 when the box cannot
-be watched. --follow never exits: each wake reports each file ONCE for
-the life of the run (the loop remembers what it has reported, not the
+BOX is a maildir path, or a box name under the agents root
+($SESSIONMAIL_ROOT, else $SESSION_MAIL_ROOT, else ~/.mail/agents).
+One-shot: print each Message-ID in new/ as `<id>` on its own line, exit
+0; exit 124 on --timeout; exit 2 when the box cannot be watched.
+--follow never exits: each wake reports each file ONCE for the life of
+the run (the loop remembers what it has reported, not the
 disk), then waits for the next; with --exec CMD the ids go to CMD as
 arguments instead of stdout, one call per wake. This is the pipeline the
 design describes: when a new message comes in, it calls something. With
@@ -292,7 +293,7 @@ def main(argv: list[str] | None = None) -> int:
         description="block while a maildir's new/ is empty; print every "
                     "Message-ID in it; exit")
     ap.add_argument("box", help="maildir path, or a box name under "
-                    f"$SESSION_MAIL_ROOT ({_maildir.DEFAULT_ROOT})")
+                    f"${_maildir.ROOT_VAR} ({_maildir.DEFAULT_ROOT})")
     ap.add_argument("--poll", type=float,
                     default=float(os.environ.get(POLL_VAR, DEFAULT_POLL)),
                     help=f"safety-poll interval, seconds (default {DEFAULT_POLL:g}; ${POLL_VAR})")

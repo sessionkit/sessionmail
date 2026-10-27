@@ -7,6 +7,14 @@ messages and are only PROJECTED here.
 
 Sections, budget-capped, each ending with its own token cost:
 
+  IDENTITY  who this session is, FIRST: the block `session identity <sid>`
+          prints (sessiontools writes it at launch), VERBATIM under its
+          banner, at most 40 lines. The SID is this process's own
+          (CLAUDE_CODE_SESSION_ID, else CLAUDE_SESSION_ID), always passed
+          explicitly, never the box's. A 2 s timeout kills the child's whole
+          process group. No SID, `session` not on PATH, exit 3 (no block),
+          any other exit or a timeout: the section is ONE note line saying
+          which. It never changes the wake's exit code.
   BOOT    the shelf: newest surviving message addressed to <box>+boot
           (file-level X-Original-To match — the notmuch index cannot query
           '+' and is a derived artefact; boot must not depend on it),
@@ -54,7 +62,7 @@ nothing here is agent-specific —
 conventions derive from the box name. print-thread remains the richer
 thread-reader; this verb is the boot slice every agent gets for free.
 """
-import email, email.header, email.policy, email.utils, json, os, re, shlex, shutil, subprocess, sys, time
+import email, email.header, email.policy, email.utils, json, os, re, shlex, shutil, signal, subprocess, sys, time
 
 # Python 3.11 or later (requires-python), checked before anything that needs
 # it. The package starts this script on its own interpreter; a run by hand
@@ -342,6 +350,18 @@ def require_box(box, root):
     path = p.stdout.strip()
     return os.path.basename(path) + sep + ext, os.path.dirname(path)
 
+def env_root(env=None):
+    """The agents root the ENVIRONMENT names: $SESSIONMAIL_ROOT, else the
+    older $SESSION_MAIL_ROOT (each only when set and non-empty), else
+    ~/.mail/agents; `~` expanded. The package's `_maildir.env_root` order,
+    inline: this script loads nothing of the package but `_sig`, by
+    path. The settings file's `root` key is not read here (the package's
+    `_maildir.root` reads it after the variables); tests/test_root_vars.py
+    pins this, the bash rail and the package to one answer."""
+    env = os.environ if env is None else env
+    given = env.get("SESSIONMAIL_ROOT") or env.get("SESSION_MAIL_ROOT")
+    return os.path.expanduser(given or "~/.mail/agents")
+
 def header_block(path, cap=16384):
     try:
         with open(path, "rb") as fh:
@@ -352,6 +372,120 @@ def header_block(path, cap=16384):
 def hdr(block, name):
     m = re.search(rf'(?im)^{re.escape(name)}:\s*(.+)$', block)
     return m.group(1).strip() if m else ""
+
+# ── IDENTITY ────────────────────────────────────────────────────
+# The contract is sessiontools' identity block, agreed with this reader
+# (openspec/changes/wake-identity): `session identity <sid>` prints the block
+# the launcher wrote, exit 0; exit 3 = no block; any other exit is a fault.
+# Mail never reads identity.md itself (its home is tools' to move) and never
+# parses or re-words the block: it prints stdout as it came.
+
+IDENTITY_BANNER = "═══ IDENTITY — from `session identity`, at launch ═══"
+IDENTITY_TIMEOUT = 2.0
+IDENTITY_MAX_LINES = 40
+IDENTITY_SID_VARS = ("CLAUDE_CODE_SESSION_ID", "CLAUDE_SESSION_ID")
+
+def identity_sid():
+    """This process's OWN session id, the resolve_box variables in its order.
+    Never derived from the wake box: `memory wake <other-box>` is still run
+    by you, and the block says who YOU are."""
+    for var in IDENTITY_SID_VARS:
+        v = os.environ.get(var, "").strip()
+        if v:
+            return v
+    return ""
+
+def identity_note(line):
+    """The section's one-line form: printed on STDOUT, where the agent reads."""
+    print(line)
+    print()
+    return 0
+
+def run_identity(exe, sid):
+    """(rc, stdout bytes, stderr text) of `session identity <sid>`, or
+    (None, None, why) on a timeout or a spawn failure. Its own process group,
+    so a timeout kills the GROUP: a grandchild holding the pipe cannot keep
+    the wake waiting."""
+    try:
+        p = subprocess.Popen([exe, "identity", sid], stdin=subprocess.DEVNULL,
+                             stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                             env=CHILD_ENV, start_new_session=True)
+    except OSError as e:
+        return None, None, f"session identity could not start: {type(e).__name__}"
+    try:
+        out, err = p.communicate(timeout=IDENTITY_TIMEOUT)
+    except subprocess.TimeoutExpired:
+        try:
+            os.killpg(p.pid, signal.SIGKILL)
+        except OSError:
+            pass
+        try:
+            p.wait(timeout=1)
+        except subprocess.TimeoutExpired:
+            pass
+        for fh in (p.stdout, p.stderr):
+            try:
+                fh.close()
+            except OSError:
+                pass
+        return None, None, (f"session identity timed out after "
+                            f"{IDENTITY_TIMEOUT:g} s")
+    return p.returncode, out, err.decode("utf-8", "replace")
+
+def identity_section():
+    """IDENTITY: the block, verbatim, or one line saying why there is none.
+    Never raises out, never touches the exit code (the wake is a listing)."""
+    try:
+        return _identity_section()
+    except Exception as e:  # the wake never fails because of this section
+        return identity_note(f"identity: could not look ({type(e).__name__})")
+
+def _identity_section():
+    sid = identity_sid()
+    if not sid:
+        return identity_note("identity: no session id in the environment — "
+                             "no block to look up")
+    exe = shutil.which("session", path=CHILD_ENV.get("PATH", ""))
+    if not exe:
+        return identity_note("identity: `session` is not on PATH — "
+                             "no identity block")
+    if DRY:
+        print(IDENTITY_BANNER)
+        print(f"  would run    : {shlex.join(['session', 'identity', sid])}")
+        print()
+        return 0
+    rc, out, err = run_identity(exe, sid)
+    if rc is None:
+        print(f"memory wake: ⚠ {err} — IDENTITY degrades to COULD-NOT-LOOK",
+              file=sys.stderr)
+        return identity_note(f"identity: could not look ({err})")
+    if rc == 3:
+        return identity_note("identity: no identity block for this session "
+                             "(session identity exit 3)")
+    if rc != 0:
+        err1 = err.strip().splitlines()
+        print(f"memory wake: ⚠ 'session identity …' exited {rc}"
+              f"{': ' + err1[0] if err1 else ''} — IDENTITY degrades to "
+              f"COULD-NOT-LOOK", file=sys.stderr)
+        return identity_note(f"identity: could not look "
+                             f"(session identity exit {rc})")
+    text = out.decode("utf-8", "replace")
+    lines = text.split("\n")
+    if lines and lines[-1] == "":
+        lines.pop()
+    shown = lines[:IDENTITY_MAX_LINES]
+    print(IDENTITY_BANNER)
+    if shown:
+        print("\n".join(shown))
+    else:
+        print("(session identity exited 0 and printed nothing)")
+    if len(lines) > IDENTITY_MAX_LINES:
+        print(f"— identity block truncated: {len(lines) - IDENTITY_MAX_LINES} "
+              f"more line(s); `session identity {sid}` prints it whole")
+    cost = len("\n".join(shown)) // 4
+    print(f"— identity {'truncated' if len(lines) > IDENTITY_MAX_LINES else 'shown'}"
+          f" · ≈{cost} tok\n")
+    return cost
 
 def boot_wants(box):
     """Shelf addresses PARSE BY FORM.
@@ -810,8 +944,7 @@ def main():
         if a.startswith("-"):
             sys.exit(f"memory wake: unknown flag {a!r}\n{__doc__}")
     box, src = resolve_box(argv)
-    root = os.environ.get("SESSION_MAIL_ROOT",
-                          os.path.expanduser("~/.mail/agents"))
+    root = env_root()
     # Exists, or we say so — never a confident briefing about a box that is
     # not there. Short forms expand here, so the name in the banner below is
     # already the canonical one.
@@ -819,6 +952,7 @@ def main():
     print(f"memory wake: box {box}  [source: {src}] — PEEK-ONLY, "
           f"nothing is claimed or marked", file=sys.stderr)
     total = 0
+    total += identity_section()
     total += boot_section(box, root)
     total += recent_section(box)
     total += addressed_section(box, root)

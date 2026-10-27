@@ -127,7 +127,8 @@ ORACLE_SEAT_VARS = ("SESSION_AGENT", "SESSION_SEAT")
 #: The session's signing key (`_sender`): a test that signs brings its own.
 SIGNER_VARS = ("CLAUDE_SESSION_AGENT_SOCK", "CLAUDE_SESSION_PUB")
 #: The mailstore root's other spellings. `SESSIONMAIL_ROOT` outranks the
-#: `SESSION_MAIL_ROOT` set below in `_sender`; `MAIL_ROOT` is vmailbox-gen's.
+#: `SESSION_MAIL_ROOT` set below on every side (`_maildir.env_root`, SM-910);
+#: `MAIL_ROOT` is vmailbox-gen's.
 OTHER_ROOT_VARS = ("SESSIONMAIL_ROOT", "MAIL_ROOT")
 NOTMUCH_VARS = ("NOTMUCH_DATABASE", "NOTMUCH_PROFILE")
 #: The mail origin a v2 signature qualifies a bare address with (SM-594 design 4.2).
@@ -329,7 +330,7 @@ def hermetic(tmp_path_factory, monkeypatch):
     for var, value in list(os.environ.items()):
         if var.endswith("_ROOT") and not os.path.isabs(value.strip()):
             monkeypatch.delenv(var)   # a `$<AGENT>_ROOT` hint: a Message-ID
-    monkeypatch.setenv(_maildir.ROOT_VAR, str(sandbox / "mail"))
+    monkeypatch.setenv(_maildir.LEGACY_ROOT_VAR, str(sandbox / "mail"))
     # Host mode reads the host's sessionkit profile and no other notmuch
     # config (`_index`): one is written here, under a sandbox
     # XDG_CONFIG_HOME, naming a database that does not exist. So a real
@@ -503,3 +504,41 @@ def pytest_collection_modifyitems(config, items):
     if drop:
         config.hook.pytest_deselected(items=drop)
         items[:] = keep
+
+
+# ── the shell rail on BOTH bashes (SM-963) ──────────────────────────────────
+#
+# A shell-rail test that pins `/bin/bash` runs on bash 3.2 on a Mac, and only
+# there. The fleet does not: `session-mail-wake` runs the FIRST bash on PATH
+# (`system_bash`), which is Homebrew's 5.x on a Mac that has it and 5.x on any
+# Linux. Bash 4.4+ reads a declared-but-unassigned `local x` as UNSET under
+# `set -u`; 3.2 reads it as empty. So a rail bug of that class is green on the
+# pinned bash and red on the one that runs it (SM-963: `_mbl_two_boxes`'s bare
+# `first`, `memory wake` exiting 1 exactly when two boxes answer to one name).
+#
+# `rail_bash` runs a test once per DISTINCT bash: `/bin/bash` and the bash on
+# the runner's PATH. A param is skipped only when that bash is absent, or is
+# the same binary as `/bin/bash` (a Linux /usr/bin/bash beside a merged /bin).
+
+SYSTEM_BASH = "/bin/bash"
+
+
+def _rail_bashes() -> list:
+    import shutil
+    system = SYSTEM_BASH if Path(SYSTEM_BASH).is_file() else None
+    on_path = shutil.which("bash")
+    same = bool(system and on_path and os.path.samefile(system, on_path))
+    return [
+        pytest.param(system, id="bin-bash", marks=pytest.mark.skipif(
+            system is None, reason=f"no {SYSTEM_BASH} on this host")),
+        pytest.param(on_path, id="path-bash", marks=pytest.mark.skipif(
+            on_path is None or same,
+            reason="no bash on PATH" if on_path is None
+            else f"the PATH bash ({on_path}) is {SYSTEM_BASH}")),
+    ]
+
+
+@pytest.fixture(params=_rail_bashes())
+def rail_bash(request) -> str:
+    """An ABSOLUTE bash for a shell-rail test: `/bin/bash`, then the PATH bash."""
+    return request.param

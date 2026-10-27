@@ -727,7 +727,7 @@ wheels = [
 
 [[package]]
 name = "sessionmail"
-version = "0.3.1"
+version = "0.3.2"
 source = { editable = "." }
 dependencies = [
     { name = "click" },
@@ -750,7 +750,7 @@ requires-dist = [
     { name = "markdown", specifier = ">=3.6" },
     { name = "mcp", specifier = ">=2.2.0" },
     { name = "pymdown-extensions", specifier = ">=10.0" },
-    { name = "sessiontools", specifier = ">=0.3.0" },
+    { name = "sessiontools", specifier = ">=0.3.2" },
 ]
 
 [package.metadata.requires-dev]
@@ -758,15 +758,15 @@ dev = [{ name = "pytest", specifier = ">=8" }]
 
 [[package]]
 name = "sessiontools"
-version = "0.3.0"
+version = "0.3.2"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "jsonschema" },
     { name = "pyyaml" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/6b/15/11a985682327014ba707bf26b85e2379d3b18f6fc8e45fb2ec568c8feb5f/sessiontools-0.3.0.tar.gz", hash = "sha256:3a07b1cd0fa5e00565533c1b894d9d62c0b43cb785252cd37624ff7387b1c69d", size = 428191, upload-time = "2026-10-24T01:06:11.722Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/bd/a8/78b200b515d9d340ae488ca2aecceb1befef16bfae81a058f46999e02fc1/sessiontools-0.3.2.tar.gz", hash = "sha256:12921eb898a9e718b1b243200f143ba2591ed1e58aa985092717465557083a71", size = 491628 }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/12/aa/3e169af45280b40f917e4c76c15af5dcee024e69caa238d69d266990b797/sessiontools-0.3.0-py3-none-any.whl", hash = "sha256:8d0896995cb0b0a84b1773b552e6f7a91a9c57c4144df47b0fbfb79858add21e", size = 477658, upload-time = "2026-10-24T01:05:58.351Z" },
+    { url = "https://files.pythonhosted.org/packages/c4/a5/db8bbb951e3d3486ba6c3555c6aebcb3914eaea4cfaac2896649f503829c/sessiontools-0.3.2-py3-none-any.whl", hash = "sha256:c68a1746e429689dbb8169ab9102d2b6f1abc627791aae013e9079398012e8e6", size = 546870 },
 ]
 
 [[package]]

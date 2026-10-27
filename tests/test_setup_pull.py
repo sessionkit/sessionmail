@@ -294,29 +294,84 @@ def test_the_plist_runs_the_module_and_carries_only_path_and_home(host):
         assert value not in text, "no config value and no secret goes into the plist"
 
 
-def test_the_log_path_is_the_job_environments_state_dir(host, tmp_path):
-    """The default state dir is under the settings home, whatever
-    SESSIONMAIL_HOME this shell sets; a set pull.state_dir moves it."""
-    default = _operator.settings_home() / ".sessionmail" / "puller" / "log" / "puller.log"
+def test_the_log_is_in_the_kits_log_dir_whatever_this_shells_state_home(host, tmp_path):
+    """The log is `~/.sessionkit/mail/log/puller.log` under the job's HOME,
+    from the one resolver, whatever SESSIONMAIL_HOME this shell sets. Apply
+    makes the folder 0700."""
+    log = host.home / ".sessionkit" / "mail" / "log" / "puller.log"
+    assert log == _settings.log_dir(host.env) / _pull_agent.LOG_NAME
     env = {**host.env, "SESSIONMAIL_HOME": str(tmp_path / "another-state-home")}
     rc, out, err = setup(env, "--pull")
     assert err == "", err
     got = plistlib.loads(host.plist.read_bytes())
-    assert got["StandardOutPath"] == got["StandardErrorPath"] == str(default)
-    assert default.parent.is_dir(), "apply makes <state_dir>/log"
-
-    host.pull["state_dir"] = str(tmp_path / "state")
-    host.write()
-    setup(host.env, "--pull")
-    got = plistlib.loads(host.plist.read_bytes())
-    assert got["StandardOutPath"] == str(tmp_path / "state" / "log" / "puller.log")
+    assert got["StandardOutPath"] == got["StandardErrorPath"] == str(log)
+    assert log.parent.is_dir(), "apply makes the log folder"
+    assert stat.S_IMODE(log.parent.stat().st_mode) == 0o700
+    state = _operator.settings_home() / ".sessionmail" / "puller"
+    assert not (state / "log").exists(), "nothing is made under the state dir for the log"
 
 
-def test_a_changed_config_re_renders_boots_out_then_bootstraps(host, tmp_path):
+def test_a_set_state_dir_does_not_move_the_log(host, tmp_path):
+    """pull.state_dir is state: setting it leaves the plist byte-identical,
+    so the step stays DONE and no launchctl write is made."""
     setup(host.env, "--pull")
     before = host.plist.read_bytes()
-    host.pull["state_dir"] = str(tmp_path / "moved")
+    host.pull["state_dir"] = str(tmp_path / "state")
     host.write()
+    host.forget_calls()
+    _rc, out, err = setup(host.env, "--pull")
+    assert err == "", err
+    assert step(out)[0] == _setup.DONE, out
+    assert host.plist.read_bytes() == before
+    got = plistlib.loads(before)
+    assert got["StandardOutPath"] == str(_settings.log_dir(host.env) / "puller.log")
+    assert not (tmp_path / "state" / "log").exists()
+    assert [c[0] for c in host.launchctl.calls() if c[0] != "print"] == []
+
+
+def test_the_log_folder_keeps_the_mode_it_already_has(host):
+    """The shared helper makes the folder 0700 only when it is missing."""
+    d = _settings.log_dir(host.env)
+    d.mkdir(parents=True)
+    d.chmod(0o755)
+    _rc, _out, err = setup(host.env, "--pull")
+    assert err == "", err
+    assert stat.S_IMODE(d.stat().st_mode) == 0o755
+
+
+def _tree(root: Path) -> dict:
+    return {str(p.relative_to(root)): (stat.S_IMODE(p.lstat().st_mode),
+                                       p.read_bytes() if p.is_file() else None)
+            for p in sorted(root.rglob("*"))}
+
+
+def test_a_puller_installed_before_the_move_is_re_rendered_and_its_old_log_kept(host, tmp_path):
+    """A plist rendered with the old log path is our puller's, so setup
+    replaces it and restarts the job; until then it keeps writing the old
+    log. The old log is never deleted, moved or written."""
+    state = tmp_path / "state"
+    host.pull["state_dir"] = str(state)
+    host.write()
+    old_log = state / "log" / "puller.log"
+    old_log.parent.mkdir(parents=True)
+    old_log.write_bytes(b"puller: 2 boxes from the old days\n")
+    old_body = _pull_agent.render(LABEL, sys.executable, str(host.home), old_log)
+    host.plist.parent.mkdir(parents=True)
+    host.plist.write_bytes(old_body)
+    host.load(host.plist)
+    before = _tree(state)
+    _rc, out, err = setup(host.env, "--pull")
+    assert err == "", err
+    assert "booted out" in applied(out)
+    got = plistlib.loads(host.plist.read_bytes())
+    assert got["StandardOutPath"] == str(_settings.log_dir(host.env) / "puller.log")
+    assert _tree(state) == before, "the old log and its folder are left exactly as they were"
+
+
+def test_a_changed_plist_re_renders_boots_out_then_bootstraps(host, monkeypatch):
+    setup(host.env, "--pull")
+    before = host.plist.read_bytes()
+    monkeypatch.setattr(_pull_agent, "interpreter", lambda: "/opt/another/bin/python3")
     host.forget_calls()
     rc, out, err = setup(host.env, "--pull")
     assert err == "", err
@@ -366,10 +421,9 @@ def test_a_plutil_that_cannot_run_is_failed(host, tmp_path):
     assert not host.plist.exists()
 
 
-def test_a_bootout_that_never_clears_is_failed_with_no_bootstrap(host):
+def test_a_bootout_that_never_clears_is_failed_with_no_bootstrap(host, monkeypatch):
     setup(host.env, "--pull")
-    host.pull["state_dir"] = str(host.tmp / "moved")
-    host.write()
+    monkeypatch.setattr(_pull_agent, "interpreter", lambda: "/opt/another/bin/python3")
     host.launchctl.knob("fail-bootout")
     host.forget_calls()
     rc, out, _err = setup(host.env, "--pull")

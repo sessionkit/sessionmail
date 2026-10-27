@@ -31,10 +31,12 @@ message setup --pull                 # also install the mail puller's LaunchAgen
 ## What it does
 
 - **The agents root**, `~/.mail/agents` (the `root` key, or
-  `$SESSIONMAIL_ROOT`), made 0700. If the readers' root and the
-  [file drop][file-drop]'s root differ (`SESSION_MAIL_ROOT` and
-  `SESSIONMAIL_ROOT` set to different places), it refuses (exit 2): the
-  drop would deliver into a tree nothing reads.
+  `$SESSIONMAIL_ROOT`, else the older `$SESSION_MAIL_ROOT`), made 0700.
+  If the readers' root and the [file drop][file-drop]'s root differ, it
+  refuses (exit 2): the drop would deliver into a tree nothing reads.
+  Both read the two root variables in the same order, so that happens
+  only when `MAIL_ROOT`, which the drop reads and the readers do not, is
+  set without either of them.
 - **The first boxes.** The file drop never makes a box, so mail to a box
   nobody made is refused. Setup makes:
   - the operator's box: `operator.mailbox` (in the session tool's

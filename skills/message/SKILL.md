@@ -13,10 +13,12 @@ description: >-
 `message --help` is the whole of what there is to know: one verb a
 line; `message <verb> --help` holds the flags.
 
+Several agents in one seat? See the sessionkit skill's card, "Several agents in one seat".
+
 - `send` - To/Cc/Bcc, `--in-reply-to`, `--supersedes`; body from a file
-  or the MCP argument, never a shell string; signed; refuses a subject
-  over 69 ASCII characters (unless the host shortens it) or one that
-  could execute. `--header 'Name: v'` carries any header; a name we
+  or the MCP argument, never a shell string; refuses a subject over 69
+  ASCII characters (unless the host shortens it) or one that could
+  execute. `--header 'Name: v'` carries any header; a name we
   mint has no `X-` (the `mail-headers` note).
 - `list` - subjects for a box; says what it filtered.
 - `tree` - a thread as a tree.

@@ -1,8 +1,9 @@
-"""The physical box: a maildir under $SESSION_MAIL_ROOT, read by bytes.
+"""The physical box: a maildir under the agents root, read by bytes.
 
 `specs/message`, "One physical box, on both sides": the box a listener
 resolves is the box a sender writes, `~/.mail/agents/<box>/{new,cur,tmp}`
-(the bash session-mail-* root; `SESSION_MAIL_ROOT` overrides it). This
+(`$SESSIONMAIL_ROOT`, then the older `$SESSION_MAIL_ROOT`, override it:
+`env_root`, the one order the readers and the drop share). This
 module ENUMERATES a box the way session-mail-list does - every file in
 new/ and cur/, sorted by the maildir unique name (epoch-prefixed, so
 chronological), 1-based over ALL of them so an index means the same
@@ -26,6 +27,7 @@ import errno
 import os
 import re
 import secrets
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime
 from email.parser import BytesHeaderParser
@@ -35,7 +37,15 @@ from pathlib import Path
 from ._headers import UNREADABLE, Unreadable, as_written, safe_header
 
 DEFAULT_ROOT = "~/.mail/agents"
-ROOT_VAR = "SESSION_MAIL_ROOT"
+#: The agents root's variable (`mail.schema.json` `root`, x-env): when set and
+#: non-empty it wins over every layer.
+ROOT_VAR = "SESSIONMAIL_ROOT"
+#: Its older spelling, still read, after ROOT_VAR.
+LEGACY_ROOT_VAR = "SESSION_MAIL_ROOT"
+#: The order the variables are read in, by every reader and by the drop.
+#: The bundled scripts cannot import this module and carry it inline:
+#: `mhs/mail-box.lib.sh` (its CLI form) and `mhs/session-mail-wake`.
+ROOT_VARS = (ROOT_VAR, LEGACY_ROOT_VAR)
 
 _INFO = re.compile(r":2,[A-Za-z]*$")
 
@@ -93,13 +103,28 @@ class Entry:
         return addr.split("@", 1)[0]
 
 
-def root(env: dict[str, str] | None = None) -> Path:
-    """The agents root: `$SESSION_MAIL_ROOT`, else `<mail root>/agents` from
-    the settings file's `root` key, else DEFAULT_ROOT."""
+def env_root(env: Mapping[str, str] | None = None) -> Path | None:
+    """The agents root a variable names, `~` expanded: the first of ROOT_VARS
+    that is set and non-empty, else None (no variable decides it).
+
+    THE one order: `root` below and `_drop.mail_root` both read
+    it, so a send and the readers can never pick different variables."""
     env = os.environ if env is None else env
-    given = env.get(ROOT_VAR)
-    if given:
-        return Path(given).expanduser()
+    for var in ROOT_VARS:
+        given = env.get(var)
+        if given:
+            return Path(given).expanduser()
+    return None
+
+
+def root(env: Mapping[str, str] | None = None) -> Path:
+    """The agents root: `env_root` (`$SESSIONMAIL_ROOT`, else
+    `$SESSION_MAIL_ROOT`), else `<mail root>/agents` from the settings file's
+    `root` key, else DEFAULT_ROOT."""
+    env = os.environ if env is None else env
+    given = env_root(env)
+    if given is not None:
+        return given
     from . import _settings              # here, not at import: _settings is the higher layer
     mail_root = _settings.file_path("root", env)
     if mail_root is not None:

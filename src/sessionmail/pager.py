@@ -192,6 +192,9 @@ LINE_NOT_YET = HOOK_LINES["not_yet"]
 #: The settings file's two lines, TEMPLATES - formatted where they
 #: are said: `.format(path=...)`, and `error=` for the fault.
 SETTINGS_CREATED = _HOOK_TEXTS["settings_created"]
+#: The creating run's ONE line for the PERSON: the hook's top-level
+#: systemMessage, beside SETTINGS_CREATED for the agent. A TEMPLATE, `path=`.
+SETTINGS_CREATED_PERSON = _HOOK_TEXTS["settings_created_person"]
 SETTINGS_FAULT = _HOOK_TEXTS["settings_fault"]
 SETTINGS_STRANDED = _HOOK_TEXTS["settings_stranded"]
 SETTINGS_COPIED = _HOOK_TEXTS["settings_copied"]
@@ -2030,7 +2033,7 @@ def follow_session(session: str, caller: int, seat: "_seat.Seat | None",
 
 def _box_argument(token: str, session: str) -> tuple[Path, str | None]:
     """Where BOX (in its release of grace) resolves: a maildir path, a name
-    under SESSION_MAIL_ROOT, else the map postfix delivers by (a project box
+    under the agents root (`_maildir.root`), else the map postfix delivers by (a project box
     lives at <root>/<store>/<name>/ under nested-v1) - (path, via_map). The
     path may hold no new/; the caller refuses that."""
     from . import _detect
@@ -2080,7 +2083,7 @@ Exit: 0 paged · 1 usage · 2 could not look · 3 already listening
 # exits 124 with nothing paged. BOX (tasks.md 4.7) is in its ONE release of
 # grace (an argument in the help is one agents use, so the help leaves it
 # out): it still watches BOX - a maildir
-# path, a name under SESSION_MAIL_ROOT, or a name postfix delivers to (the
+# path, a name under the agents root, or a name postfix delivers to (the
 # banner says `via map`) - it births the SESSION's box too, and prints
 # grace_line() once. After the release it is a usage error (tasks.md 6.5).
 @click.argument("box", required=False, metavar="[BOX]")
@@ -5188,13 +5191,18 @@ def hook_batch() -> None:
     #: counts only a run that got past every gate, ran the scoop and didn't.
     printed: list[bool] = []
 
-    def emit(lines: list[str]) -> None:
+    def emit(lines: list[str], person: str | None = None) -> None:
         lines = [line for line, _ in notice] + lines
         if lines:
             printed.append(True)
             text = "\n".join(lines)
-            click.echo(json.dumps({"hookSpecificOutput": {
-                "hookEventName": event, "additionalContext": text}}))
+            out: dict = {"hookSpecificOutput": {
+                "hookEventName": event, "additionalContext": text}}
+            # A line for the PERSON rides as the top-level
+            # systemMessage; only the run that created mail.json passes one.
+            if person:
+                out["systemMessage"] = person
+            click.echo(json.dumps(out))
             # The ONE place that holds the exact additionalContext
             # value, on every path that prints (§16.1); after the echo, and
             # never raising. A run that prints nothing logs nothing.
@@ -5217,9 +5225,12 @@ def hook_batch() -> None:
     # missing file (D3) - OFF, from the template, never replacing (D4).
     settings, created = _settings.ensure()
     if created:
-        # The run that CREATED the file, and only that run, says the note.
+        # The run that CREATED the file, and only that run, says the note,
+        # and shows the person one line saying where.
         # Nothing else: the file it just wrote says OFF.
-        emit([SETTINGS_CREATED.format(path=_settings.path())])
+        where = _settings.path()
+        emit([SETTINGS_CREATED.format(path=where)],
+             person=SETTINGS_CREATED_PERSON.format(path=where))
         ctx.exit(0)
         return
     # session-settings 3.1: an
@@ -5493,12 +5504,12 @@ def hook_start() -> None:
     cls=OrderedGroup,
     context_settings=CONTEXT_SETTINGS,
     options_metavar="",
-    subcommand_metavar="install | migrate [--dry-run]",
+    subcommand_metavar="install | migrate [--dry-run] | hooks [on|off]",
     hidden=True,
-    short_help="the mail settings: install the schema; the move to ~/.session",
+    short_help="the mail settings: install the schema; hooks on|off; the move to ~/.session",
 )
 def settings() -> None:
-    """pager settings - install the mail schema; the move to ~/.session"""
+    """pager settings - install the mail schema; hooks on|off; the move to ~/.session"""
 
 
 #: `pager settings install` on a stranded host: refused, nothing written.
@@ -5522,8 +5533,9 @@ the installed schema names it, so on a HOME no hook has run under yet,
 the first seat is born deaf without it. Idempotent: a second run writes
 nothing.
 It never writes mail.json: the first PostToolBatch hook creates that and
-says so. A pager birth (`pager listen`, the SessionStart hook) installs
-the same two files; this is the verb for code that runs before either.
+says so, or `pager settings hooks on|off` makes it. A pager birth
+(`pager listen`, the SessionStart hook) installs the same two files; this
+is the verb for code that runs before either.
 Prints one line per file written, or one line saying both are current.
 A host whose settings in {_settings.SHOWN_LEGACY_DIR} have not been moved
 gets nothing: move the files in it to {_settings.SHOWN_DIR} first.
@@ -5634,6 +5646,192 @@ def settings_migrate(dry_run: bool) -> None:
         _ok, said = _subscribe.rebuild()
         _say(said)
     if report.errors:
+        ctx.exit(EX_COULD_NOT_LOOK)
+
+
+# ── `pager settings hooks [on|off]` ─────────────────────────────────────────
+#
+# The one verb that writes `"hooks"`: a person's, or an installer's inside a
+# plan the person said yes to. Under the HIDDEN noun, so on no page
+# an agent reads first and no MCP tool; the subagent mail-guard denies its
+# writes (Q2). `_settings.set_hooks` decides and writes; this prints.
+
+#: The verb's name in every line it prints.
+_HOOKS = "pager settings hooks"
+
+
+def _os_user() -> str:
+    """The account this runs as, for an audit row with no seat."""
+    try:
+        import pwd
+        return pwd.getpwuid(os.getuid()).pw_name
+    except (ImportError, KeyError, OSError):
+        return os.environ.get("USER") or os.environ.get("LOGNAME") or "unknown"
+
+
+def _hooks_was(result) -> str:
+    """The parenthesis: what the file said before."""
+    from . import _settings
+    was = result.was
+    if was is _settings.NO_KEY:
+        return '(it had no "hooks")'
+    if isinstance(was, bool):
+        return f"(it said {json.dumps(was)})"
+    return f"(it said {json.dumps(was)}, which the hooks read as off)"
+
+
+def _hooks_audit(result) -> None:
+    """Q1: ONE line on a FLIP only, in the host's mail log
+    (`_settings.audit`, under `_settings.log_dir`), from every run: the
+    file is host-wide, so a person's shell is logged as a seat is. Who (the seat's address, else the OS user), the seat and the
+    session (null when there is none), when (`ts`), from and to, and the
+    path. `to` is what the file says NOW, never what was asked: a refusal
+    after `ensure` made the file (an I/O error, a race) leaves it off, and
+    the row says so. Best effort: a row is never why the verb fails."""
+    from . import _settings, _subscribe
+    try:
+        who = _subscribe.caller()
+    except Exception:  # noqa: BLE001 - the audit never fails the verb
+        who = None
+    seat = who.seat.address if who is not None and who.seat is not None else None
+    _settings.audit({
+        "event": "settings", "key": "hooks", "from": result.before, "to": result.state,
+        "path": str(result.path), "who": seat or _os_user(), "seat": seat,
+        "sid": (who.session if who is not None else "") or None})
+
+
+def _settings_word(on: bool) -> str:
+    return "on" if on else "off"
+
+
+def _hooks_refusal(result) -> str:
+    """The refusal's line, after `refused: `."""
+    from . import _settings
+    kind = result.refused
+    if kind == _settings.REFUSED_ROOT:
+        return (f"{result.why}: it would leave {_settings.SHOWN} owned by root in this home; "
+                "run it as yourself, without sudo. Nothing written")
+    if kind == _settings.REFUSED_COPIED:
+        line = SETTINGS_COPIED.format(old=_settings.SHOWN_LEGACY_DIR, new=_settings.SHOWN_DIR)
+        return line.removeprefix("sessionmail: ")
+    if kind == _settings.REFUSED_STRANDED:
+        line = SETTINGS_STRANDED.format(old=_settings.SHOWN_LEGACY_DIR, new=_settings.SHOWN_DIR)
+        return line.removeprefix("sessionmail: ")
+    if kind == _settings.REFUSED_UNCHECKED:
+        return result.why
+    if kind == _settings.REFUSED_READBACK:
+        return (f'wrote "hooks": {json.dumps(result.want)} in {result.path}, but it reads as '
+                f"{result.state}{': ' + result.why if result.why else ''}; a race or a bug: look at the file")
+    if result.path == _settings.old_path():
+        return (f"{result.path} (the move would carry it to {_settings.SHOWN}): {result.why}; "
+                "nothing written: fix it by hand")
+    return f"{result.path}: {result.why}; nothing written: fix it by hand"
+
+
+def _hooks_line(result) -> str:
+    """The one stdout line of a write: the state it left first."""
+    from . import _settings
+    word = _settings_word(result.want)
+    value = json.dumps(result.want)
+    tail = "; each session's next hook reads it" if result.want else ": the quiet off"
+    if result.already:
+        return f'{_HOOKS}: {word} - {result.path} already says "hooks": {value}; nothing written'
+    if result.made:
+        src = _settings.SHOWN_OLD if result.converted else "the template"
+        return f'{_HOOKS}: {word} - made {result.path} from {src}, with "hooks": {value}{tail}'
+    return f'{_HOOKS}: {word} - wrote "hooks": {value} in {result.path} {_hooks_was(result)}{tail}'
+
+
+def _hooks_read() -> tuple[str, int]:
+    """The bare form: what the hooks would read, and its exit code. A file
+    that is there is read as the hooks read it, whatever the old folder is;
+    `stranded` is asked only when there is no file, as `ensure` asks it."""
+    from . import _settings
+    p = _settings.path()
+    if os.path.lexists(p):
+        said = _settings.read()
+        if said.state == _settings.ON:
+            return f'{_HOOKS}: on - {p} says "hooks": true', EX_PAGE
+        if said.state == _settings.OFF:
+            return f'{_HOOKS}: off - {p} says "hooks": false', EX_NOTHING
+        fixable = said.why == "no `hooks` key" or said.why.startswith("`hooks` is ")
+        how = f"`{_HOOKS} on` or `off` sets it" if fixable else "fix it by hand"
+        return f"{_HOOKS}: off by mistake - {p}: {said.why}; {how}", EX_COULD_NOT_LOOK
+    try:
+        is_stranded = _settings.stranded()
+    except OSError as err:
+        return f"{_HOOKS}: off by mistake - no {p} and {_settings.unchecked_why(err)}", EX_COULD_NOT_LOOK
+    if is_stranded:
+        return (f"{_HOOKS}: off by mistake - no {p} and the settings in {_settings.SHOWN_LEGACY_DIR} "
+                "have not been moved, so no hook makes it"), EX_COULD_NOT_LOOK
+    if _settings._old_body(None) is not None:
+        return f"{_HOOKS}: off - no {p} yet; the first PostToolBatch makes it from {_settings.SHOWN_OLD}", \
+            EX_NOTHING
+    return f"{_HOOKS}: off - no {p} yet; the first PostToolBatch makes it, off", EX_NOTHING
+
+
+def _hooks_note() -> str | None:
+    """A second line when this shell's SESSIONMAIL_PAGER is off (design (d)):
+    the exit code reports the FILE, never the variable."""
+    if _seat.pager_enabled():
+        return None
+    value = (os.environ.get(_seat.PAGER_VAR) or "").strip()
+    return (f"{_HOOKS}: note - {_seat.PAGER_VAR}={value} is set here: a session started with it "
+            "stays silent, whatever the file says")
+
+
+@settings.command(
+    "hooks",
+    cls=PageCommand,
+    context_settings=CONTEXT_SETTINGS,
+    usage="[on|off]",
+    short_help="[on|off]    turn the plugin's hooks on or off; bare: say which",
+    epilog=unwrapped(
+        f"""Sets "hooks" in {_settings.SHOWN} ($HOME's), the one
+switch for whether the plugin's hooks speak (off on a fresh install).
+`on` sets true; `off` sets false, the quiet off. No file yet: it is made
+first, from the template, as the first hook would make it. Only that one
+value changes; every other key, and every other byte, stays. One atomic
+replace; run again, it writes nothing. A file that is not a JSON object
+is never written: fix it by hand. Each session's next hook reads it.
+Bare, it writes nothing and says which: on, off (false, or no file yet),
+or off by mistake, and why.
+SESSIONMAIL_PAGER=off still silences a session started with it, and the
+pager monitor has its own key, "monitor". For a person, or an installer
+inside a plan the person said yes to; `message setup` never runs it.
+Never as root or under sudo: refused, nothing written.
+
+Exit: 0 on, or the file now says what was asked · 2 usage, or refused
+(named): as root or sudo, the file could not be read or written, is not
+a JSON object, or the old settings folder is not moved yet, and the
+verb's own write is not made; or it is made but reads back wrong; bare:
+off by mistake · 3 off (bare only)"""
+    ),
+)
+@click.argument("word", required=False, type=click.Choice(["on", "off"]), metavar="[on|off]")
+def settings_hooks(word: str | None) -> None:
+    """pager settings hooks - turn the plugin's hooks on or off; bare: say which"""
+    from . import _settings
+    ctx = click.get_current_context()
+    if word is None:
+        line, code = _hooks_read()
+        _say(line)
+        note = _hooks_note()
+        if note:
+            _say(note)
+        ctx.exit(code)
+        return
+    result = _settings.set_hooks(word == "on")
+    if result.flipped:
+        _hooks_audit(result)
+    if result.refused:
+        _say(f"{_HOOKS}: refused: {_hooks_refusal(result)}", err=True)
+    else:
+        _say(_hooks_line(result))
+    note = _hooks_note()
+    if note:
+        _say(note)
+    if result.refused:
         ctx.exit(EX_COULD_NOT_LOOK)
 
 

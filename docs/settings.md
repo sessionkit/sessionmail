@@ -29,8 +29,13 @@ reads for them are below: [sendmail][sendmail], [notmuch][notmuch-key] and
   folder whose name has neither a `+` nor a `.` (an agent's name, say) is
   not read as a seat layer. There is no agent layer.
 - The host file is made the first time the plugin's PostToolBatch hook runs
-  and finds it missing. It starts as `{"version": 1, "hooks": false}`
-  (or, on an older host, a copy of `~/.session/mail/settings.json`).
+  and finds it missing, or by `pager settings hooks on|off`. It starts as
+  `{"version": 1, "hooks": false}` (or, on an older host, a copy of
+  `~/.session/mail/settings.json`).
+  When the hook makes it, on that run and only that run, you see one line
+  naming the file: ``PostToolBatch says: sessionmail wrote <path> with its
+  hooks off. To turn them on, run `pager settings hooks on`.`` The agent gets
+  its own note.
 - Beside the host file, sessionmail installs `mail.schema.json` (the schema,
   where the keys below come from) and `mail.template.json` (the template),
   and replaces each when a release changes it. Do not edit either.
@@ -52,8 +57,9 @@ reads for them are below: [sendmail][sendmail], [notmuch][notmuch-key] and
 
 0.1.0 kept the host files in `~/.settings/mail/`. Move the files in it to
 `~/.sessionkit/mail/settings/`. Until you do, sessionmail writes nothing
-in either folder: the hooks stay off and say why, and
-`pager settings install` exits 3. Nothing is read from the old folder.
+in either folder: the hooks stay off and say why,
+`pager settings install` exits 3, and `pager settings hooks on|off` is
+refused (exit 2). Nothing is read from the old folder.
 
 ## The keys
 
@@ -104,6 +110,16 @@ Whether the plugin's Stop, PostToolBatch and UserPromptSubmit hooks speak.
 - Read from the host `mail.json` alone: not `mail.d/`, not a seat or session
   layer.
 - `SESSIONMAIL_PAGER=off` silences the hooks whatever the file says.
+- Turn them on or off with `pager settings hooks on|off`; `pager settings
+  hooks` says which (exit 0 on, 3 off, 2 off by mistake). It changes that
+  one value and keeps every other key and byte. It makes the file first if
+  there is none, writes nothing when the file already says so, and refuses
+  (exit 2) a file that is not a JSON object, a host whose old settings are
+  not moved yet, and a run as root or under `sudo`.
+- Each change it makes adds one JSON line to
+  `~/.sessionkit/mail/log/settings.jsonl`: when, who (the seat, else your
+  account), the session if there is one, from and to, and the file. The
+  switch is the whole host's, so a run from your own shell is logged too.
 
 ```json
 {"version": 1, "hooks": true}
@@ -146,7 +162,10 @@ How `message send` hands mail on. Variable: `SESSIONMAIL_SENDMAIL`.
 
 The mail root: the folder that holds `agents/`. Default `~/.mail`; `~` is
 the account's home. Variable: `SESSIONMAIL_ROOT`, which names the agents
-folder itself, so its parent is the mail root.
+folder itself, so its parent is the mail root. The older spelling,
+`SESSION_MAIL_ROOT`, is still read, after it. Every reader (`message path`,
+`list`, `read`, the pager, `memory wake`) and the file drop read the two in
+that one order, so a send and a read never pick different folders.
 
 ### host
 

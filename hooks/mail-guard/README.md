@@ -143,6 +143,7 @@ it, like its other hooks:
 ```
 hooks/hooks.json    PreToolUse, matcher Bash -> hooks/mail-guard-hook (timeout 5)
                     PreToolUse, matcher mcp__plugin_sessionmail_(message|pager)__.*
+                        |mcp__plugin_sessionmail_memory__memory_init
                         -> the same shim (a subagent's MCP door)
 hooks/mail-guard-hook   the shim: python3 hooks/mail-guard/hook.py, and exit 0
                         whatever goes wrong
@@ -151,13 +152,27 @@ hooks/mail-guard-hook   the shim: python3 hooks/mail-guard/hook.py, and exit 0
 So a seat that loaded sessionmail is behind the guard, and one that did not
 is not.
 
-**The MCP group** routes the message and pager servers' tools (not
-memory's) to the same guard. It acts only on a payload that carries
-`agent_id` (a subagent's): there it denies what the Bash door denies a
-subagent (`message_read` without `peek`, `message_mark`, `pager_status` with
-`new_only`, `pager_stop|off|mute|unmute|listen`), judged by the same table
-(`subagent_verb`). A main thread's MCP call is allowed at once, exit 0 and
-no output. Cost: one python3 run per such call, about 23 ms on one Mac. Hook configuration is read at **session start**: loading the plugin
+**The MCP group** routes the message and pager servers' tools, and of
+memory's only `memory_init`, to the same guard. It acts only on a payload
+that carries `agent_id` (a subagent's): there it denies what the Bash door
+denies a subagent (`message_read` without `peek`, `message_mark`,
+`pager_status` with `new_only`, `pager_stop|off|mute|unmute|listen`,
+`pager_focus`, `message_subscription_add|remove` and
+`memory_init`), judged by the same table (`subagent_verb`). A main thread's
+MCP call is allowed at once, exit 0 and no output. Cost: one python3 run per
+such call, about 23 ms on one Mac. The rest of memory's tools are not
+routed, so they cost nothing.
+
+**Inside a subagent, through either door**, the table also denies
+`memory init` (the whole verb), `memory run` without `--list`, `message
+subscription add|remove`, `pager rule add|remove`, `pager focus` and
+`pager settings hooks on|off`: each writes the seat's memory, runs its
+script-mail, or changes its state, as the seat (the last, the HOST's hooks
+switch, for every seat on it). Their reads stay allowed (`memory ls|tree|cat|wake`, `memory run
+--list`, `message subscription list`, `pager rule list`, `pager status
+--stopped`, a bare `pager settings hooks`). A word that would allow (`--peek`, `--list`, `--help`) counts
+only before a `--`, where click still reads options: `message read 1 --
+--peek` reads, and is denied. Hook configuration is read at **session start**: loading the plugin
 does not guard agents that are already running.
 
 **It never blocks by failing.** The only way it speaks is decision JSON on
@@ -182,7 +197,10 @@ group, and the hook process contract. `tests/test_mail_guard_wiring.py` —
 the registration in `hooks/hooks.json`, and the shim allowing when python3
 is missing, `hook.py` is missing, or it crashes. Both run under `make test`.
 `tests/test_mail_guard_subagent.py` and `tests/test_mail_guard_subagent_mcp.py`
-— the subagent rule through the Bash door and the MCP door.
+— the subagent rule through the Bash door and the MCP door;
+`tests/test_mail_guard_subagent_sm837.py` — the seat-state rows and the `--` cut,
+both doors, with the main thread pinned byte for byte to the master it was
+built on.
 
 Written in python3, stdlib only, on purpose: a quoting-aware guard written in
 the language whose quoting is the hazard is how you get a guard with its own

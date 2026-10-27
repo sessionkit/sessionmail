@@ -80,6 +80,7 @@ from pathlib import Path
 from . import _generator
 from . import _host   # the ONE host rule
 from . import _magicdns
+from . import _maildir
 from . import _settings
 from ._maildir import deliver_private
 
@@ -161,12 +162,18 @@ def selected(env: Mapping[str, str]) -> bool:
 def mail_root(env: Mapping[str, str]) -> Path:
     """The tree the map values are relative to (postfix's
     virtual_mailbox_base): the parent of the agents root the sender and
-    readers use (`$SESSIONMAIL_ROOT`, then `$SESSION_MAIL_ROOT`, as
+    readers use (`_maildir.env_root`: `$SESSIONMAIL_ROOT`, then
+    `$SESSION_MAIL_ROOT`, the one order the readers read too; as
     `_seat.regen_maps` takes `root.parent`), else `$MAIL_ROOT`, else the
-    settings file's `root`, else ~/.mail - the generator's own default."""
-    agents = env.get("SESSIONMAIL_ROOT") or env.get("SESSION_MAIL_ROOT")
-    if agents:
-        return Path(agents).expanduser().parent
+    settings file's `root`, else ~/.mail - the generator's own default.
+
+    `$MAIL_ROOT` is the generator's variable and the drop's alone: the
+    readers never take it. With it set and neither root variable,
+    `_setup.roots` refuses the mismatch rather than deliver where nobody
+    reads (that refusal is kept; the readers were not widened)."""
+    agents = _maildir.env_root(env)
+    if agents is not None:
+        return agents.parent
     if env.get("MAIL_ROOT"):
         return Path(env["MAIL_ROOT"]).expanduser()
     given = _settings.file_path("root", env)

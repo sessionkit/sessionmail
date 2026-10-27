@@ -9,6 +9,116 @@ writer and mirrors it into `.claude-plugin/plugin.json` and `marketplace.json`.
 
 ## [Unreleased]
 
+## [0.3.2] - 2026-10-28
+
+### Added
+
+- **`pager settings hooks on|off` turns the mail hooks on and off**
+  (SM-983). It changes only `"hooks"` in
+  `~/.sessionkit/mail/settings/mail.json`, in place, and keeps every other
+  key and byte; the file is replaced in one atomic step, and a symlinked
+  `mail.json` stays a link. With no file it makes one from the template
+  first, as the first hook would. A second run writes nothing. It refuses,
+  exit 2, a file that is not a JSON object, a host whose old settings in
+  `~/.settings/mail/` are not moved yet, and a run as root or under
+  `sudo`. Bare, `pager settings hooks` writes nothing and says which: exit
+  0 on, 3 off, 2 off by mistake. It prints one line that starts with the
+  state it left. Every flip, from a seat or from your own shell, adds one
+  JSON line to `~/.sessionkit/mail/log/settings.jsonl` (when, who, from,
+  to, the path), since the file it changes is the whole host's. The first
+  run's line for you (SM-890) now names the verb. The verb sits under the
+  hidden `pager settings` noun, so it is no MCP tool, and the subagent
+  mail-guard denies a subagent `on` and `off` (the bare read stays
+  allowed). `message setup` never runs it, and a fresh install still
+  starts with the hooks off. For installers (SK-236): no more hand edits
+  of the JSON.
+- **`memory wake` says who the session is, first** (SM-980). A new IDENTITY
+  section, ahead of BOOT and RECENT, runs `session identity <sid>`
+  (sessiontools ST-272) with this process's own session id and prints its
+  stdout verbatim under ``═══ IDENTITY — from `session identity`, at launch ═══``,
+  40 lines at most. It waits 2 s, then kills the child's process group. No
+  session id, no `session` on PATH, exit 3 (no block), any other exit or a
+  timeout each print one line saying which, and the wake's exit code never
+  changes because of it. `memory wake -n` prints the command and runs
+  nothing. Until ST-272's verb is deployed, the section reads
+  `identity: could not look (session identity exit 2)`.
+- **The `message`, `pager` and `memory` skills point at the family's one
+  etiquette card** (SM-979): when several agents share one seat or one
+  call, the sessionkit skill's "Several agents in one seat" says who
+  answers. Each skill carries the kit's pointer line after its lead
+  paragraph and keeps no copy of the card.
+  The `message` skill's `send` line no longer says every send is signed:
+  a send signs only when the session holds a key, and on a kit install it
+  does not, as the card says.
+
+### Changed
+
+- **Needs sessiontools 0.3.2 or newer** (was 0.3.0). sessiontools 0.3.2
+  moves its state under `~/.sessionkit/tools/`; an older copy beside it on
+  the same Mac would split that state between the old and new folders.
+- **The seat agent logs to `~/.sessionkit/mail/log/`, not `~/Library/Logs`**
+  (SM-966). `message seat agent --install` renders the LaunchAgent to write
+  `~/.sessionkit/mail/log/seat-agent.<ADDRESS>.log`, and makes the folder
+  mode 0700 when it is missing. An agent installed before this release keeps
+  writing `~/Library/Logs/seat-agent.<ADDRESS>.log` until it is uninstalled
+  and installed again; until then, `--install` reads the old log when there
+  is none at the new path. That fallback is dropped in 0.3.3. Nothing
+  deletes or moves a log. [docs/message-seat.md](docs/message-seat.md#the-log).
+- **The puller logs to `~/.sessionkit/mail/log/puller.log`, not under
+  `pull.state_dir`** (SM-966). `message setup --pull` renders the
+  LaunchAgent to write there, and makes the folder mode 0700 when it is
+  missing. `pull.state_dir` keeps its default and still holds the cursors
+  and the lock; setting it no longer changes the plist. A puller installed
+  before this release keeps writing `<pull.state_dir>/log/puller.log` until
+  `message setup --pull` renders its plist again. The old log is left where
+  it is. [docs/pull.md](docs/pull.md#the-log).
+
+### Fixed
+
+- **A `mail.json` that is a symlink to the old settings file no longer
+  turns the two into a symlink loop** (SM-985). When
+  `~/.sessionkit/mail/settings/mail.json` linked to a real
+  `~/.session/mail/settings.json`, the two read the same bytes, so the
+  settings check every batch of tool calls runs replaced the old file with
+  a link back to `mail.json`. The only copy of the settings was gone and the
+  hooks went off as a fault ("Too many levels of symbolic links"). The old
+  file is now replaced only by a link to a real file that is not itself.
+
+- **A background subagent can no longer take the seat's mail by putting a
+  `--` before `--peek`, `--help` or the verb** (SM-837), and it may no
+  longer write the seat's memory or change its state. Inside a subagent,
+  `message read 1 -- --peek` read the mail and marked it as read for the
+  SEAT while the mail-guard took it for a peek, because click stops reading
+  options at `--`. `message -- read 1` and `message read 1 -- --help` did
+  the same, through Bash and through `message_read`'s `args`. Now `--peek`,
+  `--list` and `--help` count only before a `--`. The same subagent is now
+  also denied, in both doors, `memory init` / `memory_init` (the whole
+  verb), `memory run` without `--list`, `message subscription add|remove`
+  (and their tools), `pager rule add|remove` and `pager focus` /
+  `pager_focus`, each with a one-line reason naming what it would do and
+  the read-only way. Reads stay allowed: `memory ls|tree|cat|wake`,
+  `memory run --list`, `message subscription list`, `pager rule list`,
+  `pager status --stopped`. `hooks/hooks.json` routes `memory_init` to the
+  guard, the only memory tool routed, so `memory_ls|cat|tree|wake` on a
+  main thread cost nothing new. Main-thread decisions are unchanged, byte
+  for byte.
+- **The first run tells you where it wrote `mail.json`** (SM-890). The run
+  of the PostToolBatch hook that creates the settings file now shows you one
+  line, beside the agent's unchanged note: ``sessionmail wrote <path> with
+  its hooks off. To turn them on, run `pager settings hooks on`.`` Claude
+  Code shows it as `PostToolBatch says: ...`. Only the creating run says
+  it; when sessions race, only the one that created the file does.
+  [docs/settings.md](docs/settings.md).
+- **`memory wake` no longer dies under bash 4.4+ when two boxes answer to
+  one name** (SM-963). The shell rail's two-box check read a variable it
+  had declared but never set; bash 4.4+ treats that as unset under the
+  rail's `set -u`, so on a Homebrew Mac or any Linux wake exited 1 in the
+  very case the two-box rule exists for. `/bin/bash` 3.2 hid it, and the
+  tests now run the rail on both bashes. The rail also refuses a missing
+  root (rc 2, saying what to set) when no root argument, no
+  `SESSIONMAIL_ROOT`/`SESSION_MAIL_ROOT` and no `HOME` is given, instead of
+  aborting on `HOME: unbound variable`.
+
 ## [0.3.1] - 2026-10-25
 
 ### Added

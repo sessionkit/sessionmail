@@ -77,7 +77,7 @@ The **listener's own rows**, from `pager listen` and the monitor, carry the enve
 - **A subagent's deny** is logged under the session id in its payload, which is the parent's, because the reason
   reaches the subagent's context. A subagent's tool batch prints nothing, so it writes nothing.
 - **No row:** a hook that prints nothing, including SessionStart's empty JSON. The Stop hook's exit-0 stderr. Also
-  `pager status --new`.
+  `pager status --new`, and the creating run's `systemMessage`, which the person sees and the agent does not.
 - **Not yet counted:** a hand listen's arm banner on stderr, its timeout line on stdout, and the "the pager monitor
   (pid N) hears for this session" line. All three reach the agent through the Bash tool.
 - **Not ours to count:** Claude Code's own wrapper around each injection.

@@ -193,8 +193,12 @@ mbl_directed_ext_sid() {
 #   rc 1: zero or one candidate; nothing is set or printed.
 # Bash 3.2 safe: no `[[ < ]]` (it collates by locale); the order is `sort`'s,
 # with LC_ALL=C, as the generator's.
+# Bash 4.4+ safe: every local that is read before it is assigned is given a
+# value here. Under the CLI's `set -u`, bash 4.4+ reads a bare `local x` as
+# UNSET (3.2 reads it as empty), so a bare `first` made the CLI exit 1 at the
+# `[ -z "$first" ]` below, exactly when two boxes answered.
 _mbl_two_boxes() {
-  local root="$1" me="$2" c s rels="" n=0 first others=""
+  local root="$1" me="$2" c s rels="" n=0 first="" others=""
   [ -d "$root/$me" ] && { rels="$me/"; n=1; }
   # The glob skips dot-directories, as the generator does; an unmatched glob
   # stays literal and fails the -d test.
@@ -333,7 +337,7 @@ mail_box_resolve() {
   # We read the TREE, never the postfix map: the map is generated FROM this
   # tree (a downstream cache that can be stale), its keys are host-qualified,
   # and it only exists on a postfix host at /etc/postfix/agents.d/vmailbox —
-  # so a map lookup would break every test, sandbox and $SESSION_MAIL_ROOT.
+  # so a map lookup would break every test, sandbox and $SESSIONMAIL_ROOT.
   # Reading the tree with the generator's own marker rule agrees with the map
   # BY CONSTRUCTION, and keeps this rail dependency-free.
   #
@@ -452,14 +456,45 @@ mail_box_resolve() {
   return 1
 }
 
+# mail_box_env_root — the agents root the ENVIRONMENT names, on stdout:
+# $SESSIONMAIL_ROOT, else the older $SESSION_MAIL_ROOT (each only when set and
+# non-empty), else ~/.mail/agents; a leading `~/` is $HOME. The SAME order as
+# the package's `_maildir.env_root`, inline because a bash rail
+# cannot import Python; tests/test_root_vars.py pins the two to one answer.
+# The settings file's `root` key is NOT read here: it is JSON, and this rail
+# stays dependency-free. Python's `_maildir.root` reads it after the variables.
+# rc 1, nothing printed, when the root needs $HOME and HOME is unset or empty:
+# `${HOME:-}`, never a bare `$HOME`, because under the CLI's `set -u` a bare
+# `$HOME` with HOME unset aborts bash ("HOME: unbound variable", rc 1) before
+# the CLI can refuse.
+mail_box_env_root() {
+  local r="${SESSIONMAIL_ROOT:-${SESSION_MAIL_ROOT:-}}" h="${HOME:-}"
+  case "$r" in
+    "") [ -n "$h" ] || return 1; r="$h/.mail/agents" ;;
+    \~) [ -n "$h" ] || return 1; r="$h" ;;   # a LITERAL tilde, escaped: the value is a string
+    \~/*) [ -n "$h" ] || return 1; r="$h/${r#\~/}" ;;
+  esac
+  printf '%s\n' "$r"
+}
+
 # CLI form, for callers that cannot source bash (session-mail-wake is python):
 #   bash mail-box.lib.sh <name> [root]
 # prints the resolved path on stdout (rc 0), or the refusal on stderr (rc 2 —
-# the same "bad usage / cannot proceed" code the read verbs use).
+# the same "bad usage / cannot proceed" code the read verbs use). With no
+# [root], the root is mail_box_env_root's.
+#   bash mail-box.lib.sh --env-root
+# prints mail_box_env_root alone (rc 0): the agreement test's door. Either form
+# refuses (rc 2) when no root can be built: no [root], no root variable, no HOME.
 if [ "${BASH_SOURCE[0]:-$0}" = "$0" ]; then
   set -uo pipefail
-  [ $# -ge 1 ] || { echo "mail-box.lib.sh: usage: mail-box.lib.sh <name> [root]" >&2; exit 2; }
-  _mbl_root="${2:-${SESSION_MAIL_ROOT:-$HOME/.mail/agents}}"
+  _mbl_no_root="mail-box.lib.sh: no root — pass one, or set SESSIONMAIL_ROOT (or the older SESSION_MAIL_ROOT) or HOME"
+  [ $# -ge 1 ] || { echo "mail-box.lib.sh: usage: mail-box.lib.sh <name> [root] | --env-root" >&2; exit 2; }
+  if [ "$1" = "--env-root" ]; then
+    mail_box_env_root || { echo "$_mbl_no_root" >&2; exit 2; }
+    exit 0
+  fi
+  _mbl_root="${2:-$(mail_box_env_root)}"
+  [ -n "$_mbl_root" ] || { echo "$_mbl_no_root" >&2; exit 2; }
   if mail_box_resolve "$1" "$_mbl_root"; then
     printf '%s\n' "$MAIL_BOX_PATH"
     exit 0

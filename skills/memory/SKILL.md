@@ -13,6 +13,8 @@ description: >-
 
 `memory --help` is the whole of what there is to know: five verbs.
 
+Several agents in one seat? See the sessionkit skill's card, "Several agents in one seat".
+
 - `ls PATH` - the labels under a path (`/` is the root: labels only).
 - `tree PATH` - items under a label, in number order; forks reported.
 - `cat PATH` - one item, or `/BOOT/latest` for the live letter to self.

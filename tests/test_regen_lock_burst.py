@@ -279,9 +279,46 @@ def _path_without(tmp: Path, fleet: Fleet, name: str) -> str:
         for e in entries:
             if e.name == name or (farm / e.name).exists() or (farm / e.name).is_symlink():
                 continue
-            if e.is_file() and os.access(e, os.X_OK):
+            try:
+                runnable = e.is_file() and os.access(e, os.X_OK)
+            except OSError:     # a link into a dir we cannot search (SM-959)
+                continue
+            if runnable:
                 (farm / e.name).symlink_to(e)
     return f"{fleet.bin}:{farm}"
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root can search a mode-000 dir")
+def test_path_without_skips_a_link_it_cannot_stat(
+        tmp_path: Path, fleet: Fleet, monkeypatch: pytest.MonkeyPatch,
+        request: pytest.FixtureRequest) -> None:
+    """A PATH entry the helper cannot stat is skipped, not raised (SM-959).
+
+    macOS 27 ships `/usr/sbin/weakpass_edit -> authserver/tools/weakpass`
+    with `/usr/sbin/authserver` root-only. On Python 3.13 `is_file()` on
+    such a link raises PermissionError; on 3.14 it returns False. Here the
+    same shape is built in tmp_path: a link into a mode-000 dir, beside a
+    runnable tool, and a second PATH dir after it. The helper must return,
+    leave the link out, and still link every runnable tool on both dirs."""
+    locked = tmp_path / "locked"
+    (locked / "tools").mkdir(parents=True)
+    _exe(locked / "tools" / "weakpass", "#!/bin/sh\n")
+    first = tmp_path / "sbin"
+    first.mkdir()
+    (first / "weakpass_edit").symlink_to(locked / "tools" / "weakpass")
+    _exe(first / "runnable", "#!/bin/sh\n")
+    later = tmp_path / "later"
+    later.mkdir()
+    _exe(later / "after", "#!/bin/sh\n")
+    locked.chmod(0o000)
+    request.addfinalizer(lambda: locked.chmod(0o755))
+    monkeypatch.setenv("PATH", os.pathsep.join([str(first), str(later)]))
+
+    path = _path_without(tmp_path, fleet, "jq")
+
+    farm = tmp_path / "path-without-jq"
+    assert path == f"{fleet.bin}:{farm}"
+    assert sorted(p.name for p in farm.iterdir()) == ["after", "runnable"]
 
 
 def _queue_behind_gate(fleet: Fleet, holder: subprocess.Popen,

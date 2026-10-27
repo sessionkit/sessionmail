@@ -60,10 +60,12 @@ on stdout with exit 0. ANY unexpected condition exits 0 silently (allow) — a
 guard that can wedge the Bash tool is worse than the hazard it guards.
 
 INSIDE A SUBAGENT (a payload that carries `agent_id`), it also refuses what
-would take or mark the SEAT's mail or change its pager, through both
-doors with ONE table (`subagent_verb`): the Bash command, and the
-message and pager MCP servers' tools, which hooks.json routes here too. A
-main thread's MCP call is allowed at once, exit 0 and no output.
+would take or mark the SEAT's mail or change its pager, and what would
+write the seat's memory, run its script-mail, or change its
+subscriptions, pager rules or focus, through both doors with ONE table
+(`subagent_verb`): the Bash command, and the message and pager MCP servers'
+tools and `memory_init`, which hooks.json routes here too. A main thread's
+MCP call is allowed at once, exit 0 and no output.
 
 Importable: `decide(command_text)` returns a deny reason string or None, so the
 test suite drives the same code path the hook runs.
@@ -780,6 +782,15 @@ def judge(args, cmd):
 # adversary (a script that runs `message read` goes round it), and it fails
 # OPEN like the rest. Read-only verbs stay allowed: `message list`, `message
 # read --peek`, `pager status` without --new, `pager why`, and every send.
+#
+# The table also holds rows that are neither a take nor a mark, each with its own
+# deny line (`SUBAGENT_SEAT_ROWS`): `memory init` (the whole verb), `memory
+# run` without --list, `message subscription add|remove`, `pager rule
+# add|remove` and `pager focus`. Their reads stay allowed: `memory
+# ls|tree|cat|wake`, `memory run --list`, `message subscription list`,
+# `pager rule list`, and `pager status --stopped` (it writes nothing). And
+# `pager settings hooks on|off`, the HOST's switch; its bare read stays
+# allowed.
 
 #: `pager` verbs that change or shadow the SEAT's pager.
 #: `pager hook <event>` is refused as well (see `match_subagent`).
@@ -795,12 +806,48 @@ SUBAGENT_DEPTH = 2
 #: `for`/`case`/`in` are NOT here (what follows them is a name or data).
 SUBAGENT_KEYWORDS = frozenset({"{", "!", "if", "then", "elif", "else", "do", "while", "until"})
 _HELP = ("-h", "--help")
+#: The bases whose words the table reads.
+SUBAGENT_BASES = ("message", "pager", "memory")
+#: The rows that neither take nor mark: what each would do as the seat,
+#: then its read-only way in the Bash door and in the MCP door. `memory run`
+#: and `pager rule add|remove` are not MCP tools, so their MCP way only
+#: points at a read.
+SUBAGENT_SEAT_ROWS = {
+    "memory init": ("would write the SEAT's memory (mint its root and labels)",
+                    "`memory ls /`, `memory tree`, `memory cat`",
+                    "`memory_ls` with `path: /`, `memory_tree`, `memory_cat`"),
+    "memory run": ("would run a script-mail as the seat",
+                   "`memory run PATH --list`, `memory cat`", "`memory_cat`"),
+    "message subscription add": ("would change the SEAT's subscriptions",
+                                 "`message subscription list`", "`message_subscription_list`"),
+    "message subscription remove": ("would change the SEAT's subscriptions",
+                                    "`message subscription list`",
+                                    "`message_subscription_list`"),
+    "pager rule add": ("would change the SEAT's pager rules", "`pager rule list`",
+                       "`pager_status`"),
+    "pager rule remove": ("would change the SEAT's pager rules", "`pager rule list`",
+                          "`pager_status`"),
+    "pager focus": ("would change the SEAT's focus", "`pager status`", "`pager_status`"),
+    # The host's switch, wider than a seat's state. `pager
+    # settings` is hidden, so no MCP tool; the MCP way only points at a read.
+    "pager settings hooks": ("would turn every seat's hooks on this host on or off",
+                             "`pager settings hooks` (bare)", "`pager_status`"),
+}
 
 
 def subagent_reason(what, tool=None):
     """The deny's one line, naming what was refused, why, and the read-only way.
     TOOL, the MCP tool's short name, names the tool and its read-only
-    forms instead; without it the line is the Bash door's, byte for byte."""
+    forms instead; without it the line is the Bash door's, byte for byte.
+    A row in SUBAGENT_SEAT_ROWS gets its own clause, since it neither takes
+    nor marks mail; every other row's line is the take-and-mark one, unchanged."""
+    row = SUBAGENT_SEAT_ROWS.get(what)
+    if row:
+        clause, bash_way, mcp_way = row
+        head = "the MCP tool `%s` (`%s`)" % (tool, what) if tool else "`%s`" % what
+        return ("a subagent shares its seat's session, so %s here %s. Read-only "
+                "instead: %s; leave it to the main thread."
+                % (head, clause, mcp_way if tool else bash_way))
     if tool:
         return ("a subagent shares its seat's session, so the MCP tool `%s` (`%s`) here "
                 "would take or mark the SEAT's mail or change its pager, and the seat "
@@ -844,25 +891,56 @@ def match_subagent(words):
     if idx is None:
         return None
     base = posixpath.basename(words[idx].value)
-    if base not in ("message", "pager"):
+    if base not in SUBAGENT_BASES:
         return None
     return subagent_verb(base, [w.value for w in words[idx + 1 :]])
 
 
+def _before_cut(words):
+    """The WORDS click can read as options: those before the first `--`.
+    click ends option parsing there, so after it `--peek`, `--list` and
+    `--help` are positionals (an id, a path), never a peek or a help. A word
+    that would ALLOW is counted only here; one that would deny (`--new`) is
+    counted anywhere, so the cut only ever moves a decision toward deny."""
+    return words[:words.index("--")] if "--" in words else words
+
+
+def _past_dashdash(words):
+    """WORDS without one leading `--`: a click group drops it and runs the
+    next word as its verb (`message -- read 1` reads)."""
+    return words[1:] if words[:1] == ["--"] else words
+
+
 def subagent_verb(base, rest):
     """THE table, for both doors (Bash and MCP): what `BASE REST...`
-    (`message` or `pager`, then the words after it) would do to the seat, as
-    the deny names it, or None. The MCP door rebuilds REST from the tool call
-    (`mcp_call`), so one list decides both."""
-    if not rest or any(v in _HELP for v in rest):
+    (`message`, `pager` or `memory`, then the words after it) would do to
+    the seat, as the deny names it, or None. The MCP door rebuilds REST from
+    the tool call (`mcp_call`), so one list decides both."""
+    rest = _past_dashdash(list(rest))
+    if not rest or any(v in _HELP for v in _before_cut(rest)):
         return None                 # bare, or help: prints, touches nothing
     verb, args = rest[0], rest[1:]
+    opts = _before_cut(args)        # the options this verb reads
+    if base == "memory":
+        if verb == "init":
+            return "memory init"    # the whole verb, its print path too
+        if verb == "run" and "--list" not in opts:
+            return "memory run"     # --list runs nothing
+        return None
     if base == "message":
-        if verb == "read" and "--peek" not in args:
+        if verb == "read" and "--peek" not in opts:
             return "message read"
         if verb == "mark":
             return "message mark"
+        if verb == "subscription":
+            return _noun_write("message subscription", args)
         return None
+    if verb == "focus":
+        return "pager focus"        # sleep|off: the seat's focus, any mode
+    if verb == "rule":
+        return _noun_write("pager rule", args)
+    if verb == "settings":
+        return _settings_write(args)
     if verb == "status" and "--new" in args:
         return "pager status --new"
     if verb in SUBAGENT_PAGER_VERBS:
@@ -872,7 +950,35 @@ def subagent_verb(base, rest):
         # on stdin, so no `agent_id`, and `pager hook batch` scoops as a main
         # thread would. The harness runs the real hooks as hook commands,
         # never through the Bash tool, so a main thread is never refused one.
-        return "pager hook " + args[0]
+        event = _past_dashdash(args)
+        return "pager hook " + (event[0] if event else args[0])
+    return None
+
+
+def _settings_write(args):
+    """`pager settings hooks on|off`, the host's hooks switch,
+    or None: the bare `hooks` only reads, a help only prints, and the noun's
+    other verbs (`install`, `migrate`) are not this row. Any word after
+    `hooks` is a write attempt (a typo included: click refuses it, so the
+    deny costs nothing)."""
+    sub = _past_dashdash(args)
+    if sub[:1] != ["hooks"]:
+        return None
+    words = sub[1:]
+    if any(v in _HELP for v in _before_cut(words)):
+        return None
+    if [v for v in words if v != "--"]:
+        return "pager settings hooks"
+    return None
+
+
+def _noun_write(noun, args):
+    """`NOUN add|remove`, the seat-state writes under a noun group, or None:
+    its `list`, a bare noun and a help only print. ARGS are the words after
+    the noun; the noun's group drops one leading `--` as the base's does."""
+    sub = _past_dashdash(args)
+    if sub[:1] in (["add"], ["remove"]) and not any(v in _HELP for v in _before_cut(sub[1:])):
+        return noun + " " + sub[0]
     return None
 
 
@@ -882,8 +988,8 @@ def decide_subagent(command_text, depth=0):
     block a tool call)."""
     if not command_text or len(command_text) > MAX_COMMAND_BYTES:
         return None
-    if "message" not in command_text and "pager" not in command_text:
-        return None  # cheap reject: neither verb is named anywhere
+    if not any(base in command_text for base in SUBAGENT_BASES):
+        return None  # cheap reject: no base is named anywhere
     try:
         for cmd in split_commands(tokenize(command_text)):
             words = _past_keywords(cmd.words)
@@ -912,9 +1018,11 @@ def decide_subagent(command_text, depth=0):
 # `message_read` takes the mail as the seat just as its Bash `message read`
 # does. A subagent is handed those tools, and its MCP PreToolUse carries
 # `agent_id` (measured, Claude Code 2.1.301). hooks.json routes the
-# message and pager servers' tools here (not memory: none of its verbs is
-# denied). `main` asks only when `agent_id` is present; a main thread's MCP
-# call is allowed at once, exit 0 and no output, as when the hook never ran.
+# message and pager servers' tools here, and of memory's only `memory_init`
+# (the one memory tool denied; routing the rest would cost every
+# main-thread `memory_ls` a python3 run and deny nothing). `main` asks only
+# when `agent_id` is present; a main thread's MCP call is allowed at once,
+# exit 0 and no output, as when the hook never ran.
 #
 # No second list: `mcp_call` rebuilds the words the server's CLI would read
 # (`src/sessionmail/_mcp.py` `_argv`), and `subagent_verb` judges them.
@@ -923,7 +1031,12 @@ def decide_subagent(command_text, depth=0):
 #: (measured for a `--plugin-dir` load named sessionmail, the fleet's load).
 MCP_TOOL_PREFIX = "mcp__plugin_sessionmail_"
 #: The servers whose tools are judged (the hooks.json matcher's group).
-SUBAGENT_MCP_SERVERS = ("message", "pager")
+SUBAGENT_MCP_SERVERS = SUBAGENT_BASES
+#: Server -> its NOUN tools' nouns: `message_subscription_add` is the CLI's
+#: `message subscription add` (`_mcp._argv` runs the noun, then the verb), so
+#: it is rebuilt as those two words. A copy of `_mcp.NOUN_TOOLS`, since this
+#: file is stdlib-only; a test pins the two together.
+SUBAGENT_MCP_NOUNS = {"message": ("box", "subscription")}
 #: A tool's flag parameter -> the CLI flag `_argv` rebuilds from it. Only the
 #: flags the table reads: `message read --peek`, `pager status --new`.
 SUBAGENT_MCP_FLAGS = (("peek", "--peek"), ("new_only", "--new"))
@@ -959,16 +1072,22 @@ def mcp_call(tool_name, tool_input):
     verb = tool[len(server) + 1:]
     if not verb:
         return None
-    rest = [verb]
+    # In `_argv`'s order: the verb, its options, then its arguments. So a
+    # `--` among the words cuts where the server's click cuts, and
+    # `{"args": ["1", "--"], "peek": true}` is the real peek it runs
+    # (`read --peek 1 --`), not `read 1 -- --peek`.
+    noun = next((n for n in SUBAGENT_MCP_NOUNS.get(server, ()) if verb.startswith(n + "_")),
+                None)
+    rest = [noun, verb[len(noun) + 1:]] if noun else [verb]
+    for key, flag in SUBAGENT_MCP_FLAGS:
+        if _mcp_true(tool_input.get(key)):
+            rest.append(flag)
     key = SUBAGENT_MCP_WORDS.get(tool)
     words = tool_input.get(key) if key else None
     if isinstance(words, (list, tuple)):
         rest.extend(str(w) for w in words)
     elif words is not None:
         rest.append(str(words))
-    for key, flag in SUBAGENT_MCP_FLAGS:
-        if _mcp_true(tool_input.get(key)):
-            rest.append(flag)
     return server, rest
 
 

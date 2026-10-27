@@ -59,8 +59,8 @@ ALL_26 = [f"{PREFIX}{server}__{tool}" for server, tools in TOOLS_26.items() for 
 
 #: Tools the servers gained AFTER measure-001, so no live seat has been seen
 #: handed them; each is placed here by hand. `memory_init` is SM-186's verb
-#: (merged up into this branch by SM-815 do-002). Memory is not routed to the
-#: guard, as ruled, so it stays unmatched like the other memory tools.
+#: (merged up into this branch by SM-815 do-002). SM-837 routes it, alone of
+#: memory's tools, to the guard: a subagent may not mint a root.
 ADDED_SINCE = {"memory": ["memory_init"]}
 SERVED = {g: sorted(TOOLS_26.get(g, []) + ADDED_SINCE.get(g, []))
           for g in TOOLS_26.keys() | ADDED_SINCE.keys()}
@@ -129,6 +129,11 @@ DENY = [
     ("pager-unmute", "pager_unmute", {}),
     ("pager-listen", "pager_listen", {}),
     ("pager-listen-box", "pager_listen", {"box": "somebox", "quiet": True}),
+    # SM-837: a subscription is the SEAT's state (`IDENTITY_WRITES`, `_mcp.py`)
+    ("subscription-add", "message_subscription_add", {"box_": "somebox"}),
+    ("subscription-remove", "message_subscription_remove", {"box_": "somebox"}),
+    # SM-837: focus is the SEAT's pager state, any mode
+    ("pager-focus", "pager_focus", {"mode": "sleep"}),
 ]
 
 #: (cell id, tool, tool_input): each one ALLOWED inside a subagent.
@@ -156,15 +161,13 @@ ALLOW = [
     ("verify", "message_verify", {"args": ["1"]}),
     ("box-list", "message_box_list", {}),
     ("box-path", "message_box_path", {}),
-    # NOT in this branch (fix-001 step 4; the README's open question): the
-    # Bash door allows each of these today, so the MCP door does too
+    # SM-837 ruled these reads: `--stopped` writes nothing (pager.py
+    # `status`), and the `pager_rule` tool takes no params, so it can only
+    # print (its writes, `pager rule add|remove`, are Bash-only)
     ("status-stopped", "pager_status", {"stopped": True}),
-    ("subscription-add", "message_subscription_add", {"box_": "somebox"}),
-    ("subscription-remove", "message_subscription_remove", {"box_": "somebox"}),
     ("subscription-list", "message_subscription_list", {}),
     ("pager-rule", "pager_rule", {}),
-    ("pager-focus", "pager_focus", {"mode": "on"}),
-    # memory is not in the matcher; if the hook ran on one anyway, allow
+    # SM-837: memory IS judged now; its read-only tools stay allowed
     ("memory-cat", "memory_cat", {"path": "x"}),
     ("memory-wake", "memory_wake", {}),
 ]
@@ -218,6 +221,9 @@ BASH_TWIN = {
     "pager_mute": "pager mute",
     "pager_unmute": "pager unmute",
     "pager_listen": "pager listen",
+    "message_subscription_add": "message subscription add somebox",
+    "message_subscription_remove": "message subscription remove somebox",
+    "pager_focus": "pager focus sleep",
 }
 
 
@@ -225,7 +231,7 @@ def test_the_denied_tools_are_exactly_the_bash_doors_verbs():
     denied = {tool for _, tool, _ in DENY}
     assert denied == set(BASH_TWIN)
     assert {t.split("_", 1)[1] for t in denied if t.startswith("pager_")} \
-        == set(guard.SUBAGENT_PAGER_VERBS) | {"status"}
+        == set(guard.SUBAGENT_PAGER_VERBS) | {"status", "focus"}
 
 
 @pytest.mark.parametrize("tool", sorted(BASH_TWIN))
@@ -295,13 +301,13 @@ def test_a_non_dict_tool_input_is_allowed(tool_input):
     f"{PREFIX}message__message_",               # no verb
     f"{PREFIX}message__pager_stop",             # server and tool disagree
     f"{PREFIX}pager__message_read",
-    f"{PREFIX}memory__memory_cat",              # memory is never judged
+    f"{PREFIX}memory__memory_nonsense",         # a memory verb the table does not know
     f"{PREFIX}message_message_read",            # no `__`
     "mcp__plugin_othermail_message__message_read",   # another plugin
     "mcp__message__message_read",               # a non-plugin server
     "message_read",                             # bare
     "",
-], ids=["unknown-verb", "no-verb", "server-mismatch-1", "server-mismatch-2", "memory",
+], ids=["unknown-verb", "no-verb", "server-mismatch-1", "server-mismatch-2", "memory-unknown-verb",
         "no-separator", "other-plugin", "non-plugin", "bare", "empty"])
 def test_an_unknown_tool_is_allowed(name):
     proc = _raw(json.dumps({"tool_name": name, "tool_input": {}, "agent_id": AGENT_ID}))
@@ -377,11 +383,13 @@ def _matcher() -> str:
 
 @pytest.mark.parametrize("name", ALL_SERVED)
 def test_every_one_of_the_26_is_matched_or_deliberately_not(name):
-    """message and pager tools are routed to the guard; memory's are not
-    (none of its verbs is denied, so matching it would buy a python3 run per
-    call and deny nothing). Anchored or not, the matcher says the same."""
+    """message and pager tools are routed to the guard, and of memory's only
+    `memory_init`, the one memory tool a subagent is denied (SM-837). The
+    rest of memory's are not: routing them would buy a python3 run per
+    main-thread call and deny nothing. Anchored or not, the matcher says
+    the same."""
     pattern = _matcher()
-    want = not name.startswith(PREFIX + "memory__")
+    want = not name.startswith(PREFIX + "memory__") or name == PREFIX + "memory__memory_init"
     assert bool(re.fullmatch(pattern, name)) is want, name
     assert bool(re.search(pattern, name)) is want, name
 

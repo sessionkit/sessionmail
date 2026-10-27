@@ -348,9 +348,11 @@ def roots(env: Mapping[str, str]) -> Path:
     dropped = _drop.mail_root(env) / "agents"
     if os.path.realpath(readers) != os.path.realpath(dropped):
         raise PlanRefused(
-            f"the readers' agents root ({readers}, from ${_maildir.ROOT_VAR} else "
+            f"the readers' agents root ({readers}, from ${_maildir.ROOT_VAR}, else "
+            f"${_maildir.LEGACY_ROOT_VAR}, else the settings file's root/agents, else "
             f"{_maildir.DEFAULT_ROOT}) is not the mail drop's ({dropped}, from "
-            f"$SESSIONMAIL_ROOT, else $SESSION_MAIL_ROOT, else $MAIL_ROOT/agents): the drop "
+            f"${_maildir.ROOT_VAR}, else ${_maildir.LEGACY_ROOT_VAR}, else $MAIL_ROOT/agents, else "
+            f"the settings file's root/agents): the drop "
             f"would deliver into a tree the readers never open. Set them to the same place")
     return readers
 

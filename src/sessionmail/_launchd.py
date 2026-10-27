@@ -7,7 +7,8 @@ module renders the packaged template (`seat/seat-agent.plist.template`),
 writes it into `~/Library/LaunchAgents`, loads it with `launchctl
 bootstrap`, and checks the effect: the agent answers on its socket and
 holds seat.pub's key. `--uninstall` boots the job out and removes the plist.
-It never touches the key, the registry or the cert.
+It never touches the key, the registry or the cert, and never deletes or
+moves a log, new or old (`_settings.log_dir`, `_settings.old_log_dir`).
 
 Streams and exits follow `seat init`'s convention:
 
@@ -36,6 +37,8 @@ import time
 from dataclasses import dataclass
 from typing import IO, Mapping
 from xml.sax.saxutils import escape
+
+from . import _settings
 
 PROG = "message seat agent"
 
@@ -92,7 +95,8 @@ class Job:
     pub: str
     key: str
     log: str            # <log_dir>/seat-agent.<address>.log
-    log_dir: str
+    log_dir: str        # _settings.log_dir(), the ONE resolver
+    old_log: str        # the pre-0.3.2 log, a READ fallback only (until 0.3.3)
     sessionmail_home: str
     message: str        # `command -v message`, not resolved
     domain: str         # gui/<uid>
@@ -186,11 +190,13 @@ def plan(address: str, socket: str | None, env: Mapping[str, str]) -> Job:
         raise Refused("`message` is not on PATH: launchd runs `message seat agent`, "
                       "by the path `command -v message` prints")
     label = label_for(address)
-    log_dir = os.path.join(home, "Library", "Logs")
+    log_dir = str(_settings.log_dir({"HOME": home}))
+    log_name = f"seat-agent.{address}.log"
     return Job(address=address, label=label,
                plist=os.path.join(home, "Library", "LaunchAgents", f"{label}.plist"),
                socket=socket, pub=pub, key=key,
-               log=os.path.join(log_dir, f"seat-agent.{address}.log"), log_dir=log_dir,
+               log=os.path.join(log_dir, log_name), log_dir=log_dir,
+               old_log=str(_settings.old_log_dir({"HOME": home}) / log_name),
                sessionmail_home=sm_home, message=os.path.abspath(message),
                domain=f"gui/{os.getuid()}")
 
@@ -275,12 +281,21 @@ def _wait(predicate, seconds: float) -> bool:
 
 
 def _log_tail(job: Job) -> str:
-    try:
-        with open(job.log, errors="replace") as f:
-            lines = f.read().splitlines()[-LOG_TAIL:]
-    except OSError:
-        return f"(no log at {job.log})"
-    return f"the last lines of {job.log}:\n" + "\n".join("  " + line for line in lines)
+    """The log's last lines, naming the file read. The new log first; when
+    no file is there, the pre-0.3.2 one, which an agent installed before
+    0.3.2 still writes until it is uninstalled and installed again.
+    FALLBACK: drop the old-path read in the next release, 0.3.3."""
+    for path in (job.log, job.old_log):
+        try:
+            with open(path, errors="replace") as f:
+                lines = f.read().splitlines()[-LOG_TAIL:]
+        except FileNotFoundError:
+            continue
+        except OSError as exc:
+            return f"(could not read {path}: {exc.strerror or exc})"
+        old = " (the pre-0.3.2 log: no log yet at the new path)" if path == job.old_log else ""
+        return f"the last lines of {path}{old}:\n" + "\n".join("  " + line for line in lines)
+    return f"(no log at {job.log}, nor at the pre-0.3.2 {job.old_log})"
 
 
 def report(job: Job) -> str:
@@ -334,7 +349,7 @@ def _install(address: str, socket: str | None, env: Mapping[str, str],
     # there before this run is never touched, so the line says it is kept.
     path = job.log_dir
     try:
-        os.makedirs(job.log_dir, exist_ok=True)
+        _settings.make_log_dir({"HOME": _home(env)})     # 0700 when made: a log names addresses
         path = job.plist
         if wrote:
             _write(job.plist, rendered)
