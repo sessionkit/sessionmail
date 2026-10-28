@@ -758,15 +758,15 @@ dev = [{ name = "pytest", specifier = ">=8" }]
 
 [[package]]
 name = "sessiontools"
-version = "0.3.0"
+version = "0.3.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "jsonschema" },
     { name = "pyyaml" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/6b/15/11a985682327014ba707bf26b85e2379d3b18f6fc8e45fb2ec568c8feb5f/sessiontools-0.3.0.tar.gz", hash = "sha256:3a07b1cd0fa5e00565533c1b894d9d62c0b43cb785252cd37624ff7387b1c69d", size = 428191, upload-time = "2026-10-24T01:06:11.722Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/39/0e/eff46b3085bc9cccc1f8be94ca04144d4e7e6065836f505163f9626f7822/sessiontools-0.3.1.tar.gz", hash = "sha256:aaf8afdaf341cf11661b2ce496dddc9624c0c5c79fcf2dfa6aa9394c22d0abf2", size = 451748, upload-time = "2026-10-25T06:54:11.751Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/12/aa/3e169af45280b40f917e4c76c15af5dcee024e69caa238d69d266990b797/sessiontools-0.3.0-py3-none-any.whl", hash = "sha256:8d0896995cb0b0a84b1773b552e6f7a91a9c57c4144df47b0fbfb79858add21e", size = 477658, upload-time = "2026-10-24T01:05:58.351Z" },
+    { url = "https://files.pythonhosted.org/packages/ed/58/e11763f3d34c99810b31c0322e998e324a972390f02467f1596ac89b9bb1/sessiontools-0.3.1-py3-none-any.whl", hash = "sha256:e5c90169dd5a65a65aee93b86940bda5035efdad0f449d574ba73563daf9a2a5", size = 503332, upload-time = "2026-10-25T06:53:59.433Z" },
 ]
 
 [[package]]
