@@ -99,7 +99,7 @@ def env(tmp_path, bin_dir, mailroot):
         "HOME": str(tmp_path),
         "PATH": str(bin_dir),
         "TMPDIR": str(tmp_path),
-        "SESSION_MAIL_ROOT": str(mailroot / "agents"), "SESSIONMAIL_ROOT": str(mailroot / "agents"),
+        "SESSIONMAIL_ROOT": str(mailroot),
         "SESSION_MAIL_HOST": HOST, "SESSIONMAIL_HOST": HOST,
         "SESSIONMAIL_SENDMAIL": "drop",
         "SESSIONMAIL_VMAILBOX_GEN": str(bin_dir / "vmailbox-gen"),
@@ -220,6 +220,55 @@ def test_no_alias_map_is_announced_and_seat_mail_still_lands_in_the_seat_box(sen
     assert rc == EX_OK, err
     assert "no alias map" in err and "doorbell" in err
     assert set(landed(mailroot)) == {"alpha"}
+
+
+# ── SM-885: a short session id on the drop carrier ──────────────────────────
+
+ONE = "c0ffee01-1111-4111-8111-111111111111"
+TWO = "c0ffee01-2222-4222-8222-222222222222"
+
+
+@pytest.fixture
+def short_boxes(env, mailroot, monkeypatch):
+    """Session boxes, each a maildir AND a generator row, as on a live host."""
+    from sessionmail import _seat
+    monkeypatch.setattr(_seat, "box_via_map", lambda name: None)
+
+    def make(*names):
+        for n in names:
+            for d in ("cur", "new", "tmp"):
+                (mailroot / "agents" / n / d).mkdir(parents=True, exist_ok=True)
+            env["FAKE_VMAILBOX"] += f"{n}@{HOST}\tagents/{n}/\n"
+    return make
+
+
+def test_U_a_short_id_lands_in_its_full_box_and_says_so(sender, env, tmp_path, mailroot, short_boxes):
+    short_boxes(ONE)
+    rc, out, err = send(sender, env, tmp_path, "c0ffee01")
+    assert rc == EX_OK, err
+    assert set(landed(mailroot)) == {ONE}
+    assert f"To 'c0ffee01' is session {ONE}" in err
+
+
+@pytest.mark.parametrize("names, said", [((ONE, TWO), "is ambiguous"),
+                                         ((), "looks like a short session id, and no session box")],
+                         ids=["ambiguous", "none"])
+def test_A_N_a_short_id_refuses_exit_3_and_writes_nothing(sender, env, tmp_path, mailroot,
+                                                          short_boxes, names, said):
+    short_boxes(*names)
+    rc, out, err = send(sender, env, tmp_path, "alpha", "--cc", "c0ffee01")
+    assert rc == EX_MTA and out == ""
+    assert f"Cc 'c0ffee01' {said}" in err and "NOTHING WAS SUBMITTED" in err
+    assert landed(mailroot) == {}
+    for sid in names:
+        assert sid in err
+
+
+def test_L_a_legacy_8_hex_box_on_the_drop_is_itself(sender, env, tmp_path, mailroot, short_boxes):
+    short_boxes("c0ffee01", ONE)
+    rc, _, err = send(sender, env, tmp_path, "c0ffee01")
+    assert rc == EX_OK, err
+    assert set(landed(mailroot)) == {"c0ffee01"}
 
 
 # ── drop mode swaps the pre-flight; the swapped-out one is shown live ────────
@@ -811,7 +860,7 @@ def heard(sender, env, tmp_path, frm="Ears <heard+airpods>"):
 
 
 def env_root(env) -> Path:
-    return Path(env["SESSIONMAIL_ROOT"]).parent
+    return Path(env["SESSIONMAIL_ROOT"])
 
 
 def head_field(raw: bytes, name: str) -> list[str]:

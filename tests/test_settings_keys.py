@@ -27,12 +27,13 @@ from sessionmail import _drop, _operator, _settings
 #: for the variable, and what the reader gives with neither (None: the
 #: consumer works its default out at use, e.g. `hostname -s`).
 KEYS = [
-    ("root", "SESSIONMAIL_ROOT", "/srv/mail-file", "/srv/mail-var/agents", "~/.mail"),
+    ("root", "SESSIONMAIL_ROOT", "/srv/mail-file", "/srv/mail-var", "~/.sessionkit/mail"),
     ("host", "SESSIONMAIL_HOST", "host-file", "host-var", None),
     ("sendmail", "SESSIONMAIL_SENDMAIL", "/opt/file/sendmail", "/opt/var/sendmail", "drop"),
     ("magicdns_suffix", "MAGICDNS_SUFFIX", "file.example", "var.example", None),
     ("notmuch.command", "SESSIONMAIL_NOTMUCH", "/opt/file/notmuch", "/opt/var/notmuch", "notmuch"),
     ("notmuch.timeout", "SESSIONMAIL_NOTMUCH_TIMEOUT", 7, "3", 10),
+    ("notmuch.refresh", "SESSIONMAIL_NOTMUCH_REFRESH", 4, "0", 2),
     ("notmuch.profile", "SESSIONMAIL_NOTMUCH_PROFILE", "file-profile", "var-profile", "sessionkit"),
     ("postfix.generator", "SESSIONMAIL_VMAILBOX_GEN", "/opt/file/gen", "/opt/var/gen", None),
     ("postfix.relay_domain", "SESSIONMAIL_RELAY_DOMAIN", "relay.file", "relay.var", "relay.home"),
@@ -51,7 +52,7 @@ KEYS = [
     ("pull.boxes_file", "SESSIONMAIL_PULL_BOXES_FILE", "/opt/file/pull.boxes",
      "/opt/var/pull.boxes", "~/.sessionkit/mail/settings/pull.boxes"),
     ("pull.state_dir", "SESSIONMAIL_PULL_STATE_DIR", "/opt/file/puller", "/opt/var/puller",
-     "~/.sessionmail/puller"),
+     "~/.sessionkit/mail/state/puller"),
     ("pull.local_domain", "SESSIONMAIL_PULL_LOCAL_DOMAIN", "local-file", "local-var", None),
     ("pull.own_ips", "SESSIONMAIL_PULL_OWN_IPS", ["192.0.2.1"], "192.0.2.2", None),
     ("pull.unsorted_box", "SESSIONMAIL_PULL_UNSORTED_BOX", "unsorted-file", "unsorted-var", None),

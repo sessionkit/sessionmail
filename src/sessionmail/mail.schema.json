@@ -11,11 +11,27 @@
       "minimum": 1
     },
     "hooks": {
-      "description": "Whether the plugin's Stop, PostToolBatch and UserPromptSubmit hooks speak. Only the boolean true turns them on (pager-settings-file D1).",
+      "description": "Whether the hooks that speak do: the plugin's Stop, PostToolBatch and UserPromptSubmit hooks, and the SessionStart box line. Only the boolean true turns them on (pager-settings-file D1). Each also has its own switch (ride_along, stop_nag, birth), and a hook speaks only when both are on: false here holds every one of them off, whatever its own switch says. It does not govern the mail guard or the birth itself. Read from the host mail.json alone.",
       "type": "boolean"
     },
     "monitor": {
       "description": "Whether the pager monitor (`pager listen --monitor`, run by the plugin for each interactive seat) starts. Missing means on; only the boolean false turns it off for every seat on this host. A seat can turn it off for itself with SESSIONMAIL_MONITOR=off, never back on; SESSIONMAIL_PAGER=off turns it off too. The variable is read by the pager itself, at the monitor's launch, not folded into a layer.",
+      "type": "boolean"
+    },
+    "ride_along": {
+      "description": "Whether the ride-along acts: the PostToolBatch and UserPromptSubmit hooks that give this session its mail and its state line. Missing means on; only the boolean false turns it off, for every seat on this host: no mail and no state line, as with \"hooks\": false (the DEAF check still runs). A value that is not a boolean is ignored (on), and the ride-along says so once. It acts only while \"hooks\" is true as well. Read from the host mail.json alone.",
+      "type": "boolean"
+    },
+    "stop_nag": {
+      "description": "Whether the Stop hook says `pager is not listening` (exit 2) when nothing listens for the session. Missing means on; only the boolean false turns it off, for every seat on this host. Any other value is ignored (on). It acts only while \"hooks\" is true as well. The DEAF check on a pager_required seat is not under it. Read from the host mail.json alone.",
+      "type": "boolean"
+    },
+    "mail_guard": {
+      "description": "Whether the mail guard (PreToolUse) checks a mail send's subject and body for shell damage before the shell runs it. Missing means on; only the boolean false turns those checks off, for every seat on this host. Any other value, or a file that cannot be read or is not a JSON object, leaves them on. Inside a subagent, the guard's other rules (taking or marking the seat's mail, writing its settings, switching its hooks) hold whatever this says. It does not read \"hooks\". Read from the host mail.json alone.",
+      "type": "boolean"
+    },
+    "birth": {
+      "description": "Whether SessionStart (`pager hook start`) births the session's box. Missing means on; only the boolean false turns it off, for every seat on this host: no box, no line, no map generator. Any other value is ignored (on). It does not read \"hooks\"; the box line is said only while \"hooks\" is true as well. Read from the host mail.json alone.",
       "type": "boolean"
     },
     "pager_required": {
@@ -45,7 +61,7 @@
       "minLength": 1
     },
     "root": {
-      "description": "The mail root, the parent of agents/ (default ~/.mail). ~ is the account's home. Read from the template and host layers only. SESSIONMAIL_ROOT, when set and non-empty, wins over every layer; it names the agents root, so its parent is the mail root.",
+      "description": "The mail root (default ~/.sessionkit/mail): the folder boxes live under (in stores/, or in agents/ on a tree born before the move), where .postfix, .state and .notmuch sit, and postfix's virtual_mailbox_base. ~ is the account's home. Read from the template and host layers only. SESSIONMAIL_ROOT, when set and non-empty, names the same thing and wins over every layer. SESSION_MAIL_ROOT and MAIL_ROOT are retired and never read.",
       "type": "string",
       "minLength": 1,
       "x-env": "SESSIONMAIL_ROOT"
@@ -83,8 +99,14 @@
           "exclusiveMinimum": 0,
           "x-env": "SESSIONMAIL_NOTMUCH_TIMEOUT"
         },
+        "refresh": {
+          "description": "Seconds the readers' index refresh may take (default 2; 0 turns it off). In host mode `memory` runs `notmuch new --no-hooks` before it reads, and `message mark` runs it once when an id is missing; at the bound notmuch is stopped with SIGINT, keeping what it indexed, and the reader reads the index as it was. SESSIONMAIL_NOTMUCH_REFRESH, when set and non-empty, wins over every layer.",
+          "type": "number",
+          "minimum": 0,
+          "x-env": "SESSIONMAIL_NOTMUCH_REFRESH"
+        },
         "profile": {
-          "description": "The notmuch profile sessionmail's own calls read in host mode (default sessionkit: $XDG_CONFIG_HOME/notmuch/sessionkit/config). No other notmuch config is ever read. SESSIONMAIL_NOTMUCH_PROFILE, when set and non-empty, wins over every layer.",
+          "description": "The notmuch profile sessionmail's own calls read in host mode (default sessionkit). Its file is ~/.sessionkit/mail/settings/notmuch/<profile>/config, which `message setup` writes; an existing $XDG_CONFIG_HOME/notmuch/<profile>/config, else ~/.notmuch-config.<profile>, is read instead while it is a real file, and nothing is moved. No other notmuch config is ever read. SESSIONMAIL_NOTMUCH_PROFILE, when set and non-empty, wins over every layer.",
           "type": "string",
           "minLength": 1,
           "x-env": "SESSIONMAIL_NOTMUCH_PROFILE"
@@ -171,7 +193,7 @@
           "x-env": "SESSIONMAIL_PULL_BOXES_FILE"
         },
         "state_dir": {
-          "description": "Cursors, the lock and the log (default ~/.sessionmail/puller). ~ is the account's home; no other variable moves it. One puller runs per state dir.",
+          "description": "Cursors, the lock and the log (default: ~/.sessionkit/mail/state/puller, the state folder's puller/; an existing real ~/.sessionmail/puller is used while it is there). ~ is the account's home; no other variable moves it. One puller runs per state dir.",
           "type": "string",
           "minLength": 1,
           "x-env": "SESSIONMAIL_PULL_STATE_DIR"
@@ -271,6 +293,25 @@
       "description": "Pager rules: name to rule line (the grammar of `pager rule --help`). First match wins, in name order, so names are numbered like items (10, 20); false removes one.",
       "type": "object",
       "additionalProperties": {"type": ["string", "boolean"]}
+    },
+    "frozen_watch": {
+      "description": "Whether the pager monitor watches its seat for a turn frozen mid-request: busy, a main-thread turn open, no tool call unanswered, and no transcript entry for frozen_after_seconds. It detects only: it sends no keys and no mail. Missing means OFF; only the boolean true turns it on, for every seat on this host. Any other value is ignored (off), with a reason. Read from the host mail.json alone, at each of the monitor's checks.",
+      "type": "boolean"
+    },
+    "frozen_rules": {
+      "description": "Which of the frozen watch's rules run: \"silence\" (no entry for frozen_after_seconds) and \"chain\" (a run of model requests with no answer for frozen_chain_seconds). Missing means [\"silence\"]. An unknown name is ignored with a reason; a list naming no known rule is the default. Read from the host mail.json alone.",
+      "type": "array",
+      "items": {"enum": ["silence", "chain"]}
+    },
+    "frozen_after_seconds": {
+      "description": "N: the seconds of silence the \"silence\" rule waits (default 720). Floored at max(600, API_TIMEOUT_MS/1000 + 120), with API_TIMEOUT_MS read from the monitor's environment (600 s when unset); a lower value is raised to the floor and the gauge says so. A value that is not a number above zero is ignored (the default). Read from the host mail.json alone.",
+      "type": "number",
+      "exclusiveMinimum": 0
+    },
+    "frozen_chain_seconds": {
+      "description": "R: the seconds the \"chain\" rule lets a run of unanswered model requests last (default 900). Floored at max(600, CLAUDE_STREAM_FIRST_BYTE_TIMEOUT_MS/1000 + API_TIMEOUT_MS/1000 + 120), each read from the monitor's environment (180 s and 600 s when unset); a lower value is raised to the floor and the gauge says so. A value that is not a number above zero is ignored (the default). Read from the host mail.json alone.",
+      "type": "number",
+      "exclusiveMinimum": 0
     },
     "$schema": {
       "description": "A layer file may name its schema; the reader ignores it (sessiontools META_KEYS).",

@@ -86,7 +86,7 @@ def base_env(tmp: Path, **extra: str) -> dict[str, str]:
     """Nothing inherited: a scratch HOME and XDG dir, plus EXTRA."""
     (tmp / "home").mkdir(exist_ok=True)
     return {"HOME": str(tmp / "home"), "XDG_CONFIG_HOME": str(tmp / "xdg"),
-            "SESSION_MAIL_ROOT": str(tmp / "mail"), "PATH": "/usr/bin:/bin", **extra}
+            "SESSIONMAIL_ROOT": str(tmp / "mail"), "PATH": "/usr/bin:/bin", **extra}
 
 
 def profile(tmp: Path, name: str) -> Path:

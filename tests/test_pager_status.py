@@ -55,10 +55,10 @@ def seat(tmp_path, monkeypatch):
     # message-subscriptions 4.2: plain status reads THIS SESSION'S BOX. The
     # mail root is the sandbox's, never the developer's `~/.mail`, and the
     # box exists, as it does once the session's first `pager listen` ran.
-    mail = tmp_path / "mail"
+    mail = tmp_path / "mail" / "stores"
     for d in ("tmp", "new", "cur"):
         (mail / SESSION / d).mkdir(parents=True)
-    monkeypatch.setenv("SESSION_MAIL_ROOT", str(mail))
+    monkeypatch.setenv("SESSIONMAIL_ROOT", str(mail.parent))
 
     fake = write_fake(tmp_path / "fake-notmuch")
 

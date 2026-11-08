@@ -139,7 +139,7 @@ if not (lost and lost[0] == n):
         rcpt = ("%s@%s" % (to, origin)).encode("utf-8")
         wire = (b"X-Original-To: " + rcpt + b"\\nDelivered-To: " + rcpt + b"\\n"
                 + b"\\n".join(out) + sep + body)
-    box = Path(os.environ["SESSION_MAIL_ROOT"]) / to / "new"
+    box = Path(os.environ["SESSIONMAIL_ROOT"], "stores") / to / "new"
     (box / ("%d.M%d.example" % (1908540800 + n, n))).write_bytes(wire)
 sys.exit(0)
 """
@@ -175,7 +175,7 @@ def keyed(boxkey, monkeypatch):
 
 @pytest.fixture
 def mailroot(tmp_path) -> Path:
-    root = tmp_path / "mail"
+    root = tmp_path / "mail" / "stores"
     for sub in ("new", "cur", "tmp"):
         (root / BOX / sub).mkdir(parents=True)
     return root
@@ -216,7 +216,7 @@ def env(mailroot, mta, keydir, monkeypatch) -> dict[str, str]:
     real directory but the `sbin` ones, so `ssh-keygen` and `git` are found
     and `postmap` is not (no postfix pre-flight against live maps)."""
     path = ":".join(p for p in os.environ.get("PATH", "").split(":") if "sbin" not in p)
-    e = {"SESSION_MAIL_ROOT": str(mailroot), "PATH": path,
+    e = {"SESSIONMAIL_ROOT": str(mailroot.parent), "PATH": path,
          "TM_AGENT_ADDRESS": "beta",
          "SESSIONMAIL_SENDMAIL": str(mta.path), "SESSIONMAIL_HOST": "example.invalid",
          "SESSIONMAIL_ORIGIN": "example.invalid", "SESSIONMAIL_RENDER": "off",
@@ -288,7 +288,7 @@ def receipts(mta: Mta) -> list[str]:
     """The ids the sender MINTED, in send order (epoch.pid.rand-stamped, so a
     typed or rebuilt id could never match), read from the delivered files."""
     return [p.read_text().split("Message-ID: <", 1)[1].split(">", 1)[0]
-            for p in sorted(Path(os.environ["SESSION_MAIL_ROOT"], BOX, "new").iterdir())]
+            for p in sorted(Path(os.environ["SESSIONMAIL_ROOT"], "stores", BOX, "new").iterdir())]
 
 
 # ── the seam, exactly as seam.md §2 ──────────────────────────────────────
@@ -938,7 +938,7 @@ def test_the_reader_lists_what_init_minted(env, keyed, mta, mailroot, tmp_path):
     cfg.write_text(f"[database]\npath={db}\nmail_root={mailroot}\n[new]\ntags=inbox;\n"
                    f"[search]\nexclude_tags=\n[maildir]\nsynchronize_flags=false\n")
     reader = {"HOME": str(home), "PATH": env["PATH"], "LANG": "en_US.UTF-8", "TERM": "dumb",
-              "SESSION_MAIL_ROOT": str(mailroot),
+              "SESSIONMAIL_ROOT": str(mailroot.parent),
               "SESSIONMAIL_HOST": "example.invalid", "SESSIONMAIL_ORIGIN": "example.invalid",
               "SESSIONMAIL_RENDER": "off", _root.root_var(BOX): r.root_id}
     subprocess.run(["notmuch", f"--config={cfg}", "new", "--quiet"], env=reader, check=True,

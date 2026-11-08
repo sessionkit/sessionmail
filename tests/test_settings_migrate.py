@@ -10,9 +10,27 @@ from pathlib import Path
 
 from sessionmail import _layer, _migrate, _subscription as sub
 
-from _seatmap import seat_map_path, seat_subscribe
+import _leaves
 
 QUERY = "query: to:{seat}\n"
+
+
+def seat_map_path(seat: str) -> Path:
+    """SEAT's mail layer, `<seats leaf>/<seat>/settings/mail.json`. The leaf
+    is sessiontools' answer for the sandbox HOME, pinned before the test ran
+    (`_leaves`): `_migrate` writes where the resolver says, and the test
+    reads back there, never a spelled `~/.session/seats`."""
+    return _leaves.seat_settings(seat)
+
+
+def seat_subscribe(seat: str, *boxes: str) -> Path:
+    """Add BOXES to SEAT's map, `true` each, keeping what is there."""
+    p = seat_map_path(seat)
+    data = json.loads(p.read_text()) if p.is_file() else {}
+    data.setdefault("subscriptions", {}).update({b: True for b in boxes})
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(json.dumps(data, indent=2) + "\n")
+    return p
 
 
 def smhome() -> Path:

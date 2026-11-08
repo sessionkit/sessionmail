@@ -61,12 +61,12 @@ def seat(tmp_path: Path):
     (bin_dir / "block").write_text(BLOCK)
     home = tmp_path / "home"
     home.mkdir()
-    root = tmp_path / "mail"
+    root = tmp_path / "mail" / "stores"
     box = root / SID
     for sub in ("new", "cur", "tmp"):
         (box / sub).mkdir(parents=True)
     env = {"PATH": f"{bin_dir}:/usr/bin:/bin", "HOME": str(home),
-           "SESSION_MAIL_ROOT": str(root), "SESSIONMAIL_PYTHON": sys.executable,
+           "SESSIONMAIL_ROOT": str(root.parent), "SESSIONMAIL_PYTHON": sys.executable,
            "CLAUDE_CODE_SESSION_ID": SID}
     return env, bin_dir, box
 
@@ -96,7 +96,7 @@ def test_exit_0_prints_the_block_verbatim_under_the_banner(seat):
 
 def test_sid_is_the_environments_never_the_box(seat, tmp_path):
     env, bin_dir, _ = seat
-    other = tmp_path / "mail" / "someone-else"
+    other = tmp_path / "mail" / "stores" / "someone-else"
     for sub in ("new", "cur", "tmp"):
         (other / sub).mkdir(parents=True)
     r = wake(env, "someone-else")

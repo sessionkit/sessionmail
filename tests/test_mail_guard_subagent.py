@@ -27,6 +27,7 @@ from pathlib import Path
 import pytest
 
 from _export import in_checkout
+import _leaves
 
 ROOT = Path(__file__).resolve().parents[1]
 SHIM = Path(os.environ.get("MAIL_GUARD_HOOK") or ROOT / "hooks" / "mail-guard-hook")
@@ -200,8 +201,7 @@ def test_the_deny_is_one_line_naming_sm446_and_the_read_only_way():
 def test_the_deny_is_logged_like_any_other():
     """SM-518: a deny is an injection; the SM-446 one gets the same row."""
     run("pager stop", subagent=True)
-    rows = Path(os.environ["HOME"], ".session", "sessions", SESSION,
-                "log", "mail", "pager.jsonl").read_text().splitlines()
+    rows = (_leaves.session_dir(SESSION) / "log" / "mail" / "pager.jsonl").read_text().splitlines()
     row = json.loads(rows[-1])
     assert row["via"] == "pretooluse-deny" and row["sid"] == SESSION
     assert row["blocked_tool"] == "Bash" and row["tool_use_ids"] == ["toolu_test"]

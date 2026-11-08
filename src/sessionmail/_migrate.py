@@ -7,7 +7,9 @@ box file left in a seat's OLD folder routes nothing: `_subscription.scan`
 names it `NOT_CONVERTED`, and that message names this verb. Each move ships
 convert + writer + symlink; this is the convert.
 
-What it does, per folder under `~/.sessionmail/seats/`:
+What it does, per folder under the `seats` leaf (`~/.sessionmail/seats/`
+while it is real, else `~/.sessionkit/mail/state/seats/`:
+`_subscription.roots`):
 
 - **A seat** (`<project>+<role>`, `<role>.<project>`): each real box file
   becomes a `true` key of the seat's map, through `_layer.set_entry` (one
@@ -27,7 +29,7 @@ What it does, per folder under `~/.sessionmail/seats/`:
 
 Task 3.3b adds the LIVE SESSIONS (Open 2: live only), by the generator's
 rule - `session list` counts it live and its box exists. For each,
-`convert_session` carries `~/.sessionmail/sessions/<sid>/` into the
+`convert_session` carries `<sessions leaf>/<sid>/` into the
 session's layer, `~/.session/sessions/<sid>/settings/mail.json`: each box
 file becomes a `true` key of `subscriptions` (its body the log's `why`),
 and the `address` file becomes the `address` key; each converted file is
@@ -49,7 +51,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Iterable, Mapping
 
-from . import _layer, _seat, _subscription as sub
+from . import _layer, _subscription as sub
 
 #: A folder named for a session, not an agent: a UUID.
 _SESSION_ID = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", re.I)
@@ -217,12 +219,13 @@ def convert_session(sid: str, report: Report, env: Mapping[str, str] | None = No
     """SID's old files into its session layer (3.3b): THE one conversion,
     run by `pager settings migrate` for each live session and by `pager
     listen` for its own. Box files become `true` keys of `subscriptions`,
-    the `address` file the `address` key; each converted file is removed.
-    Never raises: what fails is in `report.errors`."""
+    the `address` file the `address` key; each converted file is removed,
+    IN the folder it was read from: `<home>/sessions/<sid>` for an explicit
+    HOME, else under the `sessions` leaf (`sub.roots`). Never raises: what
+    fails is in `report.errors`."""
     if not sid or "/" in sid or sid.startswith("."):
         return
-    home = _seat.home(env) if home is None else Path(home)
-    owner = home / sub.SESSIONS_DIR / sid
+    owner = sub.roots(home, env)[1] / sid
     report.sessions += 1
     if not (owner.is_dir()):
         return                          # nothing old: a session born after 3.3b
@@ -247,14 +250,15 @@ def live_boxed() -> set[str]:
 def migrate(env: Mapping[str, str] | None = None, *, dry_run: bool = False,
             home: Path | None = None, by: str = "", argv: str = "",
             live: Iterable[str] | None = None) -> Report:
-    """Walk `<home>/seats/` and carry each seat's box files into its map;
+    """Walk the `seats` leaf and carry each seat's box files into its map;
     then each LIVE session's old files into its layer (3.3b; LIVE defaults
-    to `live_boxed()`). HOME is the sessionmail home (`_seat.home(env)`);
-    the maps follow ENV's HOME. Never raises over one folder: what fails is
-    in `Report.errors`."""
-    home = _seat.home(env) if home is None else Path(home)
+    to `live_boxed()`). An explicit HOME is honoured as-is (`<home>/seats`,
+    `<home>/sessions`); else each leaf is resolved on its own (`sub.roots`).
+    A converted file is removed in the folder it was read from, never in
+    the other root. The maps follow ENV's HOME. Never raises over one
+    folder: what fails is in `Report.errors`."""
     report = Report(dry_run=dry_run)
-    owners = sub._owners(home / sub.SEATS_DIR, report.skipped)
+    owners = sub._owners(sub.roots(home, env)[0], report.skipped)
     for owner in owners:
         name = owner.name
         if _layer.is_agent_name(name):

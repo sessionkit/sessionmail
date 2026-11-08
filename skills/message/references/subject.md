@@ -6,11 +6,13 @@ title: A subject is 69 ASCII characters, front-loaded, and it never executes
 A subject is 69 ASCII characters or fewer, the point in the first ~55,
 and it never contains a backtick, `$(` or a line break.
 
-- **69** - RFC 5322's 78 minus `Subject: `. The sender refuses over,
-  unless the host shortens it (`shorten.md`).
+- **69** - RFC 5322's 78 minus `Subject: `. Over it, the sender shortens
+  the subject by default, at most the host's cap over (10 unless set),
+  and refuses when shortening is off or it is further over (`shorten.md`).
   Measured before the limit: 71% of 1,932 subjects on one box broke it.
-- **ASCII** - RFC 2047 base64 in the maildir makes a raw grep miss. Put
-  the character in the body.
+- **ASCII** - RFC 2047 base64 in the maildir makes a raw grep miss. By
+  default the subject is folded to ASCII (`—` to `-`); keep the character
+  itself in the body.
 - **Front-loaded** - notmuch keeps 288 whole; every human view cuts.
 - **Never executes** - a subject once ran `git ready approve`
   when a script quoted it later. So a backtick, `$(` or a newline is

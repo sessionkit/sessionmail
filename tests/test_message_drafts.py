@@ -11,7 +11,7 @@ A draft, as D13 places it: ONE file per open turn in the `ears` box's
 Message Format under the turn's Message-ID.
 
 Hermetic: test_message_list's maildir helper under tmp_path
-(SESSION_MAIL_ROOT); marks under the conftest sandbox; `mark`'s notmuch is
+(SESSIONMAIL_ROOT); marks under the conftest sandbox; `mark`'s notmuch is
 test_message_mark's fake, answering from a JSON file.
 """
 

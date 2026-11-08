@@ -1,19 +1,23 @@
 ---
 name: shorten
-title: Over 69, the host may shorten the subject and send it, keeping the original
+title: Over 69, the subject is shortened and sent by default, keeping the original
 ---
 
-With the shortener ON, `message send` shortens a subject that is over 69
-or not ASCII and sends it, instead of refusing.
+By default `message send` shortens a subject that is over 69 or not ASCII
+and sends it, instead of refusing. Turned off, it refuses as before.
 
-- **ON:** only the host can turn it on, with `set subject-shorten on` in
-  `~/.sessionmail/rules.locked`. The default is OFF, and OFF refuses as before.
-- **OFF:** a seat sets `SESSIONMAIL_SUBJECT_SHORTEN=off`, and other values are
-  ignored with a notice. One mail uses `--no-shorten` (MCP: `no_shorten`).
+- **ON by default:** no line, no file, or `set subject-shorten on` in the
+  locked file, `rules.locked`, in `~/.sessionkit/mail/state/` (in
+  `~/.sessionmail/` on an existing host where it is still there).
+- **OFF:** the host writes `set subject-shorten off` in the locked file; a
+  seat sets `SESSIONMAIL_SUBJECT_SHORTEN=off`, and other values are ignored
+  with a notice; one mail uses `--no-shorten` (MCP: `no_shorten`). OFF
+  refuses as before.
 - **How:** fold to ASCII (`—` to `-`), collapse spaces, drop filler words
   from the end, cut at a word with `...`; ` EOM` is kept.
 - **Says so** after the MTA accepts: on stderr (stdout stays the id), or in
-  `notices`. Exit 0.
+  `notices`. Exit 0. Every `--json` success also carries
+  `"subject": {"shortened": bool, "original": str, "sent": str}`.
 - **Original:** in `X-Original-Subject:`, exact. It is NOT signed. To change
   the result, send a reply with `--supersedes`.
 - **Still refused:** a line break or control character; a backtick or `$(`

@@ -2,7 +2,7 @@
 design D6, specs/message "Boxes are listed by kind, and session boxes only on
 request").
 
-Every test runs over a synthetic root (`SESSION_MAIL_ROOT`) and a synthetic
+Every test runs over a synthetic root (`SESSIONMAIL_ROOT`) and a synthetic
 sessionmail home (conftest's `SESSIONMAIL_HOME`); live sessions come from a
 stub, never from this host's harness. The live `~/.mail` is never read: the
 `root` fixture points the root at tmp, and `test_the_live_mail_root_is_never
@@ -48,9 +48,9 @@ def subscribe(home: Path, folder: str, stored: str) -> None:
 
 @pytest.fixture
 def root(tmp_path, monkeypatch):
-    r = tmp_path / "mail"
-    r.mkdir()
-    monkeypatch.setenv("SESSION_MAIL_ROOT", str(r))
+    r = tmp_path / "mail" / "stores"
+    r.mkdir(parents=True)
+    monkeypatch.setenv("SESSIONMAIL_ROOT", str(r.parent))
     monkeypatch.setenv("TM_AGENT_ADDRESS", "alpha")
     monkeypatch.delenv("CLAUDE_CODE_AGENT", raising=False)
     monkeypatch.setattr(_seat, "_postfix_maps", lambda p: None)     # no postfix here

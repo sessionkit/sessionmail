@@ -57,14 +57,14 @@ import re
 import stat
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable
+from typing import Iterable, Mapping
 
 from . import _layer, _seat
 from ._maildir import strict_mode
 
 #: The folder a subscription file lives in, under a seat or a session.
 FOLDER = "subscriptions"
-SEATS_DIR = "seats"
+SEATS_DIR = _seat.SEATS_DIR
 SESSIONS_DIR = _seat.SESSIONS_DIR
 
 #: How `/` is stored in a file name (D1).
@@ -284,29 +284,42 @@ def _unconverted(owner: Path, skipped: list[tuple[Path, str]],
         skipped.append((e.path, why))
 
 
+def roots(home: Path | None = None,
+          env: Mapping[str, str] | None = None) -> tuple[Path, Path]:
+    """(seats, sessions): the two old-folder leaves a reader walks. An
+    explicit HOME is honoured as-is (`<home>/seats`, `<home>/sessions`);
+    else each leaf is resolved on its own (`_seat.seats_root`,
+    `_seat.sessions_root`: the state folder's when it is there and the old
+    one is not a real one of its own, else the old root's)."""
+    if home is not None:
+        return Path(home) / SEATS_DIR, Path(home) / SESSIONS_DIR
+    return _seat.seats_root(env), _seat.sessions_root(env)
+
+
 def scan(home: Path | None = None, *, live: Iterable[str],
          env: dict[str, str] | None = None) -> Scan:
     """Every seat subscription, and the subscriptions of each session in
-    LIVE. HOME defaults to the sessionmail home (`_seat.home`): agents' and
-    sessions' old folders. A seat's map is under `~/.session/seats/` (3.2),
+    LIVE. The old folders of agents and sessions are under `roots(home,
+    env)`: HOME as given, else the `seats` and `sessions` leaves, each
+    resolved on its own. A seat's map is under `~/.session/seats/` (3.2),
     a session's under `~/.session/sessions/` (3.3b), from ENV's HOME. Reads,
     writes nothing."""
     if isinstance(live, str):
         # A str is an Iterable[str] of its characters, so `live=sid` would
         # silently read no session at all. Refuse it; pass `{sid}`.
         raise TypeError("live is a collection of session ids, not one str")
-    home = _seat.home(env) if home is None else Path(home)
+    seats, sessions = roots(home, env)
     live_ids = {sid for sid in live if sid}
     entries: list[Entry] = []
     skipped: list[tuple[Path, str]] = []
     _read_seat_maps(env, entries, skipped)
-    for owner in _owners(home / SEATS_DIR, skipped):
+    for owner in _owners(seats, skipped):
         if _layer.is_agent_name(owner.name):
             _read_folder("seat", owner, entries, skipped)
         else:
             _unconverted(owner, skipped)
     _read_session_maps(live_ids, env, entries, skipped)
-    for owner in _owners(home / SESSIONS_DIR, skipped):
+    for owner in _owners(sessions, skipped):
         if owner.name in live_ids:
             _unconverted(owner, skipped, "session", NOT_CONVERTED_SESSION)
     return Scan(entries=tuple(entries), skipped=tuple(skipped))
@@ -319,6 +332,6 @@ def pairs(home: Path | None = None, *, live: Iterable[str],
     return scan(home, live=live, env=env).pairs
 
 
-__all__ = ["BadBox", "Entry", "Scan", "file_name", "box_name", "scan", "pairs",
+__all__ = ["BadBox", "Entry", "Scan", "file_name", "box_name", "roots", "scan", "pairs",
            "FOLDER", "SEATS_DIR", "SESSIONS_DIR", "SLASH", "NOT_CONVERTED",
            "NOT_CONVERTED_SESSION"]

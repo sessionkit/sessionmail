@@ -277,7 +277,9 @@ def test_the_socket_cap_is_103_bytes(minted, short_home, tools, length, binds): 
 
 # ── the template is a template ──────────────────────────────────────────────
 
-PLACEHOLDERS = ("ADDRESS", "MESSAGE", "SESSIONMAIL_HOME", "SOCKET", "LOG_DIR")
+#: SESSIONMAIL_HOME is rendered only when the installer set it (else its
+#: entry is dropped: `_launchd.PINNED_HOME`); SEAT_PUB is always filled.
+PLACEHOLDERS = ("ADDRESS", "MESSAGE", "SESSIONMAIL_HOME", "SOCKET", "LOG_DIR", "SEAT_PUB")
 
 
 def test_the_template_renders_to_a_plist_that_lints(tmp_path):
@@ -287,7 +289,9 @@ def test_the_template_renders_to_a_plist_that_lints(tmp_path):
     text = TEMPLATE.read_text()
     for name in PLACEHOLDERS:
         assert f"@{name}@" in text
-        text = text.replace(f"@{name}@", {"ADDRESS": ADDRESS}.get(name, f"/scratch/{name.lower()}"))
+        text = text.replace(f"@{name}@", {"ADDRESS": ADDRESS,
+                                          "SEAT_PUB": f"/scratch/seat-keys/{ADDRESS}/seat.pub"}
+                            .get(name, f"/scratch/{name.lower()}"))
     assert "@" not in text.split("<plist", 1)[1], "an unrendered placeholder"
     rendered = tmp_path / f"dev.sessionkit.mail.seat-agent.{ADDRESS}.plist"
     rendered.write_text(text)

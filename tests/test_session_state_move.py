@@ -14,6 +14,7 @@ from types import SimpleNamespace
 
 import pytest
 
+import _leaves
 from sessionmail import _reach, _seat
 
 SID = "7f3a0c2e-1111-2222-3333-444455556666"
@@ -22,17 +23,23 @@ SID = "7f3a0c2e-1111-2222-3333-444455556666"
 @pytest.fixture
 def place(tmp_path, monkeypatch):
     """A sessionmail home and a user HOME, apart: the old root is under the
-    first, the session dir under the second."""
+    first, the session dir under the second. The old root (`sessions/`) is
+    THERE, as on a host that ran old code: `_link` links only an old root
+    that already is (SM-1005; the fresh host is `test_seat_link_fresh.py`).
+    The session dir is sessiontools' answer for the user HOME, pinned here
+    before anything runs (`_leaves`)."""
     home = tmp_path / "sessionmail"
     user = tmp_path / "user"
     user.mkdir()
+    (home / "sessions").mkdir(parents=True)
     monkeypatch.setenv("SESSIONMAIL_HOME", str(home))
     monkeypatch.setenv("HOME", str(user))
     env = {"SESSIONMAIL_HOME": str(home), "HOME": str(user)}
+    mail = _leaves.session_mail(SID, user)
 
     class Place:
         old = home / "sessions" / SID
-        new = user / ".session" / "sessions" / SID / "mail"
+        new = mail
 
         def seed(self, *names: str, under: Path | None = None) -> None:
             root = self.old if under is None else under
@@ -349,7 +356,7 @@ from sessionmail import pager  # noqa: E402
 
 def _rig_places() -> tuple[Path, Path]:
     old = Path(os.environ["SESSIONMAIL_HOME"]) / "sessions" / RIG_SESSION
-    new = Path(os.environ["HOME"]) / ".session" / "sessions" / RIG_SESSION / "mail"
+    new = _leaves.session_mail(RIG_SESSION)          # the sandbox HOME's, pinned
     return old, new
 
 

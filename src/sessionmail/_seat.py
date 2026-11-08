@@ -50,6 +50,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from . import _settings as _mail_settings   # not `_settings`: that is sessiontools', below
 from ._maildir import make_maildir
 
 #: The seat-ish variables, in the order `openspec/specs/pager/spec.md`
@@ -90,14 +91,18 @@ ADDRESS_FILE = "address"
 #: requirement. The authored pages say `<seat>/subscriptions/` (and said
 #: `<seat>/marks`, until marks moved under the session) without ever
 #: saying where `<seat>` is. Two candidates
-#: were live: inside the maildir (`~/.mail/agents/<name>/`) and beside it.
+#: were live: inside the maildir (`<boxes root>/<name>/`) and beside it.
 #: Beside it wins on one measured argument - `openspec/specs/pager/spec.md`
 #: "Reading is harmless" promises a human may open the maildir in Mail.app,
 #: neomutt or notmuch and change nothing, and a `subscriptions/` directory
 #: sitting between `new/` and `cur/` is not a maildir. Override with
 #: `SESSIONMAIL_HOME`; retract freely if a requirement says otherwise.
 SEAT_ROOT_IS_INFERRED = True
-DEFAULT_HOME = "~/.sessionmail"
+#: The old root, `~/.sessionmail`, derived from `_settings.OLD_STATE_DIR`
+#: (the one place it is named). Seat keys are found by
+#: `_settings.seat_keys_dir`; the seat folders are the `seats` leaf, found
+#: by `seats_root`.
+DEFAULT_HOME = f"~/{_mail_settings.OLD_STATE_DIR.as_posix()}"
 
 #: A directory name, not an address: `alice@host` and `alice+role` are two
 #: addresses of ONE seat (specs/pager, "The banner tells the truth"), so
@@ -111,14 +116,165 @@ _UNSAFE = re.compile(r"[^a-z0-9._-]+")
 _UNSAFE_ADDRESS = re.compile(r"[^a-z0-9._+-]+")
 
 
+# ── inherited identity ──────────────────────────────────────────────
+#
+# PROPOSED, not ratified: openspec/changes/inherited-identity/. Claude puts
+# CLAUDE_PID=<its own pid> into every child's environment (MEASURED,
+# the change's proposal). A tmux server started from inside a seat copies the
+# seat's whole environment into its global one, so every plain pane on it
+# carries the seat's words - and CLAUDE_PID - while running under no claude:
+# the server daemonises, and a pane's chain is `shell -> tmux -> 1`. So an
+# environment whose CLAUDE_PID names a process that is NOT an ancestor of
+# this one was minted for a seat this process is not part of, and its seat
+# words are inherited, not identity. Ancestry is the one thing a plain pane
+# cannot inherit; the session id is inherited exactly like the seat word.
+
+#: The words that name a seat or its session, dropped when inherited. The
+#: identity chain, plus SESSION_SEAT, which `memory wake` still reads.
+#: EMAIL is NOT here: it is a ruled declaration (the change's design), and with no
+#: seat and no session no resolver reaches it.
+INHERITED_VARS = IDENTITY_VARS + ("SESSION_SEAT",)
+
+#: The variable claude stamps with its own pid in every child it starts.
+CLAUDE_PID_VAR = "CLAUDE_PID"
+
+#: Set by `drop_inherited` to the claude pid whose words it dropped, so a
+#: refusal anywhere downstream - this process or a bundled script it
+#: starts - can say WHY there is no seat. Never read as identity.
+INHERITED_MARK = "SESSIONMAIL_INHERITED_FROM"
+
+#: How far the ancestry walk goes. A walk that reaches it, or repeats, or
+#: cannot read a hop, could not measure: fail-open (`inherited_from`).
+ANCESTRY_MAX_HOPS = 64
+
+
+class CannotLook(Exception):
+    """The process table could not be read: ancestry is unmeasured."""
+
+
+def parent_pid(pid: int) -> int:
+    """PID's parent pid. This process's own parent costs no fork; on Linux
+    `/proc/<pid>/stat` is read, elsewhere one `ps -p` (`_ps_one`). Raises
+    CannotLook when it cannot be read: no such process (a race, the chain
+    moved under us), no `ps`, a timeout, or no ppid in what came back."""
+    if pid == os.getpid():
+        return os.getppid()
+    proc = Path(f"/proc/{pid}/stat")
+    if Path("/proc/self/stat").is_file():
+        try:
+            text = proc.read_text(encoding="utf-8", errors="replace")
+        except OSError as exc:
+            raise CannotLook(f"/proc/{pid}/stat: {exc.__class__.__name__}") from exc
+        # comm sits in parentheses and may hold spaces or ')': the fields
+        # after the LAST ')' are `state ppid ...`.
+        fields = text.rpartition(")")[2].split()
+        if len(fields) < 2 or not fields[1].isdigit():
+            raise CannotLook(f"/proc/{pid}/stat: no ppid field")
+        return int(fields[1])
+    # `_ps_one` (one `ps -p`, ~4 ms, 2 s timeout) answers {} for every
+    # failure: no `ps`, a timeout, no such process.
+    table = _ps_one(pid)[0]
+    if pid not in table:
+        raise CannotLook(f"ps -p {pid}: no row")
+    return table[pid]
+
+
+def runs_under(ancestor: int, *, start: int | None = None, parent_of=parent_pid) -> bool:
+    """True when ANCESTOR is START (default: this process) or one of its
+    ancestors. False when the chain reaches pid 1 (or 0) without it. Raises
+    CannotLook when the chain cannot be read, repeats, or runs past
+    ANCESTRY_MAX_HOPS: an unmeasured walk is not a "no"."""
+    current = os.getpid() if start is None else start
+    seen: set[int] = set()
+    for _ in range(ANCESTRY_MAX_HOPS):
+        if current == ancestor:
+            return True
+        if current <= 1:
+            return False
+        if current in seen:
+            raise CannotLook(f"the process chain repeats at pid {current}")
+        seen.add(current)
+        current = parent_of(current)
+    raise CannotLook(f"no end to the process chain in {ANCESTRY_MAX_HOPS} hops")
+
+
+def inherited_from(env: Mapping[str, str] | None = None, *, start: int | None = None,
+                   parent_of=parent_pid) -> int | None:
+    """The claude pid whose environment this process inherited without
+    running under it, or None when the words are to be trusted as today.
+
+    - CLAUDE_PID unset, blank, or not a plain number > 1: no evidence, None.
+    - CLAUDE_PID is this process or an ancestor (a tool shell, a hook, the
+      pager monitor, a background Bash): None.
+    - CLAUDE_PID is set and is not an ancestor (a plain pane on a tmux
+      server started inside a seat; an orphan whose claude has exited):
+      that pid.
+    - The ancestry cannot be measured: None (CHOSEN, fail-open: a reader
+      that cannot look must not deafen a live seat).
+
+    Pure but for PARENT_OF, which tests replace with a process table."""
+    env = os.environ if env is None else env
+    raw = (env.get(CLAUDE_PID_VAR) or "").strip()
+    if not (raw.isascii() and raw.isdigit()):
+        return None
+    pid = int(raw)
+    if pid <= 1:
+        return None
+    try:
+        if runs_under(pid, start=start, parent_of=parent_of):
+            return None
+    except CannotLook:
+        return None
+    return pid
+
+
+def drop_inherited(env: dict[str, str] | None = None, *, start: int | None = None,
+                   parent_of=parent_pid) -> int | None:
+    """The ONE choke point: called first by `message`, `pager` and
+    `memory`, before anything resolves. When `inherited_from` names a pid,
+    every INHERITED_VARS word is removed from ENV (default `os.environ`, so
+    the bundled scripts started later see the same) and INHERITED_MARK is
+    set to the pid; the pid is returned. Otherwise ENV keeps its words, a
+    stale INHERITED_MARK is removed, and None is returned. EMAIL and
+    CLAUDE_PID are left as they are."""
+    env = os.environ if env is None else env
+    pid = inherited_from(env, start=start, parent_of=parent_of)
+    if pid is None:
+        env.pop(INHERITED_MARK, None)
+        return None
+    dropped = [var for var in INHERITED_VARS if var in env]
+    for var in dropped:
+        del env[var]
+    # A child of a verb that already dropped them finds no words left, and
+    # keeps the mark its parent set for the same pid; a mark for another pid
+    # was not set by this tree, and goes.
+    if dropped or env.get(INHERITED_MARK) == str(pid):
+        env[INHERITED_MARK] = str(pid)
+    else:
+        env.pop(INHERITED_MARK, None)
+    return pid
+
+
+def inherited_note(env: Mapping[str, str] | None = None) -> str:
+    """The clause a no-seat refusal appends to say why the words were not
+    taken: "" unless `drop_inherited` dropped some for a pid."""
+    env = os.environ if env is None else env
+    raw = (env.get(INHERITED_MARK) or "").strip()
+    if not raw.isdigit():
+        return ""
+    return (f"; identity words inherited from claude pid {raw}, which this process "
+            "does not run under")
+
+
 class NoIdentity(Exception):
     """Nothing in the environment says who this seat is."""
 
-    def __init__(self) -> None:
+    def __init__(self, env: Mapping[str, str] | None = None) -> None:
         super().__init__(
             "no identity in the environment - looked for "
             + ", ".join(IDENTITY_VARS)
             + ", in that order"
+            + inherited_note(env)
         )
 
 
@@ -285,9 +441,26 @@ def refuses_base(seat: "Seat", box: str) -> str | None:
 
 
 def home(env: dict[str, str] | None = None) -> Path:
-    """The root under which every seat on this host keeps its own files."""
+    """The OLD root: `$SESSIONMAIL_HOME`, else `~/.sessionmail`: the state
+    resolver's old branch (`_settings.old_state_dir`). Seat keys are found
+    by `_settings.seat_keys_dir`. A leaf of the state folder (`seats`,
+    `sessions`, ...) is found through `_settings.state_path` (`seats_root`
+    for the seat folders), not under this root by hand."""
     env = os.environ if env is None else env
     return Path(env.get("SESSIONMAIL_HOME") or DEFAULT_HOME).expanduser()
+
+
+#: The state leaf that holds one folder per seat (`seats/<address>/`): its
+#: rules, focus, subscriptions, and a seatless run's marks, stamps and ride.
+SEATS_DIR = "seats"
+
+
+def seats_root(env: Mapping[str, str] | None = None) -> Path:
+    """The `seats` leaf, as every reader and writer of a seat folder finds
+    it: `_settings.state_path(SEATS_DIR, env)`. `<home()>/seats/` while that
+    is a real folder of its own, else `~/.sessionkit/mail/state/seats/`
+    (there, or the fresh default)."""
+    return _mail_settings.state_path(SEATS_DIR, env)
 
 
 #: The pager spec ("The pager is a nudge"): *"Everything a page reads - the queue, the stamps, the marks -
@@ -300,11 +473,15 @@ def home(env: dict[str, str] | None = None) -> Path:
 #: for every session, `<session dir>/mail/`, found by ONE computation,
 #: `sessiontools.settings.session_dir` - so a host whose sessions root is
 #: `$SESSIONS_DIR` follows it the day sessiontools does, with no change
-#: here. `<home>/sessions/<sid>` is the OLD root: `pager listen` moves a
-#: LIVE session's dir there to `mail/` once and leaves a symlink for a
-#: writer still running old code (`move_session_state`). Nothing reads the
-#: old path: a dead session's state stays where it is, and a verb handed
-#: its id says "not moved; at ..." rather than quietly reading there.
+#: here. `<sessions leaf>/<sid>` is the OLD root (`old_session_root`, the
+#: `sessions` leaf of the state folder, `sessions_root`): `pager listen`
+#: moves a LIVE session's dir there to `mail/` once, out of the folder it
+#: read, and leaves a symlink for a writer still running old code
+#: (`move_session_state`). It is read only to move it, to name it, and by
+#: the readers of what old code kept there (old subscription files, an old
+#: `listening` stamp, a receipt's `old` place): a dead session's state
+#: stays where it is, and a verb handed its id says "not moved; at ..."
+#: rather than quietly reading there.
 SESSIONS_DIR = "sessions"
 MAIL_DIR = "mail"
 
@@ -322,12 +499,22 @@ def _settings():
     return settings
 
 
+def sessions_root(env: Mapping[str, str] | None = None) -> Path:
+    """The `sessions` leaf, as every reader and writer of an old session
+    folder finds it: `_settings.state_path(SESSIONS_DIR, env)`.
+    `<home()>/sessions/` while that is a real folder of its own, else
+    `~/.sessionkit/mail/state/sessions/` (there, or the fresh default)."""
+    return _mail_settings.state_path(SESSIONS_DIR, env)
+
+
 def old_session_root(session: str, env: dict[str, str] | None = None) -> Path | None:
-    """`<home>/sessions/<SESSION>/`, where the state lived before 3.3a. Read
-    by the mover, and by the one line that says a session was NOT moved."""
+    """`<sessions leaf>/<SESSION>/` (`sessions_root`), where the state lived
+    before 3.3a: the ONE function for an old session folder. Read by the
+    mover (which renames OUT of it), by the one line that says a session
+    was NOT moved, and by a receipt's `old` place."""
     if not session or session == "-":
         return None
-    return home(env) / SESSIONS_DIR / session
+    return sessions_root(env) / session
 
 
 def session_root(session: str, env: dict[str, str] | None = None) -> Path | None:
@@ -416,7 +603,10 @@ def move_session_state(session: str, env: dict[str, str] | None = None) -> Moved
     itself - no lock file, the tree is a git repo. The cases:
 
     - the old path is a symlink already: moved earlier; nothing to do.
-    - the old path is absent: nothing to move; `mail/` is made, the link placed.
+    - the old path is absent: nothing to move; `mail/` is made, the link placed
+      when the old root (its parent) is there - and when it is not (a fresh
+      host), nothing is made at the old path at all: a fresh install makes
+      no old root.
     - a directory, and `mail/` absent: ONE rename, atomic on one disk. A
       rename that fails (another volume, say) moves nothing and is named;
       this run then writes under `mail/` and the old dir keeps what it had.
@@ -483,7 +673,9 @@ def _move_locked(old: Path, new: Path) -> Moved:
         return Moved(lines, True)
     link = _link(old, new)
     lines.append(link)
-    return Moved(lines, not link.startswith(f"{old} now"))
+    # No old root is not news (a fresh host, every listen): only a link that
+    # something stood in the way of reaches the box.
+    return Moved(lines, not (link.startswith(f"{old} now") or link == _no_old_root(old)))
 
 
 #: The append-only logs at the top of a session's state (`marks_path`,
@@ -572,17 +764,30 @@ def _merge_log(old: Path, new: Path) -> None:
     old.unlink()
 
 
+def _no_old_root(old: Path) -> str:
+    """The line `_link` gives when OLD's parent, the old root, is not there:
+    a fresh host (a fresh install makes none of the old folders). Nothing
+    old reads there, so nothing is made."""
+    return f"{old} not linked - there is no old root at {old.parent}, so nothing is made there"
+
+
 def _link(old: Path, new: Path) -> str:
     """A symlink NEW at OLD; the line that says so, or what stood in the way.
     The gap: OLD back as a directory before the link is
-    folded into NEW once and the link retried once."""
-    old.parent.mkdir(parents=True, exist_ok=True)   # a host (or test home) with no old root yet
+    folded into NEW once and the link retried once.
+
+    Only where the old root (OLD's parent) already is: it is never made
+    here, so a fresh host gets no old folder for the sake of a link nothing
+    reads. `os.symlink` itself is the test - no check-then-act -
+    and a parent that is absent answers `_no_old_root`."""
     for attempt in (1, 2):
         try:
             os.symlink(new, old)
             return f"{old} now points there"
         except FileExistsError:
             pass
+        except FileNotFoundError:
+            return _no_old_root(old)
         if old.is_symlink():
             if old.resolve() == new.resolve():
                 return f"{old} now points there (linked by another run)"
@@ -663,9 +868,9 @@ def resolve(env: dict[str, str] | None = None) -> Seat:
             if name:
                 declared = declared_address(env)
                 address = (declared[0] if declared else fold_address(value)) or name
-                return Seat(name=name, source=var, root=home(env) / "seats" / address,
+                return Seat(name=name, source=var, root=seats_root(env) / address,
                             address=address)
-    raise NoIdentity()
+    raise NoIdentity(env)
 
 
 # ── subscriptions: retired from the pager ────────────────────────────────
@@ -1658,6 +1863,11 @@ SAID_DRIFT_STAMP = "said-drift"
 #: once per session, on or off, the way the drift line is.
 SAID_COPIED_STAMP = "said-copied"
 
+#: The switch_ignored line's own record (a per-hook switch holds a value
+#: that is not a boolean): said once per session, on or off, the way the
+#: drift line is, and again only when the line changes.
+SAID_IGNORED_STAMP = "said-switch-ignored"
+
 #: The deaf check's own record with the hooks OFF, where its
 #: DEAF line is the only thing said. Holds "" once a DEAF
 #: has cleared, so the next one is said again.
@@ -1851,8 +2061,8 @@ def _stamped_elsewhere(session: str, env: dict[str, str] | None = None) -> dict[
 
     Read: every `<session dir>/mail/stamps/listening` (the sessions root is
     sessiontools', found as SESSION's dir's parent), and the older
-    `<home>/sessions/<sid>/stamps/listening` a writer on old code may still
-    keep. Only a pid that is alive counts, as `_reach.listening_pid` reads
+    `<sessions leaf>/<sid>/stamps/listening` (`sessions_root`) a writer on
+    old code may still keep. Only a pid that is alive counts, as `_reach.listening_pid` reads
     one session's stamp; nothing is cleared (read-only). A root that cannot
     be found adds nothing."""
     found: dict[int, str] = {}
@@ -1863,7 +2073,7 @@ def _stamped_elsewhere(session: str, env: dict[str, str] | None = None) -> dict[
     except Exception:  # noqa: BLE001 - no sessiontools root: nothing to read there
         pass
     try:
-        globs.append((home(env) / SESSIONS_DIR, f"*/{STAMPS_DIR}/{LISTENING_STAMP}"))
+        globs.append((sessions_root(env), f"*/{STAMPS_DIR}/{LISTENING_STAMP}"))
     except Exception:  # noqa: BLE001 - no seat home: nothing to read there
         pass
     for root, pattern in globs:

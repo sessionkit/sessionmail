@@ -50,7 +50,7 @@ def base_env(tmp: Path, **extra: str) -> dict[str, str]:
     """An environment with nothing inherited: a scratch HOME, mail root and
     XDG dir, plus EXTRA."""
     (tmp / "home").mkdir(exist_ok=True)
-    return {"HOME": str(tmp / "home"), "SESSION_MAIL_ROOT": str(tmp / "mail"),
+    return {"HOME": str(tmp / "home"), "SESSIONMAIL_ROOT": str(tmp / "mail"),
             "XDG_CONFIG_HOME": str(tmp / "xdg"), "PATH": "/usr/bin:/bin", **extra}
 
 
@@ -61,8 +61,8 @@ def maildir(d: Path) -> Path:
 
 
 def store(tmp: Path, name: str) -> Path:
-    """A store box under the agents root, holding the marker."""
-    d = maildir(tmp / "mail" / name)
+    """A store box under the boxes root, holding the marker."""
+    d = maildir(tmp / "mail" / "stores" / name)
     (d / _boxes.STORE_MARKER).write_text("")
     return d
 
@@ -263,7 +263,7 @@ def test_marker_store_without_a_profile_refuses_naming_the_store(tmp_path):
 def test_a_box_in_no_store_refuses(tmp_path):
     """A flat box with no marker above it (a session box, `kaizen`) is in no
     store: refused, naming the box and the missing marker."""
-    flat = maildir(tmp_path / "mail" / "kaizen")
+    flat = maildir(tmp_path / "mail" / "stores" / "kaizen")
     dot_profile(tmp_path, "kaizen")      # a profile by the box's name is NOT used
     env = base_env(tmp_path, SESSIONMAIL_INDEX="store", TM_AGENT_ADDRESS="kaizen")
     r = _index.resolve(env)
@@ -272,11 +272,11 @@ def test_a_box_in_no_store_refuses(tmp_path):
     assert f"no {_boxes.STORE_MARKER} at {flat}" in r.refusal
 
 
-def test_the_walk_stops_at_the_agents_root(tmp_path):
-    """A marker in the agents root itself, or above it, names no store."""
-    maildir(tmp_path / "mail" / "kaizen")
+def test_the_walk_stops_at_the_boxes_root(tmp_path):
+    """A marker in the boxes root itself, or above it, names no store."""
+    maildir(tmp_path / "mail" / "stores" / "kaizen")
+    (tmp_path / "mail" / "stores" / _boxes.STORE_MARKER).write_text("")
     (tmp_path / "mail" / _boxes.STORE_MARKER).write_text("")
-    (tmp_path / _boxes.STORE_MARKER).write_text("")
     env = base_env(tmp_path, SESSIONMAIL_INDEX="store", TM_AGENT_ADDRESS="kaizen")
     assert _index.resolve(env).refused
 
@@ -322,7 +322,7 @@ def test_the_seats_store_is_resolved_once(tmp_path, monkeypatch):
 
 def test_a_miss_is_not_cached(tmp_path):
     """A box that gains its marker later is found: only a hit is kept."""
-    box = maildir(tmp_path / "mail" / "alpha")
+    box = maildir(tmp_path / "mail" / "stores" / "alpha")
     dot_profile(tmp_path, "alpha")
     env = base_env(tmp_path, SESSIONMAIL_INDEX="store", TM_AGENT_ADDRESS="alpha")
     assert _index.resolve(env).refused

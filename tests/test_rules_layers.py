@@ -30,7 +30,11 @@ from pathlib import Path
 
 import pytest
 
-from sessionmail import rules
+# The REAL `_operator.settings_home`, taken there at import, before the
+# autouse conftest patches it: one copy of the seam.
+from test_operator_config import REAL_SETTINGS_HOME
+
+from sessionmail import _operator, rules
 from sessionmail._seat import Seat
 from sessionmail.rules import (
     BUILT_IN_TEXT,
@@ -394,12 +398,39 @@ def test_locked_rules_in_page_rules_are_only_the_env_layer(roots):
 
 def test_the_default_locked_path_ignores_home_and_sessionmail_home(monkeypatch, tmp_path):
     """`account_home()` reads the password database for this uid, never
-    `$HOME` and never `$SESSIONMAIL_HOME`: an agent sets both at will."""
+    `$HOME` and never `$SESSIONMAIL_HOME`: an agent sets both at will.
+
+    On the REAL seam: the default is
+    `_settings.account_state_path`, rooted at `_operator.settings_home()`,
+    which the conftest points into the sandbox. So the real seam is put
+    back, and only the password database's answer is pointed at a tmp
+    account, so that no test probes the developer's own home. Both planted
+    trees hold a `rules.locked`, in the new folder and the old: neither is
+    ever chosen."""
     real = Path(pwd.getpwuid(os.getuid()).pw_dir)
-    monkeypatch.setenv("HOME", str(tmp_path / "planted"))
-    monkeypatch.setenv("SESSIONMAIL_HOME", str(tmp_path / "planted" / ".sessionmail"))
+    planted = tmp_path / "planted"
+    for root in (planted / ".sessionkit/mail/state", planted / ".sessionmail"):
+        root.mkdir(parents=True)
+        (root / "rules.locked").write_text("ride *\n")
+    monkeypatch.setenv("HOME", str(planted))
+    monkeypatch.setenv("SESSIONMAIL_HOME", str(planted / ".sessionmail"))
     assert rules.account_home() == real
-    assert rules.default_locked_path() == real / ".sessionmail" / "rules.locked"
+
+    monkeypatch.setattr(_operator, "settings_home", REAL_SETTINGS_HOME)
+    account = tmp_path / "account"
+    entry = pwd.getpwuid(os.getuid())
+    monkeypatch.setattr(pwd, "getpwuid", lambda uid: pwd.struct_passwd(
+        (*entry[:5], str(account), *entry[6:])))
+    assert rules.account_home() == account
+    new = account / ".sessionkit/mail/state/rules.locked"
+    assert rules.default_locked_path() == new                    # fresh: rule 4, NEW
+    (account / ".sessionkit/mail/state").mkdir(parents=True)        # the parent only
+    assert rules.default_locked_path() == new
+    new.write_text("")
+    assert rules.default_locked_path() == new
+    (account / ".sessionmail").mkdir()
+    (account / ".sessionmail/rules.locked").write_text("")          # a real old file
+    assert rules.default_locked_path() == account / ".sessionmail" / "rules.locked"
 
 
 def test_the_suite_never_reads_the_real_locked_file(tmp_path):

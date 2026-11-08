@@ -37,7 +37,8 @@ from pathlib import Path
 import pytest
 from click.testing import CliRunner
 
-from _seatmap import session_declare, session_live_path, session_log, session_map_path
+from _seatmap import session_declare, session_map_path
+import _leaves
 from fakes import write_fake
 from sessionmail import _seat, pager
 from sessionmail.pager import cli
@@ -64,9 +65,11 @@ def host(request, monkeypatch):
 
 def _mail(sid: str) -> Path:
     """Where a session's mail state is since session-settings 3.3a: under
-    the session dir sessiontools keeps, `$HOME/.session/sessions/<sid>/mail/`
-    (spelt out, not asked of the code, so the test can see it move)."""
-    return Path(os.environ["HOME"]) / ".session" / "sessions" / sid / "mail"
+    the session dir sessiontools keeps, `<sessions leaf>/<sid>/mail/`. The
+    leaf is sessiontools' own answer for the HOME, pinned before the test
+    ran (`_leaves`), not asked of sessionmail, so the test can see the code
+    write anywhere else."""
+    return _leaves.session_mail(sid)
 
 
 # ── _seat: the address ────────────────────────────────────────────────────
@@ -126,13 +129,14 @@ def test_the_address_is_keyed_on_the_session_and_overwritten_whole(tmp_path):
     """3.3b: the session layer's `address` key, one value, each change logged;
     3.4: in the file the session's verbs write, `mail.d/70-live.json`."""
     env = {"SESSIONMAIL_HOME": str(tmp_path), "HOME": str(tmp_path)}
+    _leaves.pin(tmp_path)                       # this HOME's leaves, before the write
     path = _seat.write_address("sess-a", "a+b", env)
-    assert path == session_live_path("sess-a", tmp_path)
+    assert path == _leaves.session_live_path("sess-a", tmp_path)
     _seat.write_address("sess-a", "a+c", env)
     _seat.write_address("sess-a", "a+c", env)                      # unchanged: not logged
     assert json.loads(path.read_text()) == {"address": "a+c"}
     assert _seat.read_address("sess-a", env) == "a+c"
-    assert [r["value"] for r in session_log("sess-a", tmp_path)] == ["a+b", "a+c"]
+    assert [r["value"] for r in _leaves.session_log("sess-a", tmp_path)] == ["a+b", "a+c"]
     # No temp left behind: the verbs' file, and the layer's writers' lock.
     assert sorted(p.name for p in path.parent.iterdir()) == ["70-live.json"]
     assert sorted(p.name for p in path.parent.parent.iterdir()) == [".mail.json.lock", "mail.d"]
@@ -209,8 +213,8 @@ def fleet(tmp_path, monkeypatch, host):
     jq = shutil.which("jq")
     if not jq:
         pytest.skip("the generator's alias half needs jq")
-    agents = tmp_path / "agents"
-    agents.mkdir()
+    agents = tmp_path / "agents" / "stores"
+    agents.mkdir(parents=True)
     maps = tmp_path / "maps"
     maps.mkdir()
     bin_dir = tmp_path / "bin"
@@ -235,7 +239,7 @@ def fleet(tmp_path, monkeypatch, host):
     monkeypatch.setenv("FAKE_PS_TABLE", str(ps_table))
     monkeypatch.setenv("SESSION_SIDECAR_DIR", str(sidecars))
     monkeypatch.setenv("HOME", str(tmp_path / "home"))
-    monkeypatch.setenv("SESSION_MAIL_ROOT", str(agents))
+    monkeypatch.setenv("SESSIONMAIL_ROOT", str(agents.parent))
     monkeypatch.setenv("SESSIONMAIL_HOME", str(tmp_path / "sessionmail"))
     monkeypatch.delenv("TM_AGENT_ADDRESS", raising=False)
     monkeypatch.setenv("CLAUDE_CODE_AGENT", "foreman")
@@ -243,11 +247,12 @@ def fleet(tmp_path, monkeypatch, host):
     monkeypatch.setenv(pager.POLL_VAR, "0.05")
     monkeypatch.setattr(_seat, "_ps_table", lambda: ({}, {}))
     monkeypatch.setattr(_seat, "idle_seconds", lambda session, now=None: None)
+    _leaves.pin(tmp_path / "home")              # the fleet HOME's leaves, before any listen
 
     class Fleet:
         root = tmp_path
         valias = maps / "valias"
-        address = session_live_path("sess-a")   # 3.4: the session's verbs' file
+        address = _leaves.session_live_path("sess-a")   # 3.4: the session's verbs' file
 
     return Fleet()
 

@@ -1,9 +1,10 @@
-"""The physical box: a maildir under the agents root, read by bytes.
+"""The physical box: a maildir under the boxes root, read by bytes.
 
 `specs/message`, "One physical box, on both sides": the box a listener
-resolves is the box a sender writes, `~/.mail/agents/<box>/{new,cur,tmp}`
-(`$SESSIONMAIL_ROOT`, then the older `$SESSION_MAIL_ROOT`, override it:
-`env_root`, the one order the readers and the drop share). This
+resolves is the box a sender writes, `<root>/<boxes>/<box>/{new,cur,tmp}`
+(`mail_root`: `$SESSIONMAIL_ROOT`, else mail.json's `root`, else
+`~/.sessionkit/mail`; `boxes_name`: `stores/`, or `agents/` on a tree born
+before the move). This
 module ENUMERATES a box the way session-mail-list does - every file in
 new/ and cur/, sorted by the maildir unique name (epoch-prefixed, so
 chronological), 1-based over ALL of them so an index means the same
@@ -25,6 +26,7 @@ from __future__ import annotations
 import email.utils
 import errno
 import os
+import sys
 import re
 import secrets
 from collections.abc import Mapping
@@ -34,18 +36,35 @@ from email.parser import BytesHeaderParser
 from email.policy import default as default_policy
 from pathlib import Path
 
-from ._headers import UNREADABLE, Unreadable, as_written, safe_header
+from ._headers import UNREADABLE, Unreadable, as_written, read_header, safe_header
 
-DEFAULT_ROOT = "~/.mail/agents"
-#: The agents root's variable (`mail.schema.json` `root`, x-env): when set and
-#: non-empty it wins over every layer.
+#: The MAIL ROOT's default: the tree postfix serves (`virtual_mailbox_base`),
+#: holding the boxes folder and `.postfix .state .notmuch` beside it. The
+#: `root` key in mail.json (`_settings.KEYS`) carries the same default; a
+#: test pins the two spellings equal.
+DEFAULT_MAIL_ROOT = "~/.sessionkit/mail"
+#: The folder boxes live in under the mail root, on a tree born after the
+#: move. ONE constant: every path that names the folder derives from it.
+BOXES = "stores"
+#: The folder an OLD tree keeps. While `<root>/agents` is a directory and
+#: `<root>/stores` is not, boxes are under `agents` (`boxes_name`): that is
+#: how a host that pins `root` to `~/.mail`, or links the default root to
+#: it, keeps its boxes with no second setting. The generator, the delivery
+#: script and the hook apply the same rule inline (they cannot import this).
+OLD_BOXES = "agents"
+#: The ONE variable (`mail.schema.json` `root`, x-env): set and non-empty, it
+#: names the MAIL ROOT and wins over every layer. It once named the boxes
+#: folder; the older `SESSION_MAIL_ROOT` (the boxes folder) and `MAIL_ROOT`
+#: (the generator's root) are RETIRED and never read. A verb that resolves
+#: the root names one that is still set (`retired_root_vars`), so a host
+#: exporting it hears "ignored" rather than nothing.
 ROOT_VAR = "SESSIONMAIL_ROOT"
-#: Its older spelling, still read, after ROOT_VAR.
-LEGACY_ROOT_VAR = "SESSION_MAIL_ROOT"
-#: The order the variables are read in, by every reader and by the drop.
-#: The bundled scripts cannot import this module and carry it inline:
-#: `mhs/mail-box.lib.sh` (its CLI form) and `mhs/session-mail-wake`.
-ROOT_VARS = (ROOT_VAR, LEGACY_ROOT_VAR)
+RETIRED_ROOT_VARS = ("SESSION_MAIL_ROOT", "MAIL_ROOT")
+#: The default boxes root, as a path to SAY in a refusal or a help line;
+#: resolution goes through `root`, never this string.
+DEFAULT_ROOT = f"{DEFAULT_MAIL_ROOT}/{BOXES}"
+#: Where a mail root came from (`mail_root_why`, `message path --why`).
+FROM_VAR, FROM_FILE, FROM_DEFAULT = f"${ROOT_VAR}", "mail.json root", "default"
 
 _INFO = re.compile(r":2,[A-Za-z]*$")
 
@@ -74,6 +93,12 @@ class Entry:
     #: `parse` reads them. A display field among them reads
     #: `<unreadable header>`; an id field keys on the sender's raw text.
     unreadable: tuple[str, ...] = ()
+    #: True when the mail carries `Ears-Kind`, in either spelling: MARKED as
+    #: voice, nothing more (`_voice.recognise` says whether it is believed).
+    #: Read from the header parse `parse` already made, so a reader that
+    #: must treat a voice turn apart (the monitor's line) parses no plain
+    #: mail a second time to find out.
+    voice_marked: bool = False
 
     @property
     def original_to(self) -> str:
@@ -103,33 +128,111 @@ class Entry:
         return addr.split("@", 1)[0]
 
 
+def expand_home(text: str, env: Mapping[str, str]) -> Path:
+    """TEXT with a leading `~` meaning ENV's HOME (`Path.home()` when ENV
+    names none): the caller's home, never this process's, so a verb run
+    for another environment resolves that environment's tree."""
+    if text == "~" or text.startswith("~/"):
+        home = env.get("HOME")
+        return (Path(home) if home else Path.home()) / text[2:]
+    return Path(text)
+
+
 def env_root(env: Mapping[str, str] | None = None) -> Path | None:
-    """The agents root a variable names, `~` expanded: the first of ROOT_VARS
-    that is set and non-empty, else None (no variable decides it).
-
-    THE one order: `root` below and `_drop.mail_root` both read
-    it, so a send and the readers can never pick different variables."""
+    """The MAIL ROOT `$SESSIONMAIL_ROOT` names, `~` expanded, when it is set
+    and non-empty; else None (no variable decides it). The retired
+    spellings are never read."""
     env = os.environ if env is None else env
-    for var in ROOT_VARS:
-        given = env.get(var)
-        if given:
-            return Path(given).expanduser()
-    return None
+    given = env.get(ROOT_VAR)
+    return expand_home(given, env) if given else None
 
 
-def root(env: Mapping[str, str] | None = None) -> Path:
-    """The agents root: `env_root` (`$SESSIONMAIL_ROOT`, else
-    `$SESSION_MAIL_ROOT`), else `<mail root>/agents` from the settings file's
-    `root` key, else DEFAULT_ROOT."""
+def mail_root_why(env: Mapping[str, str] | None = None) -> tuple[Path, str]:
+    """(the mail root, where it came from): `env_root`, else the settings
+    file's `root` key, else DEFAULT_MAIL_ROOT. THE one resolver: the
+    readers (`root`), the sender, the drop, the puller, setup and
+    `message path --root` all call it, so no two sides can pick two trees."""
     env = os.environ if env is None else env
     given = env_root(env)
     if given is not None:
-        return given
+        return given, FROM_VAR
     from . import _settings              # here, not at import: _settings is the higher layer
-    mail_root = _settings.file_path("root", env)
-    if mail_root is not None:
-        return Path(mail_root).expanduser() / "agents"
-    return Path(DEFAULT_ROOT).expanduser()
+    filed = _settings.file_path("root", env)
+    if filed is not None:
+        return expand_home(filed, env), FROM_FILE
+    root = expand_home(DEFAULT_MAIL_ROOT, env)
+    _warn_abandoned_old_tree(root, env)
+    return root, FROM_DEFAULT
+
+
+#: The old default root, `~/.mail`, and its boxes folder: the tree a host born
+#: before the move has, and the ONLY one the resolver looks for when the
+#: default answers empty. Not a fallback: naming it is the host's act.
+OLD_DEFAULT_MAIL_ROOT = "~/.mail"
+
+#: Roots already warned about in this process: once, not per verb call.
+_OLD_TREE_SAID: set[str] = set()
+
+
+def abandoned_old_tree(root: Path, env: Mapping[str, str]) -> Path | None:
+    """`~/.mail/agents` when ROOT (the default) has no boxes folder yet and
+    that old tree exists: a host that took the move without naming its root
+    would read an empty tree while postfix keeps delivering to the old one
+    (a live host, measured before the move landed). None otherwise."""
+    if (root / BOXES).is_dir() or (root / OLD_BOXES).is_dir():
+        return None
+    old = expand_home(OLD_DEFAULT_MAIL_ROOT, env) / OLD_BOXES
+    return old if old.is_dir() else None
+
+
+def _warn_abandoned_old_tree(root: Path, env: Mapping[str, str]) -> None:
+    """One line on stderr, once per process, when the default root is empty
+    and `~/.mail/agents` is not: a silent deafness made loud. The resolver
+    still answers the default: nothing is read from a tree nobody named."""
+    old = abandoned_old_tree(root, env)
+    if old is None or str(root) in _OLD_TREE_SAID:
+        return
+    _OLD_TREE_SAID.add(str(root))
+    from . import _operator, _settings      # the file READ is under the account's home, as reads are
+    settings = _operator.settings_home() / _settings.RELATIVE
+    print(f"sessionmail: the mail root is the default {root}, which has no boxes folder, while "
+          f"{old} exists: an old tree nobody named, so this host reads an EMPTY tree while postfix "
+          f"delivers to the old one. Set \"root\": \"{OLD_DEFAULT_MAIL_ROOT}\" in "
+          f"{settings} (or export {ROOT_VAR}) and the host keeps its mail.",
+          file=sys.stderr)
+
+
+def mail_root(env: Mapping[str, str] | None = None) -> Path:
+    """The mail root: the parent of the boxes folder, postfix's
+    `virtual_mailbox_base`, where `.postfix .state .notmuch` sit."""
+    return mail_root_why(env)[0]
+
+
+def boxes_name(mail_root: Path) -> str:
+    """The folder boxes live in under MAIL_ROOT: BOXES, except OLD_BOXES while
+    that is a directory and BOXES is not (an old tree keeps its name). The
+    one conditional of the move; nothing else decides the folder."""
+    if not (mail_root / BOXES).is_dir() and (mail_root / OLD_BOXES).is_dir():
+        return OLD_BOXES
+    return BOXES
+
+
+def boxes_dir(mail_root: Path) -> Path:
+    """`<mail root>/<boxes_name>`: the boxes root under MAIL_ROOT."""
+    return mail_root / boxes_name(mail_root)
+
+
+def root(env: Mapping[str, str] | None = None) -> Path:
+    """The boxes root, `boxes_dir(mail_root(env))`: the name every reader
+    has always called it by."""
+    return boxes_dir(mail_root(env))
+
+
+def retired_root_vars(env: Mapping[str, str] | None = None) -> list[str]:
+    """The retired root variables ENV still sets non-empty, so a verb can
+    say "ignored" rather than read nothing in silence."""
+    env = os.environ if env is None else env
+    return [v for v in RETIRED_ROOT_VARS if env.get(v)]
 
 
 def _is_maildir(d: Path) -> bool:
@@ -459,7 +562,19 @@ def parse(path: Path, index: int, unread: bool) -> Entry:
         to=text("To"),
         cc=text("Cc"),
         unreadable=tuple(bad),
+        voice_marked=_voice_marked(headers),
     )
+
+
+def _voice_marked(headers) -> bool:
+    """Does HEADERS carry `Ears-Kind`, either spelling (the D16 reader)?
+    A field the reader faults on counts as marked: a reader that treats a
+    voice turn apart then reads it as voice, and judges it there, rather
+    than naming it as mail."""
+    try:
+        return read_header(headers, "Ears-Kind").present
+    except Exception:  # noqa: BLE001 - fail toward the stricter reading
+        return True
 
 
 def unparsed(path: Path, index: int, unread: bool) -> Entry:
@@ -615,6 +730,23 @@ def find_draft(drafts: list[Path], which: str) -> Entry | None:
 # `Entry.original_to` is that field under the spec's own name.
 
 
+#: The marks that end "unread" for this session: a `read`, or a `done`
+#: (done is terminal, specs/pager "Done is terminal": the reader dealt with
+#: it, opened or not). `seen` is NOT one of them: paged is not opened.
+UNREAD_ENDED_BY = frozenset({"read", "done"})
+
+
+def is_unread(marks: "set[str] | frozenset[str] | tuple[str, ...]" = ()) -> bool:
+    """True when MARKS (one message's marks for this session) leave it
+    unread: neither `read` nor `done` among them.
+
+    The ONE definition of "unread" by marks. `message list --unread` and the
+    page's per-address `N unread` both ask it, so the two cannot disagree.
+    It lives here, not in `_seat`, because `_seat` imports this module: this
+    is the leaf both callers reach without a cycle."""
+    return not (set(marks) & UNREAD_ENDED_BY)
+
+
 @dataclass(frozen=True)
 class Group:
     """One envelope recipient's mail inside one box.
@@ -624,10 +756,13 @@ class Group:
     - `unseen` - not marked `seen` for this session. `seen` is written by
       the pager's wake and by the ride-along's scoop, so unseen means
       nothing has put this in front of the reader yet.
-    - `unread` - not marked `read`. `read` is written by `message read`.
-      A message can be seen and unread (paged, never opened), which is
-      exactly the state a page exists to report, so collapsing these two
-      into one number would lose the reason for the page.
+    - `unread` - not marked `read` or `done` (`is_unread`). `read` is
+      written by `message read`; `done` by `message mark N done`, and done
+      is terminal (specs/pager, "Done is terminal"), so a mail dealt with
+      unopened is no longer unread. A message can be seen and unread
+      (paged, never opened), which is exactly the state a page exists to
+      report, so collapsing these two into one number would lose the
+      reason for the page.
     - `total` - every message for this address in the box.
 
     `first`/`last` are the box's own row numbers (`Entry.index`), so they
@@ -682,7 +817,8 @@ def group_by_original_to(entries: "list[Entry]",
 
     MARKS is this session's marks (`_seat.read_marks`), message-id ->
     {"seen", "read", "done"}; without it every message counts unseen and
-    unread, which is the truth for a reader who has no marks.
+    unread, which is the truth for a reader who has no marks. A message is
+    unread when `is_unread` says so: a `done` ends it as a `read` does.
 
     The order is by the group's FIRST row - oldest first - which is the order
     everything else here prints in (`_detect` returns oldest first,
@@ -703,7 +839,7 @@ def group_by_original_to(entries: "list[Entry]",
             address=address,
             spellings=tuple(sorted({m.original_to for m in members})),
             unseen=sum(1 for m in members if "seen" not in marks.get(m.message_id, ())),
-            unread=sum(1 for m in members if "read" not in marks.get(m.message_id, ())),
+            unread=sum(1 for m in members if is_unread(marks.get(m.message_id, ()))),
             total=len(members),
             first=min(indexes) if indexes else 0,
             last=max(indexes) if indexes else 0,

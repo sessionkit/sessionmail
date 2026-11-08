@@ -40,9 +40,9 @@ _n = 0
 
 @pytest.fixture
 def rig(tmp_path, monkeypatch):
-    root = tmp_path / "mail"
-    root.mkdir()
-    monkeypatch.setenv("SESSION_MAIL_ROOT", str(root))
+    root = tmp_path / "mail" / "stores"
+    root.mkdir(parents=True)
+    monkeypatch.setenv("SESSIONMAIL_ROOT", str(root.parent))
     monkeypatch.setenv("SESSIONMAIL_HOME", str(tmp_path / "sessionmail"))
     monkeypatch.setenv("TM_AGENT_ADDRESS", "alpha")
     monkeypatch.delenv("CLAUDE_CODE_AGENT", raising=False)
@@ -288,9 +288,10 @@ def test_three_mails_three_pages_three_lines_and_nothing_else(rig):
     for line in out:
         assert line.startswith("pager: 1 message waiting"), line
         assert len(line) <= pager.MONITOR_LINE_MAX
-        # the quiet page: no sender, no subject, no re-arm
+        # names the sender and subject: the local part, never the display
+        # name or the host, and the subject quoted; still no re-arm
+        assert line.startswith('pager: 1 message waiting, from beta: "SECRET-SUBJECT"'), line
         assert "SENDER-NAME" not in line and "beta@" not in line
-        assert "SECRET-SUBJECT" not in line
         assert "re-arm" not in line.lower()
     assert rig.seen() == 3
     assert seen_carry == [True, True, True]

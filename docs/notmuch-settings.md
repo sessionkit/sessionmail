@@ -1,9 +1,19 @@
 # notmuch settings
 
-sessionmail reads ONE notmuch config: its own **sessionkit profile**,
-`$XDG_CONFIG_HOME/notmuch/sessionkit/config` (`$XDG_CONFIG_HOME` defaults
-to `~/.config`). [`message setup`][message-setup] writes it, with its
-database at the mail root.
+sessionmail reads ONE notmuch config: its own **sessionkit profile**.
+[`message setup`][message-setup] writes it, with its database at the mail
+root. Where the file is depends on the host:
+
+- **A fresh host:** `~/.sessionkit/mail/settings/notmuch/sessionkit/config`.
+  It hangs off `HOME`; `$XDG_CONFIG_HOME` does not move it.
+- **A host that already has a profile:**
+  `$XDG_CONFIG_HOME/notmuch/sessionkit/config` (`$XDG_CONFIG_HOME` defaults
+  to `~/.config`), else `~/.notmuch-config.sessionkit`. While that old file
+  is real, sessionmail reads it and `message setup` leaves it where it is.
+  Nothing is moved or copied. The exact rule: [where sessionmail
+  looks][where-sessionmail-looks].
+- **The index does not move.** It stays in the mail root's `.notmuch`,
+  whichever file holds the profile.
 
 - **Your own notmuch config is never read or written.** `~/.notmuch-config`
   and any other profile stay yours: sessionmail passes
@@ -16,6 +26,30 @@ database at the mail root.
   naming the profile and the paths it tried. Run `message setup`.
 - The `notmuch.profile` key names another profile ([settings][]).
 
+## Where sessionmail looks
+
+For the profile `<p>` (`sessionkit`, unless `notmuch.profile` names
+another), host mode reads the first of:
+
+1. `$XDG_CONFIG_HOME/notmuch/<p>/config`, while it is real.
+2. `~/.notmuch-config.<p>`, while it is real.
+3. `~/.sessionkit/mail/settings/notmuch/<p>/config`, when it is a file.
+
+- **Real** means a file, symlinks followed, that is not the third path
+  itself. An old path that is a symlink to the new file hands over to the
+  new one. A dangling symlink or a directory counts as no file.
+- **Old and new both real:** the old one is read, and the new one is never
+  read or merged.
+- **None of the three:** each call refuses, naming all three paths.
+  `message setup` writes the third, making its folders, and never writes
+  over a file.
+- sessionmail names the file it found with `--config`, so notmuch's own
+  search (next section) never chooses it.
+- The new path is not one notmuch searches by itself. To reach it by hand,
+  pass `--config`; `NOTMUCH_PROFILE=sessionkit` does not find it.
+- Store mode keeps notmuch's own order for a store's profile, unchanged
+  (`SESSIONMAIL_INDEX`, under Settings below).
+
 ## Where notmuch looks (notmuch 0.40)
 
 - `NOTMUCH_CONFIG`, if set. A path that does not exist fails.
@@ -23,9 +57,11 @@ database at the mail root.
   defaults to `~/.config`, the profile to `default`).
 - Else `~/.notmuch-config`, or `~/.notmuch-config.<profile>` when
   `NOTMUCH_PROFILE` is set.
-- The XDG file wins when both exist. sessionmail finds its profile in the
-  same order, and then names it with `--config`, so this search never
-  reaches `~/.notmuch-config` for sessionmail.
+- The XDG file wins when both exist.
+- This is notmuch's search, not sessionmail's: sessionmail finds its
+  profile as [above][where-sessionmail-looks], then names it with
+  `--config`, so this search never reaches `~/.notmuch-config` for
+  sessionmail.
 - Each of these exits 1 with `Error: cannot load config file.`: no file at
   any default path, `HOME` pointing elsewhere, `NOTMUCH_PROFILE` set but
   empty, or naming a missing profile, and `NOTMUCH_CONFIG` naming a missing
@@ -65,8 +101,10 @@ header.Supersedes=Supersedes
 header.XSupersedes=X-Supersedes
 ```
 
-- `database.path` is the mail root: the parent of `agents/`. sessionmail
-  defaults that to `~/.mail` (`src/sessionmail/_drop.py:114-125 @ c854322`).
+- `database.path` is the mail root (`message path --root`): the parent of
+  the boxes folder. sessionmail defaults it to `~/.sessionkit/mail`
+  (`_maildir.DEFAULT_MAIL_ROOT`); a host born before the move keeps
+  `~/.mail` by its `root` key.
 - `[new]`, `[search]` and `[maildir]` are the settings in use today, kept as
   they were in the store-profile template
   (`src/sessionmail/notmuch/notmuch-config.store.template:18-30 @ c854322`).
@@ -89,21 +127,37 @@ header.XSupersedes=X-Supersedes
 - `hooks/notmuch-post-new` tags mail at index time (`+agent`, `+memory`)
   and re-derives `superseded` from each message's `Supersedes:` header, so
   a correction survives rebuilding the index.
+- A supersede counts only from the target's own sender: the carrier's
+  `From:` addr-spec must match the target's, case-blind. A carrier from
+  anyone else, or with no `From:`, leaves its target alone and is tagged
+  `supersedes-refused` (find them with `notmuch search
+  tag:supersedes-refused`). This stops accidents, not a forger: a `From:`
+  can be copied.
 - Not installed by the plugin or the package. [`message setup`][message-setup]
   links it as both `post-new` and `post-insert` in the folder notmuch
   reports (`database.hook_dir`), never over a different file.
   Or link it by hand (`README.md:41-52 @ c854322`). The first
-  `notmuch new` makes `~/.mail/.notmuch/` but no `hooks/` in it, so make
+  `notmuch new` makes `<mail root>/.notmuch/` but no `hooks/` in it, so make
   that first (measured; the README at `c854322` left the `mkdir` out):
 
   ```sh
-  mkdir -p ~/.mail/.notmuch/hooks
-  ln -s <repo>/hooks/notmuch-post-new ~/.mail/.notmuch/hooks/post-new
-  ln -s <repo>/hooks/notmuch-post-new ~/.mail/.notmuch/hooks/post-insert
+  R="$(message path --root)"; mkdir -p "$R/.notmuch/hooks"
+  ln -s <repo>/hooks/notmuch-post-new "$R/.notmuch/hooks/post-new"
+  ln -s <repo>/hooks/notmuch-post-new "$R/.notmuch/hooks/post-insert"
   ```
 
 - It needs the two indexed headers (the `[index]` lines above). On a
-  config that lacks them, set them with:
+  config that lacks them, set them on the profile's file
+  ([where sessionmail looks][where-sessionmail-looks]).
+- A fresh host:
+
+  ```sh
+  notmuch --config="$HOME/.sessionkit/mail/settings/notmuch/sessionkit/config" config set index.header.Supersedes Supersedes
+  notmuch --config="$HOME/.sessionkit/mail/settings/notmuch/sessionkit/config" config set index.header.XSupersedes X-Supersedes
+  ```
+
+- A host with the old XDG profile (for the dot file, name
+  `"$HOME/.notmuch-config.sessionkit"` instead):
 
   ```sh
   notmuch --config="$HOME/.config/notmuch/sessionkit/config" config set index.header.Supersedes Supersedes
@@ -114,10 +168,11 @@ header.XSupersedes=X-Supersedes
   ([index at delivery][index-at-delivery]), the `post-insert` link is
   required: it is what tags each message as it lands. `delivery-check`
   reports a missing one.
-- `~/.mail/.notmuch/hooks` is notmuch's default `database.hook_dir` when
-  `database.path` is `~/.mail`, unless `$XDG_CONFIG_HOME/notmuch/<profile>/hooks`
-  exists: then notmuch runs the hooks there instead, whichever config file it
-  read (measured, `notmuch config get database.hook_dir`).
+- `<mail root>/.notmuch/hooks` is notmuch's default `database.hook_dir`,
+  unless `$XDG_CONFIG_HOME/notmuch/default/hooks` exists: then notmuch runs
+  the hooks there instead, whichever config file it read. The profile there
+  is `default` because sessionmail drops `NOTMUCH_PROFILE` from notmuch's
+  environment (measured, `notmuch config get database.hook_dir`).
 - The hook finds notmuch (`src/sessionmail/notmuch/post-new:21-50
   @ 93ad8d6`): `SESSIONMAIL_NOTMUCH` (a bare name is looked up on `PATH`),
   else `notmuch` on `PATH`, else the first runnable of `NOTMUCH_PATHS`:
@@ -156,11 +211,22 @@ set and not empty, wins over the file.
     `SESSIONMAIL_NOTMUCH` (`store-index:327-332 @ 93ad8d6`).
 - `notmuch.timeout`: seconds per call, default 10, for `message mark`. The
   send's parent lookup has a fixed 2 s.
+- `notmuch.refresh`: seconds the readers' index refresh may take, default 2;
+  `0` turns it off. In host mode `memory` runs
+  `notmuch --config=<profile> new --no-hooks --quiet` before it reads, and
+  `message mark` runs it once when an id is missing. At the limit notmuch
+  is stopped with SIGINT, keeping what it indexed. The refresh runs no
+  hooks, so on a host with no hooked `notmuch new` the profile's saved
+  queries and store-index stats do not see the `agent`, `memory` or
+  `superseded` tags: run a hooked `notmuch new` (a job, or by hand) if you
+  use them.
 
 Environment only (no key):
 
 - `SESSIONMAIL_INDEX`: `host` (unset, the default) or `store`. Host mode
-  reads the profile above; store mode reads a store's own profile.
+  reads the profile above; store mode reads a store's own profile, in
+  notmuch's own order (`$XDG_CONFIG_HOME/notmuch/<store>/config`, else
+  `~/.notmuch-config.<store>`).
 - `NOTMUCH_PROFILE`: in store mode only, the store's profile. Without it
   the seat's store is found from its box. A store profile is written by
   `store-index profile STORE` into `~/.notmuch-config.STORE`
@@ -173,3 +239,4 @@ Back to [notmuch][].
 [index-at-delivery]: postfix-configuration.md#index-at-delivery-opt-in
 [message-setup]: message-setup.md
 [settings]: settings.md
+[where-sessionmail-looks]: #where-sessionmail-looks

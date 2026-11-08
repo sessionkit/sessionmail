@@ -69,49 +69,48 @@ def home() -> Path:
 
 def test_root_file_value_reaches_every_consumer(bare, tmp_path):
     host_file(root=str(tmp_path / "m"))
-    assert _maildir.root(bare) == tmp_path / "m" / "agents"
-    assert _sender.root_of(bare) == tmp_path / "m" / "agents"
+    assert _maildir.root(bare) == tmp_path / "m" / "stores"
+    assert _sender.root_of(bare) == tmp_path / "m" / "stores"
     assert _drop.mail_root(bare) == tmp_path / "m"
 
 
 def test_root_tilde_is_the_account_home(bare):
     host_file(root="~/mailroot")
-    assert _maildir.root(bare) == home() / "mailroot" / "agents"
-    assert _sender.root_of(bare) == home() / "mailroot" / "agents"
+    assert _maildir.root(bare) == home() / "mailroot" / "stores"
+    assert _sender.root_of(bare) == home() / "mailroot" / "stores"
     assert _drop.mail_root(bare) == home() / "mailroot"
 
 
 def test_root_no_file_is_todays_default(bare):
     assert _maildir.root(bare) == Path(_maildir.DEFAULT_ROOT).expanduser()
-    assert _drop.mail_root(bare) == Path(bare.get("HOME") or os.path.expanduser("~")) / ".mail"
+    assert _drop.mail_root(bare) == Path(_maildir.DEFAULT_MAIL_ROOT).expanduser()
 
 
-def test_root_each_consumers_variables_keep_their_order(bare, tmp_path):
+def test_root_one_variable_one_meaning_the_retired_ones_read_by_nothing(bare, tmp_path):
+    """The move: SESSIONMAIL_ROOT names the MAIL ROOT (it named the boxes
+    folder once), and the retired spellings (SESSION_MAIL_ROOT, MAIL_ROOT)
+    decide nothing for any consumer. Boxes are under `<root>/stores`."""
     host_file(root=str(tmp_path / "file"))
     old = {**bare, "SESSION_MAIL_ROOT": str(tmp_path / "old" / "agents")}
-    new = {**bare, "SESSIONMAIL_ROOT": str(tmp_path / "new" / "agents")}
+    new = {**bare, "SESSIONMAIL_ROOT": str(tmp_path / "new")}
     both = {**old, **new}
     mail = {**bare, "MAIL_ROOT": str(tmp_path / "mr")}
-    # _maildir: SESSIONMAIL_ROOT, then SESSION_MAIL_ROOT, the drop's own order (SM-910)
-    assert _maildir.root(both) == tmp_path / "new" / "agents"
-    assert _maildir.root(new) == tmp_path / "new" / "agents"
-    assert _maildir.root(old) == tmp_path / "old" / "agents"
-    # the sender: SESSIONMAIL_ROOT, then SESSION_MAIL_ROOT
-    assert _sender.root_of(both) == tmp_path / "new" / "agents"
-    assert _sender.root_of(old) == tmp_path / "old" / "agents"
-    # the drop: either agents variable (its parent), then MAIL_ROOT
-    assert _drop.mail_root(new) == tmp_path / "new"
-    assert _drop.mail_root(old) == tmp_path / "old"
-    assert _drop.mail_root(mail) == tmp_path / "mr"
+    for env in (new, both):
+        assert _maildir.mail_root(env) == tmp_path / "new"
+        assert _maildir.root(env) == _sender.root_of(env) == tmp_path / "new" / "stores"
+        assert _drop.mail_root(env) == tmp_path / "new"
+    for env in (old, mail):          # retired: the file decides, as if unset
+        assert _maildir.mail_root(env) == _drop.mail_root(env) == tmp_path / "file"
+        assert _maildir.root(env) == _sender.root_of(env) == tmp_path / "file" / "stores"
+    assert _maildir.retired_root_vars(both) == ["SESSION_MAIL_ROOT"]
+    assert _maildir.retired_root_vars(mail) == ["MAIL_ROOT"]
 
 
 def test_root_the_keys_own_variable_beats_the_file_for_the_readers_too(bare, tmp_path):
-    """`_maildir` reads SESSIONMAIL_ROOT since SM-910 (it read only the older
-    spelling, so `message path` missed the box `send` delivered to). The
-    variable beats the file, as the schema says."""
+    """The variable beats the file, as the schema says, for every reader."""
     host_file(root=str(tmp_path / "file"))
-    env = {**bare, "SESSIONMAIL_ROOT": str(tmp_path / "new" / "agents")}
-    assert _maildir.root(env) == tmp_path / "new" / "agents"
+    env = {**bare, "SESSIONMAIL_ROOT": str(tmp_path / "new")}
+    assert _maildir.root(env) == tmp_path / "new" / "stores"
 
 
 @pytest.mark.parametrize("bad", ["", "   ", 7, True, None, ["x"]])

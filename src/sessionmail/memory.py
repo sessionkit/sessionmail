@@ -11,7 +11,7 @@ import click
 from . import __version__
 from ._help import CONTEXT_SETTINGS, OrderedGroup, PageCommand, unwrapped
 from ._init import EX_USAGE
-from . import _mhs, _settings
+from . import _mhs, _seat, _settings
 
 CAPABILITY = "memory"
 
@@ -41,6 +41,7 @@ is not 1); each verb's page (-h) gives the rest of its own codes"""
 @click.version_option(__version__, "--version", "-V")
 def cli() -> None:
     """memory - a mailbox as a filesystem: labels, numbered items, never edited"""
+    _seat.drop_inherited()   # first, before anything resolves
 
 
 def _go(verb: str, argv: list[str], env: dict[str, str] | None = None) -> None:
@@ -62,6 +63,25 @@ def _box(box: str | None) -> list[str]:
     return ["--box", box] if box else []
 
 
+def _box_door(box: str | None, verb: str, code: int) -> str | None:
+    """BOX as the bash will see it: a short session id becomes the one full
+    id it starts on this host, said once on stderr, so the bash sees one
+    spelling only; one that starts none, or several, refuses with CODE, the
+    verb's own "box not found". Anything else comes back as it was given."""
+    if not box:
+        return box
+    from . import _boxes
+    prog = f"memory {verb}"
+    try:
+        r = _boxes.resolve_session(box, source="box")
+    except _boxes.Unresolved as u:
+        click.echo(_boxes.refusal_text(u, prog), err=True)
+        raise SystemExit(code)
+    if r.full:
+        click.echo(f"{prog}: {r.note}", err=True)
+    return r.value
+
+
 def _no_box(box: str | None, verb: str) -> None:
     if box:
         raise click.UsageError(f"--box is not carried by the transport yet: the bash "
@@ -77,8 +97,9 @@ def _no_box(box: str | None, verb: str) -> None:
     epilog=unwrapped(
         """Every name it prints is a valid next segment of PATH.
 
-Exit: 0 ok · 1 usage · 2 path not found or ambiguous, or the index cannot
-be read (no notmuch on PATH, or no profile); the stderr line says which"""
+Exit: 0 ok · 1 usage · 2 path not found or ambiguous, no root yet (no
+[ROOT] minted for this agent: "no memory yet"), or the index cannot be
+read (no notmuch on PATH, or no profile); the stderr line says which"""
     ),
 )
 @click.argument("path", required=False, metavar="PATH")
@@ -88,7 +109,7 @@ be read (no notmuch on PATH, or no profile); the stderr line says which"""
 def ls(path: str | None, show_all: bool, box: str | None) -> None:
     """memory ls - one level under an MHS PATH: its labels and items"""
     argv = [path] if path else []
-    _go("ls", argv + (["--all"] if show_all else []) + _box(box))
+    _go("ls", argv + (["--all"] if show_all else []) + _box(_box_door(box, "ls", 2)))
 
 
 @cli.command(
@@ -100,8 +121,9 @@ def ls(path: str | None, show_all: bool, box: str | None) -> None:
         """Ends with its own token cost. /today and /yesterday resolve to ISO
 dates first; a segment matching two spellings is refused as ambiguous.
 
-Exit: 0 ok · 1 usage · 2 path not found or ambiguous, or the index cannot
-be read (no notmuch on PATH, or no profile); the stderr line says which"""
+Exit: 0 ok · 1 usage · 2 path not found or ambiguous, no root yet (no
+[ROOT] minted for this agent: "no memory yet"), or the index cannot be
+read (no notmuch on PATH, or no profile); the stderr line says which"""
     ),
 )
 @click.argument("path", metavar="PATH")
@@ -119,7 +141,7 @@ def tree(path: str, depth: int | None, show_all: bool, dates: bool, box: str | N
         argv.append("--all")
     if dates:
         argv.append("--dates")
-    _go("tree", argv + _box(box))
+    _go("tree", argv + _box(_box_door(box, "tree", 2)))
 
 
 @cli.command(
@@ -139,9 +161,10 @@ signer NOT pinned": the key is the one the mail carries, and nothing yet
 says whose it is.
 
 Exit: 0 ok · 1 no such child, an ambiguous spelling, a verify timeout, or
-the executor's usage · 2 a FORK, click's usage (a missing PATH, an
-unknown flag), or the index cannot be read (no notmuch on PATH, or no
-profile); the stderr line says which · 3 signature refused"""
+the executor's usage · 2 a FORK, no root yet (no [ROOT] minted for this
+agent: "no memory yet"), click's usage (a missing PATH, an unknown flag),
+or the index cannot be read (no notmuch on PATH, or no profile); the
+stderr line says which · 3 signature refused"""
     ),
 )
 @click.argument("path", metavar="PATH")
@@ -228,6 +251,9 @@ def run(path: str, list_only: bool, only: str | None, as_json: bool) -> None:
         """The boot readout, PEEK-ONLY: a wake is a notification, never a
 completion, so this verb claims nothing - new/ is untouched, and
 read-state, closed-state and truth-state (Supersedes) are only projected.
+Before it reads, it refreshes the index (a bounded `notmuch new
+--no-hooks`, `notmuch.refresh`; the index is a projection, so no file
+moves and no mark is written).
 Three sections, each budget-capped and ending with its own token cost:
 BOOT, the newest surviving letter to BOX+boot, body included only if its
 signature verifies AND it is From BOX, under "signature verifies · signer
@@ -248,6 +274,7 @@ Exit: 0 ok · 1 box not found, or the executor's usage · 2 click's usage
               help="BOOT prints; RECENT and COUNTS show their command instead of running it")
 def wake(box: str | None, dry_run: bool) -> None:
     """memory wake - the boot readout: the letter, recent threads, counts; peek-only"""
+    box = _box_door(box, "wake", 1)
     argv = [box] if box else []
     if dry_run:
         argv.append("--dry-run")
@@ -319,6 +346,7 @@ def init(box: str, labels: str | None, plus: str | None, record: str | None,
     # exit 2: on init's table, 2 is "not found".
     from . import _init
 
+    box = _box_door(box, "init", 2)
     try:
         _init.run(box, labels=labels, plus=plus or (), supersede=supersede, record=record,
                   report=click.echo)

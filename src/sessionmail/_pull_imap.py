@@ -24,6 +24,9 @@ remote copy. What it adds:
     UID", advanced after each delivery. A restart resumes from it, so
     nothing that landed while the puller was down is lost. First run ever:
     no backlog, only what arrives from now. A new UIDVALIDITY drops it.
+  - `<home>` is `state_home()`, chosen once for both: the root the `imap`
+    state leaf resolves under (`$SESSIONMAIL_HOME`, else `~/.sessionmail`
+    while its `imap/` is real, else the state folder, the fresh default).
   - EXACTLY ONCE: the file name carries `imapV<validity>U<uid>`; a UID
     already in new/ or cur/ is not delivered again (the crash window
     between the rename and the cursor write).
@@ -289,9 +292,23 @@ def run(url: str, into: Path, *, home: Path, once: bool = False,
                 pass
 
 
+#: The state folder's leaf the password file and the cursors live in.
+STATE_LEAF = "imap"
+
+
+def state_home(env: dict[str, str] | None = None) -> Path:
+    """The HOME `run` joins `imap/` to, chosen ONCE: the root the `imap`
+    leaf resolves under (`_settings.state_path`), so the password file and
+    every cursor are read and written in the one folder. `$SESSIONMAIL_HOME`
+    wins, as `_seat.home()` did; else `~/.sessionmail/imap` while that is a
+    real folder of its own; else the state folder's `imap/` (there, or the
+    fresh default). Nothing is made by the choice."""
+    from . import _settings          # here, as `_seat` was imported: off the import path
+    return _settings.state_path(STATE_LEAF, env).parent
+
+
 def main(argv: list[str] | None = None) -> int:
     import argparse
-    from . import _seat
     ap = argparse.ArgumentParser(
         prog="python -m sessionmail._pull_imap",
         description="mirror ONE remote mailbox into a local maildir over IMAP IDLE, "
@@ -310,7 +327,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"pull-imap: no target - give --imap URL or set ${ENV_URL}", file=sys.stderr)
         return EX_USAGE
     try:
-        return run(url, Path(args.into), home=_seat.home(), once=args.once, poll=args.poll,
+        return run(url, Path(args.into), home=state_home(), once=args.once, poll=args.poll,
                    reissue=args.reissue, timeout=args.timeout,
                    out=lambda s: print(s, flush=True))
     except KeyboardInterrupt:

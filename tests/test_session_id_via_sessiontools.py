@@ -39,7 +39,7 @@ def send_env(tmp_path):
         "HOME": str(tmp_path), "PATH": str(bin_dir), "TMPDIR": str(tmp_path),
         "FAKE_SENDMAIL_ARGV": str(tmp_path / "sendmail.argv"),
         "FAKE_SENDMAIL_WIRE": str(wire),
-        "SESSION_MAIL_ROOT": str(root), "SESSIONMAIL_ROOT": str(root),
+        "SESSIONMAIL_ROOT": str(root.parent),
         "SESSION_MAIL_HOST": HOST, "SESSIONMAIL_HOST": HOST,
         "SESSIONMAIL_SENDMAIL": str(bin_dir / "sendmail"),
     }

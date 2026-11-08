@@ -59,6 +59,16 @@ Protocol: hook JSON on stdin; on deny, the documented PreToolUse decision JSON
 on stdout with exit 0. ANY unexpected condition exits 0 silently (allow) — a
 guard that can wedge the Bash tool is worse than the hazard it guards.
 
+THE OFF SWITCH. `"mail_guard": false` in the host settings file
+(~/.sessionkit/mail/settings/mail.json) turns off the subject and body
+checks (`decide`): a send the guard would deny for its quoting goes
+through, exit 0 and no output. It does NOT turn off the subagent rules
+below: a subagent that would take or mark the seat's mail, write its
+settings or switch its hooks is denied whatever the switch says, at both
+doors. Only the boolean false turns the checks off; a missing key, any
+other value, or a file that cannot be read or is not a JSON object leaves
+them on (`guard_switched_off`).
+
 INSIDE A SUBAGENT (a payload that carries `agent_id`), it also refuses what
 would take or mark the SEAT's mail or change its pager, and what would
 write the seat's memory, run its script-mail, or change its
@@ -789,7 +799,8 @@ def judge(args, cmd):
 # add|remove` and `pager focus`. Their reads stay allowed: `memory
 # ls|tree|cat|wake`, `memory run --list`, `message subscription list`,
 # `pager rule list`, and `pager status --stopped` (it writes nothing). And
-# `pager settings hooks on|off`, the HOST's switch; its bare read stays
+# `pager settings hooks on|off` and `pager settings hooks KEY on|off`, the
+# HOST's switches; the bare read, and `pager settings hooks KEY` alone, stay
 # allowed.
 
 #: `pager` verbs that change or shadow the SEAT's pager.
@@ -831,7 +842,8 @@ SUBAGENT_SEAT_ROWS = {
     # The host's switch, wider than a seat's state. `pager
     # settings` is hidden, so no MCP tool; the MCP way only points at a read.
     "pager settings hooks": ("would turn every seat's hooks on this host on or off",
-                             "`pager settings hooks` (bare)", "`pager_status`"),
+                             "`pager settings hooks` (bare), or `pager settings hooks KEY`",
+                             "`pager_status`"),
 }
 
 
@@ -955,19 +967,29 @@ def subagent_verb(base, rest):
     return None
 
 
+#: The per-hook switch keys `pager settings hooks KEY` reads alone:
+#: sessionmail's `_settings.SWITCH_KEYS` (this file cannot import it; a
+#: test pins the two equal).
+SETTINGS_SWITCH_KEYS = ("ride_along", "stop_nag", "mail_guard", "birth")
+
+
 def _settings_write(args):
-    """`pager settings hooks on|off`, the host's hooks switch,
-    or None: the bare `hooks` only reads, a help only prints, and the noun's
-    other verbs (`install`, `migrate`) are not this row. Any word after
-    `hooks` is a write attempt (a typo included: click refuses it, so the
-    deny costs nothing)."""
+    """`pager settings hooks on|off` or `pager settings hooks KEY on|off`,
+    the host's switches, or None: the bare `hooks` only reads, and so does
+    `hooks KEY` with KEY alone (one of SETTINGS_SWITCH_KEYS); a help only
+    prints, and the noun's other verbs (`install`, `migrate`) are not this
+    row. Any other word after `hooks` is a write attempt (a typo included:
+    click refuses it, so the deny costs nothing)."""
     sub = _past_dashdash(args)
     if sub[:1] != ["hooks"]:
         return None
     words = sub[1:]
     if any(v in _HELP for v in _before_cut(words)):
         return None
-    if [v for v in words if v != "--"]:
+    words = [v for v in words if v != "--"]
+    if len(words) == 1 and words[0] in SETTINGS_SWITCH_KEYS:
+        return None
+    if words:
         return "pager settings hooks"
     return None
 
@@ -1150,7 +1172,7 @@ def decide(command_text):
 # sessionmail (mail-guard-hook). The protocol, kept in step by
 # tests/test_pager_inject_deny.py, which runs both writers at once:
 #
-#   <session dir> = $HOME/.session/sessions/<sid> (sessiontools' session_dir)
+#   <session dir> = sessiontools' session_dir: see session_dir() below
 #   log/mail/ made 0700 (its parents plainly); every file 0600
 #   one exclusive flock on log/mail/seq; the counter bumped FIRST,
 #     fixed width (20 digits) at offset 0, never truncated
@@ -1195,6 +1217,139 @@ def _session_of(payload, env):
     return None
 
 
+#: `session path`'s `source` words (sessiontools' `paths.SOURCES`): an
+#: answer that names none of them is not the verb's, and is not used.
+PATH_SOURCES = ("override", "old", "new", "fresh-old", "fresh-new")
+#: Seconds `session path` may take. It runs only on a deny, after the deny
+#: has printed, so a slow or hung verb never changes the decision; at worst
+#: it holds the hook's exit this long. The row's `ms` does not count it.
+PATH_TIMEOUT = 3
+
+
+def _sessiontools():
+    """`sessiontools.settings` when this python3 can import it, else None."""
+    try:
+        from sessiontools import settings
+    except Exception:  # noqa: BLE001 - absent or broken: the next way
+        return None
+    return settings
+
+
+def _session_path(session, env):
+    """SESSION's dir from `session path sessions SESSION --json` (sessiontools
+    0.3.2: the verb a peer that cannot import the resolver runs), or None:
+    no `session` on PATH, a sessiontools without the verb (exit 2), a hang,
+    or an answer that is not the verb's."""
+    import os
+    import shutil
+    import subprocess
+    exe = shutil.which("session", path=env.get("PATH"))
+    if not exe:
+        return None
+    try:
+        out = subprocess.run([exe, "path", "sessions", session, "--json"],
+                             env=dict(env), stdin=subprocess.DEVNULL,
+                             capture_output=True, text=True, timeout=PATH_TIMEOUT)
+        found = json.loads(out.stdout) if out.returncode == 0 else None
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return None
+    if not isinstance(found, dict) or found.get("source") not in PATH_SOURCES:
+        return None
+    path = found.get("path")
+    return path if isinstance(path, str) and os.path.isabs(path) else None
+
+
+#: sessiontools' sessions leaf, old and new (`settings.leaf_old` and
+#: `leaf_new`), and the old ROOT whose own existence step d tests. Spelled
+#: here ONLY for step 4, when no resolver answers; never written by name.
+OLD_ROOT = (".session",)
+OLD_SESSIONS = OLD_ROOT + ("sessions",)
+NEW_ROOT = (".sessionkit", "tools", "state")
+NEW_SESSIONS = NEW_ROOT + ("sessions",)
+#: The override (sessiontools `LEAF_OVERRIDE["sessions"]`).
+SESSIONS_VAR = "SESSIONS_DIR"
+
+
+def _same_dir(a, b):
+    """A and B are one directory (symlinks followed, as `[ A -ef B ]`):
+    sessiontools' `settings._same_dir`."""
+    import os
+    try:
+        return os.path.samefile(a, b)
+    except (OSError, ValueError):
+        return False
+
+
+def _old_root_is_its_own(old_root, new_root):
+    """Step d's test: OLD_ROOT is a directory that is not the same directory
+    as NEW_ROOT (sessiontools `settings.old_root_real`; busy-sound's `fresh()`,
+    `[ -d OLD ] && ! [ OLD -ef NEW ]`). Absent, a plain file, or a link onto
+    NEW_ROOT itself: it is not. A link to anywhere else, a folder inside
+    NEW_ROOT included, is its own."""
+    import os
+    return os.path.isdir(old_root) and not _same_dir(old_root, new_root)
+
+
+def sessions_root(env):
+    """The sessions leaf by sessiontools' leaf rule, stdlib and no fork, as
+    sessiontools `hooks/busy-sound` `leaf()` copies it in bash, with step d's
+    whole-root test (a host that has the old root keeps it, leaf by leaf):
+
+    a. SESSIONS_DIR set and non-empty: it (a leading `~/` is $HOME's);
+    b. `$HOME/.session/sessions` is a directory and not `-ef` the new one: OLD;
+    c. `$HOME/.sessionkit/tools/state/sessions` is a directory: NEW;
+    d. neither: NEW, unless `$HOME/.session` is a directory of its own (not
+       absent, not a plain file, not `-ef` `$HOME/.sessionkit/tools/state`):
+       then OLD.
+
+    Reads only: it never creates either root, so a fresh host's deny row
+    births `~/.sessionkit/...`, never `~/.session`."""
+    import os
+    home = env.get("HOME") or os.path.expanduser("~")
+    root = env.get(SESSIONS_VAR) or ""
+    if root:
+        if root.startswith("~/"):
+            root = os.path.join(home, root[2:])
+        return root
+    old, new = os.path.join(home, *OLD_SESSIONS), os.path.join(home, *NEW_SESSIONS)
+    if os.path.isdir(old) and not _same_dir(old, new):
+        return old
+    if os.path.isdir(new):
+        return new
+    if _old_root_is_its_own(os.path.join(home, *OLD_ROOT), os.path.join(home, *NEW_ROOT)):
+        return old
+    return new
+
+
+def session_dir(session, env):
+    """SESSION's dir, where sessiontools keeps it. In order:
+
+    1. an importable sessiontools that carries the leaf resolver (`leaf_path`,
+       from 0.3.2): its `session_dir`;
+    2. `session path sessions SESSION --json`, the verb sessiontools names for a
+       peer that cannot import it (this file runs on system python3);
+    3. an importable older sessiontools: its `session_dir`;
+    4. neither: `sessions_root(env)/<sid>`, sessiontools' leaf rule copied
+       here (see `sessions_root`): on a fresh host the NEW leaf, so no
+       `~/.session` is born; on a host that has the old root, the OLD."""
+    settings = _sessiontools()
+    if settings is not None and hasattr(settings, "leaf_path"):
+        try:
+            return str(settings.session_dir(session, env))
+        except Exception:  # noqa: BLE001 - a resolver bug: the next way
+            pass
+    found = _session_path(session, env)
+    if found:
+        return found
+    if settings is not None:
+        try:
+            return str(settings.session_dir(session, env))
+        except Exception:  # noqa: BLE001
+            pass
+    import os
+    return os.path.join(sessions_root(env), session)
+
+
 def log_dir(session, env=None):
     """`<session dir>/log/mail`, as sessionmail's `_injectlog.log_dir`
     finds it, or None for no session (`-` included)."""
@@ -1202,8 +1357,7 @@ def log_dir(session, env=None):
     env = os.environ if env is None else env
     if not session or session == "-":
         return None
-    home = env.get("HOME") or os.path.expanduser("~")
-    return os.path.join(home, ".session", "sessions", session, *LOG_DIR)
+    return os.path.join(session_dir(session, env), *LOG_DIR)
 
 
 def deny_row(payload, reason_text, ms, session):
@@ -1278,14 +1432,71 @@ def log_deny(payload, reason_text, started, env=None):
         import os
         import time
         env = os.environ if env is None else env
+        # `ms` is hook entry to the emit (docs/pager-inject-log.md), so it
+        # is taken before the session dir is found: that may run `session
+        # path`, which is after the emit and no part of the decision.
+        ms = max(0, int((time.monotonic() - started) * 1000))
         session = _session_of(payload, env)
         directory = log_dir(session, env)
         if directory is None or not reason_text:
             return None
-        ms = max(0, int((time.monotonic() - started) * 1000))
         return log_append(directory, deny_row(payload, reason_text, ms, session))
     except Exception:  # noqa: BLE001 - a row is never why a deny fails
         return None
+
+
+# ── the guard's own switch, `mail_guard` ────────────────────────────────────
+#
+# The host settings file can turn the guard's subject and body checks
+# (`decide`) off: `"mail_guard": false` in
+# `$HOME/.sessionkit/mail/settings/mail.json`, the person's lever "in case
+# it's broken". The subagent rules (`decide_subagent`, `decide_subagent_mcp`)
+# are NOT under it: they hold whatever it says. It is read HERE, by this stdlib copy of sessionmail's
+# `_settings.switches` rule, because this file runs on system python3 and
+# cannot import sessionmail (mail-guard-hook). Kept in step by
+# tests/test_hook_switches_mail_guard.py, which runs both readers over every
+# file shape and value kind and pins SETTINGS_RELATIVE to `_settings.RELATIVE`.
+#
+# The rule, for this key: absent means ON, and ONLY the boolean `false`
+# turns the guard off. A value that is not a boolean is ignored (on). A file
+# that is missing, cannot be read, is not text, is not JSON or whose top
+# level is not an object decides nothing: on. An odd or broken settings file
+# NEVER turns the guard off. `hooks` is not read: the guard never answered
+# to it, and it does not now.
+#
+# What it says about a file that decides nothing (decided on purpose):
+# NOTHING. The guard speaks one way, a deny's decision JSON; an allow is
+# silent, and a judging guard on such a file is the same guard as with no
+# file at all. Every such file is also a `hooks` fault, and the ride-along
+# names it at the first batch; a value that is not a boolean is named there
+# too (its switch_ignored line). A second voice would say it twice.
+
+#: `$HOME/<SETTINGS_RELATIVE>`: sessionmail's `_settings.RELATIVE`, by parts.
+SETTINGS_RELATIVE = (".sessionkit", "mail", "settings", "mail.json")
+#: sessionmail's `_settings.MAIL_GUARD`.
+MAIL_GUARD_KEY = "mail_guard"
+
+
+def settings_path(env=None):
+    """`$HOME/.sessionkit/mail/settings/mail.json`, HOME found as
+    sessionmail's `_settings` finds it (and as `log_dir` does here)."""
+    import os
+    env = os.environ if env is None else env
+    home = env.get("HOME") or os.path.expanduser("~")
+    return os.path.join(home, *SETTINGS_RELATIVE)
+
+
+def guard_switched_off(env=None):
+    """True ONLY when the host settings file is a JSON object whose
+    `mail_guard` is the boolean false. Anything else, an error of any kind
+    included, is False: the guard judges. Never raises, never writes."""
+    try:
+        with open(settings_path(env), "rb") as f:
+            raw = f.read()
+        data = json.loads(raw.decode("utf-8"))
+        return isinstance(data, dict) and data.get(MAIL_GUARD_KEY, True) is False
+    except Exception:  # noqa: BLE001 - a settings file never turns the guard off
+        return False
 
 
 def main(argv=None):
@@ -1322,7 +1533,11 @@ def main(argv=None):
     # this; a main-thread payload never reaches it, so its decision is the
     # one `decide` alone gives, byte for byte.
     reason = decide_subagent(command) if payload.get("agent_id") else None
-    if not reason:
+    # `"mail_guard": false` turns off the subject and body checks ONLY. The
+    # subagent rules above, and decide_subagent_mcp at the other door, are
+    # enforced whatever it says. The file is read only when `decide` would
+    # run, so a call the subagent rules deny, or any MCP call, never reads it.
+    if not reason and not guard_switched_off():
         reason = decide(command)
     if not reason:
         return 0

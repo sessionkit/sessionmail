@@ -35,6 +35,7 @@ from click.testing import CliRunner
 
 from sessionmail import _mcp, _seat, pager, rules
 from sessionmail.pager import cli
+import _leaves
 from tool_call import call
 from test_pager_listen_judges import SESSION, rig  # noqa: F401  (the rig is a fixture)
 
@@ -44,9 +45,11 @@ OTHER = "sess-b"
 
 def _mail(sid: str) -> Path:
     """A session's mail state since session-settings 3.3a: under the session
-    dir sessiontools keeps, `$HOME/.session/sessions/<sid>/mail/` (spelt out,
-    not asked of the code, so the test can see it move)."""
-    return Path(os.environ["HOME"]) / ".session" / "sessions" / sid / "mail"
+    dir sessiontools keeps, `<sessions leaf>/<sid>/mail/`. The leaf is
+    sessiontools' own answer for the sandbox HOME, pinned before the test
+    ran (`_leaves`), not asked of sessionmail, so the test can see the
+    code write anywhere else."""
+    return _leaves.session_mail(sid)
 
 
 def pager_cmd(*argv: str):
@@ -546,3 +549,49 @@ def test_the_tool_refuses_over_http_where_it_cannot_know_the_caller(rig, sent, c
     with pytest.raises(ToolError, match="identity"):
         call(tools["pager_focus"], mode="sleep")
     assert not focus_file(rig).exists() and not sent and not child_sent()
+
+
+# ── --for a short session id (the SM-885 design, 5.3) ───────────────────
+#
+# A privileged seat's --for expands a short id to the one session dir it
+# starts here; one that starts none, or several, refuses (2) and changes
+# nothing. A caller --for is not for is refused as before: nothing expands.
+
+FULL = "c0ffee01-1111-4111-8111-111111111111"
+TWIN = "c0ffee01-2222-4222-8222-222222222222"
+
+
+def test_for_a_short_id_U_switches_the_full_session(rig, sent, monkeypatch):
+    as_seat(monkeypatch, "ivan")
+    _mail(FULL).mkdir(parents=True)
+    result = pager_cmd("focus", "sleep", "--for", "c0ffee01")
+    assert result.exit_code == EX_OK, result.stderr
+    assert f"pager focus: 'c0ffee01' is session {FULL}" in result.stderr
+    assert focus_file(rig, FULL).read_text() == "sleep\n"
+    assert not (_mail("c0ffee01")).exists(), "no session dir is made for the short form"
+    assert call_of(sent[0])["session"] == FULL
+
+
+@pytest.mark.parametrize("twin, words", [(False, "no session on this host starts with it"),
+                                         (True, "ambiguous")], ids=["N", "A"])
+def test_for_a_short_id_A_and_N_refuse_and_change_nothing(rig, sent, monkeypatch, twin, words):
+    as_seat(monkeypatch, "ivan")
+    if twin:
+        _mail(FULL).mkdir(parents=True)
+        _mail(TWIN).mkdir(parents=True)
+    before = snapshot(rig.home, Path(os.environ["HOME"]))
+    result = pager_cmd("focus", "sleep", "--for", "c0ffee01")
+    assert result.exit_code == EX_REFUSED, result.stderr
+    assert words in result.stderr and "nothing changed" in result.stderr
+    if twin:
+        assert FULL in result.stderr and TWIN in result.stderr
+    assert snapshot(rig.home, Path(os.environ["HOME"])) == before and not sent
+
+
+def test_a_worker_for_a_short_id_is_refused_as_before(rig, sent, monkeypatch):
+    as_seat(monkeypatch, "worker")
+    _mail(FULL).mkdir(parents=True)
+    result = pager_cmd("focus", "sleep", "--for", "c0ffee01")
+    assert result.exit_code == EX_REFUSED
+    assert "line manager" in result.stderr and "is session" not in result.stderr
+    assert not focus_file(rig, FULL).exists() and not sent

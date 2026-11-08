@@ -191,9 +191,7 @@ def env_for(home: Path, python: str, **extra: str) -> dict[str, str]:
         path.insert(2, os.path.dirname(shutil.which("ssh-keygen")))
     env = {"PATH": os.pathsep.join(dict.fromkeys(path)), "HOME": str(home), "TERM": "dumb",
            "LANG": "en_US.UTF-8", "LC_ALL": "en_US.UTF-8",
-           "SESSION_MAIL_ROOT": str(home / ".mail" / "agents"),
-           "SESSIONMAIL_ROOT": str(home / ".mail" / "agents"),
-           "MAIL_ROOT": str(home / ".mail"), "MAILDIR": str(home / ".mail"),
+           "SESSIONMAIL_ROOT": str(home / ".mail"), "MAILDIR": str(home / ".mail"),
            "NOTMUCH_CONFIG": str(home / "notmuch-config"),
            "CLAUDE_CODE_SESSION_ID": "00000000-0000-4000-8000-000000000827",
            "CLAUDE_CODE_AGENT": "alice", "ALICE_ROOT": "root@sm827.invalid",

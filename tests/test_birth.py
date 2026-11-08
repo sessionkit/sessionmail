@@ -42,7 +42,7 @@ class Rig:
     `calls` records what ran, in order."""
 
     def __init__(self, tmp_path: Path, monkeypatch, rings=(LIVE,)):
-        self.root = tmp_path / "mail" / "agents"
+        self.root = tmp_path / "mail" / "stores"
         self.home = tmp_path / "sessionmail"
         # SM-674 (merged at land-prep): a "wait" birth asks for the MagicDNS
         # suffix in ENV and skips every regen without one; the conftest's
@@ -52,7 +52,7 @@ class Rig:
         # host's. A hand-built env with none falls to the drop, whose
         # detaching birth rings no doorbell; a test of the mail drop sets
         # "drop" itself.
-        self.env = {"SESSION_MAIL_ROOT": str(self.root), "SESSIONMAIL_HOME": str(self.home),
+        self.env = {"SESSIONMAIL_ROOT": str(self.root.parent), "SESSIONMAIL_HOME": str(self.home),
                     "MAGICDNS_SUFFIX": os.environ["MAGICDNS_SUFFIX"],
                     "SESSIONMAIL_SENDMAIL": os.environ["SESSIONMAIL_SENDMAIL"]}
         self.rings = list(rings)

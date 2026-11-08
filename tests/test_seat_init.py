@@ -763,3 +763,25 @@ def test_a_git_registry_with_no_allowed_signers_is_refused(git_env, registry):
     rc, _, err = seat_init(git_env, "--registry", registry, "desk.uma")
     assert rc == EX_REFUSED and "no allowed_signers file" in err and "Nothing was written" in err
     nothing_written(git_env, registry, before)
+
+
+def test_seat_keys_do_not_follow_the_state_folder(git_env, registry, tmp_path):
+    """Seat keys are OUT of the state move. With no
+    $SESSIONMAIL_HOME, and the state folder holding `seats` and even a
+    `seat-keys`, seat init still keys under `$HOME/.sessionmail/seat-keys/`:
+    it finds the old key there and refuses to overwrite it."""
+    git_env = {k: v for k, v in git_env.items() if k != "SESSIONMAIL_HOME"}
+    state = tmp_path / ".sessionkit" / "mail" / "state"
+    for leaf in ("seats", "seat-keys"):
+        (state / leaf).mkdir(parents=True)
+    home = tmp_path / ".sessionmail" / "seat-keys" / "desk.uma"
+    home.mkdir(parents=True, mode=0o700)
+    os.chmod(home.parent, 0o700)
+    (home / "id_ed25519").write_bytes(b"the old key")
+    os.chmod(home / "id_ed25519", 0o600)
+    before = head(registry, git_env)
+    rc, _, err = seat_init(git_env, "--registry", registry, "desk.uma")
+    assert rc == EX_REFUSED and "never overwrites" in err, err
+    assert (home / "id_ed25519").read_bytes() == b"the old key"
+    assert list((state / "seat-keys").iterdir()) == []
+    assert head(registry, git_env) == before

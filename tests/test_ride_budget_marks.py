@@ -29,7 +29,7 @@ UNVERIFIED voice and is a MAIL to the budget and the marks: capped at the
 text cap, refused past the budget, never `done` (pinned below).
 
 Hermetic, like test_views.py, whose scratch seat and helpers this reuses:
-SESSIONMAIL_HOME, SESSION_MAIL_ROOT and VOICEMODE_BASE_DIR all sit under
+SESSIONMAIL_HOME, SESSIONMAIL_ROOT and VOICEMODE_BASE_DIR all sit under
 tmp_path, notmuch is faked, and no live box, index or listener is touched.
 """
 

@@ -160,9 +160,9 @@ _seq = 0
 
 @pytest.fixture
 def storm(tmp_path, monkeypatch):
-    root = tmp_path / "mail"
-    root.mkdir()
-    monkeypatch.setenv("SESSION_MAIL_ROOT", str(root))
+    root = tmp_path / "mail" / "stores"
+    root.mkdir(parents=True)
+    monkeypatch.setenv("SESSIONMAIL_ROOT", str(root.parent))
     monkeypatch.setenv("SESSIONMAIL_HOME", str(tmp_path / "sessionmail"))
     monkeypatch.setenv("TM_AGENT_ADDRESS", "ivan")
     monkeypatch.delenv("CLAUDE_CODE_AGENT", raising=False)

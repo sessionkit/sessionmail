@@ -114,7 +114,7 @@ def rig(tmp_path_factory):
     # the wake shelves: <root>/<box>/new/<file>, picked by X-Original-To
     to = f"{AGENT}+boot@{HOST}"
     for case, (frm, key, kw, _rc, _why) in SHELF.items():
-        new = T / f"agents-{case}" / AGENT / "new"
+        new = T / f"agents-{case}" / "stores" / AGENT / "new"
         new.mkdir(parents=True)
         (new.parent / "cur").mkdir()
         (new / f"1.{case}").write_text(mail(keys, f"shelf-{case}@{HOST}", frm, to, "BOOT letter",
@@ -217,7 +217,7 @@ def test_wake_shows_only_the_owners_verifying_letter_and_never_says_sig_ok(rig, 
     _frm, _key, _kw, want_rc, why = SHELF[case]
     argv = ([oracle(PKG, "wake")] if door == "oracle" else [*memory_door(PKG), "wake"])
     rc, out, err = run([*argv, AGENT, "--dry-run"], rig["env"],
-                       SESSION_MAIL_ROOT=str(rig["T"] / f"agents-{case}"))
+                       SESSIONMAIL_ROOT=str(rig["T"] / f"agents-{case}"))
     boot = shelf(out)
     assert rc == want_rc, (case, rc, out, err)
     assert "sig OK" not in out
@@ -238,16 +238,16 @@ def test_wake_shows_only_the_owners_verifying_letter_and_never_says_sig_ok(rig, 
 
 
 def test_wake_with_no_shelf_letter_is_still_exit_0(rig, tmp_path):
-    (tmp_path / AGENT / "new").mkdir(parents=True)
+    (tmp_path / "stores" / AGENT / "new").mkdir(parents=True)
     rc, out, _err = run([oracle(PKG, "wake"), AGENT, "--dry-run"], rig["env"],
-                        SESSION_MAIL_ROOT=str(tmp_path))
+                        SESSIONMAIL_ROOT=str(tmp_path))
     assert rc == 0 and "no shelf mail at victim+boot" in out
 
 
 def test_wake_box_not_found_exits_1_as_its_page_says(rig, tmp_path):
-    (tmp_path / AGENT / "new").mkdir(parents=True)
+    (tmp_path / "stores" / AGENT / "new").mkdir(parents=True)
     rc, _out, err = run([oracle(PKG, "wake"), "nosuchbox", "--dry-run"], rig["env"],
-                        SESSION_MAIL_ROOT=str(tmp_path))
+                        SESSIONMAIL_ROOT=str(tmp_path))
     assert rc == 1 and "no such mailbox 'nosuchbox'" in err
 
 
@@ -314,7 +314,7 @@ def test_the_switch_is_f_by_default():
 
 def test_r_refuses_even_the_owners_own_letter(rig, refusing):
     rc, out, err = run([oracle(refusing, "wake"), AGENT, "--dry-run"], rig["env"],
-                       SESSION_MAIL_ROOT=str(rig["T"] / "agents-owner-ownerkey"))
+                       SESSIONMAIL_ROOT=str(rig["T"] / "agents-owner-ownerkey"))
     assert rc == 3 and body_of("owner-ownerkey") not in out
     assert _sig.UNPINNED_REFUSED in shelf(out)
     rc, out, err = run([oracle(refusing, "cat"), "/BOOT/1"], rig["env"])

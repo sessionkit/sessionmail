@@ -142,11 +142,11 @@ def test_the_reader_run_by_path_says_so_and_exits_2(tmp_path, verb, how):
 
 
 def test_wake_with_notmuch_hidden_still_degrades_and_exits_0(tmp_path):
-    root = tmp_path / "mail"
+    root = tmp_path / "mail" / "stores"
     for sub in ("new", "cur", "tmp"):
         (root / "alpha" / sub).mkdir(parents=True)
     p = run([sys.executable, "-m", "sessionmail.memory", "wake", "alpha"],
-            env_without_notmuch(tmp_path, SESSION_MAIL_ROOT=str(root)))
+            env_without_notmuch(tmp_path, SESSIONMAIL_ROOT=str(root.parent)))
     assert p.returncode == 0, p.stderr
     assert "COULD NOT LOOK" in p.stdout, p.stdout
     assert "not installed" not in p.stderr, "wake keeps its own degrade notice"

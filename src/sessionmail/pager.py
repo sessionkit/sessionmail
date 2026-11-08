@@ -87,6 +87,13 @@ ORPHAN_PARENT = 1
 #: `listen --monitor`: a flag it cannot take with it.
 EX_USAGE = 1
 
+#: `listen`, bare or `--monitor`: this platform has no
+#: kqueue, so the watch cannot be made (`_detect.can_watch()` is False). ONE
+#: plain line naming the platform, said before anything is born, stamped or
+#: mailed, and no traceback. Distinct from 2 (could not look at a box): no
+#: box, here or anywhere, can be watched on this platform.
+EX_UNSUPPORTED = 5
+
 #: The least gap between two stdout lines of a monitor.
 #: Claude Code 2.1.295 meters a plugin monitor's output with a token bucket
 #: of 10, refilled 1 per 2 s, and DROPS a batch over it - for a pager, a
@@ -96,6 +103,14 @@ DEFAULT_MONITOR_SPACING = 2.5
 #: The longest monitor line. Claude Code cuts a monitor's line
 #: at 500 characters and appends "...(truncated)"; this stays under it.
 MONITOR_LINE_MAX = 480
+#: The monitor notice's budgets for the parts a SENDER writes.
+#: A sender's local part fits a session id (36 characters) whole; a subject
+#: fits anything `message send` itself sends (its limit is 69) whole.
+#: Provisional and reversible, as GROUP_LINES_MAX is.
+NOTICE_SENDER_MAX = 40
+NOTICE_SUBJECT_MAX = 120
+#: How many other senders a page of several names, oldest first.
+NOTICE_OTHERS_MAX = 3
 #: The signals that end a monitor quietly: claude ending the
 #: task, `pager off`/`stop`, a terminal going away.
 MONITOR_SIGNALS = ("SIGTERM", "SIGINT", "SIGHUP")
@@ -184,6 +199,33 @@ def _deaf_template(key: str) -> str:
 DEAF_MONITOR_MISSING = _deaf_template("deaf_monitor_missing")
 DEAF_MONITOR_ENDED = _deaf_template("deaf_monitor_ended")
 DEAF_NOT_LISTENING = _deaf_template("deaf_not_listening")
+#: A platform where the pager cannot listen (no kqueue): a TEMPLATE,
+#: formatted with {platform} by `cannot_listen_line`. It takes the place of
+#: every not-listening and DEAF line there, and names no arm instruction.
+CANNOT_LISTEN = _HOOK_TEXTS["cannot_listen"]
+
+
+def can_listen() -> bool:
+    """Can a listener run on this platform at all? `_detect.can_watch()`,
+    the one capability check, asked here so that every teller below - the
+    hooks, `pager status`, `pager listen` - asks the same thing."""
+    from . import _detect
+    return _detect.can_watch()
+
+
+def cannot_listen_line(platform: str | None = None) -> str:
+    """The one line said where the pager cannot listen: the platform, by
+    name, and what it is missing."""
+    return " ".join(CANNOT_LISTEN.format(platform=platform or sys.platform).split())
+
+
+def no_listener_line() -> str:
+    """What to say when nothing is listening for this session: the two ways
+    out (`LINE_NO_MONITOR`), or, where no listener can run, the platform
+    line, since both ways out would fail there."""
+    return LINE_NO_MONITOR if can_listen() else cannot_listen_line()
+
+
 #: What `pager status` says instead of "not listening" when claude
 #: is not running for this session yet (`_seat.claude_for` is None) - a
 #: check made before a monitor CAN exist is not deafness. Composed with
@@ -204,6 +246,13 @@ BORN_LINE = _HOOK_TEXTS["born"]
 #: session-settings 3.1: the old host file differs from the new one and was
 #: not linked; `.format(old=..., path=...)`.
 SETTINGS_DRIFT = _HOOK_TEXTS["settings_drift"]
+#: A per-hook switch whose value is not a boolean is ignored (its hook stays
+#: on), and the ride-along says so once per session; `.format(ignored=...)`,
+#: the reader's bounded reasons joined by "; " (`_switch_ignored_line`).
+SWITCH_IGNORED = _HOOK_TEXTS["switch_ignored"]
+#: A switch that is on while "hooks" is not: the hook it gates stays off.
+#: `.format(hooks=..., what=...)`; `pager settings hooks KEY` says it.
+SWITCH_OVERRIDDEN = _HOOK_TEXTS["switch_overridden"]
 
 #: THE QUIET PAGE - `pager listen`'s page, built by `quiet_page()` below.
 #: specs/pager, "The pager is a nudge, and the re-arm carries": a page carries NO per-message
@@ -429,6 +478,7 @@ Exit: 0 ok · 2 usage, or could not look (each verb's page has the rest)"""
 @click.version_option(__version__, "--version", "-V")
 def cli() -> None:
     """pager - alerts an agent: a line at the desk, a wake when idle; it blocks"""
+    _seat.drop_inherited()   # first, before anything resolves
 
 
 @cli.command(
@@ -509,7 +559,7 @@ def status(show_all: bool, quiet: bool, new_only: bool, stopped: bool) -> None:
             table.append(_seat._ps_table())
         return table[0]
 
-    nudge = ((new_only or stopped) and _seat.pager_enabled()
+    nudge = ((new_only or stopped) and _seat.pager_enabled() and can_listen()
              and _seat.is_listening(seat, session, ps=ps) is None)
     # "not listening" before claude has started for this session is
     # not deafness - a `session start` context generator (a wake item) runs
@@ -702,19 +752,40 @@ def today_status_line(seat, session: str, today: "str | None" = None) -> "str | 
             f"capture {capture} - {where}")
 
 
+def frozen_status_line(session: str, now: "float | None" = None) -> str:
+    """`pager status`'s `frozen:` line: the frozen-turn watch's switch,
+    read now, and what SESSION's monitor last recorded in its stamp -
+    `off (...)`, `watching (...)`, `silent 12m mid-turn since ...` or
+    `not judged (...)`, then any floor applied. NOW is wall-clock epoch
+    seconds. Reads only; never raises."""
+    from . import _frozen
+    try:
+        watch = _settings.frozen()
+        stamp = _frozen.read_stamp(session) if session not in ("", "-") else None
+        line = _frozen.gauge(watch, stamp, _frozen.wall_clock() if now is None else now)
+    except Exception as exc:  # noqa: BLE001 - a reading never costs the exit code
+        return f"frozen: could not be read - {exc!r}"
+    if watch.on and session in ("", "-"):
+        return "frozen: not judged (no session id, so no transcript and no stamp)"
+    return line
+
+
 def status_readings(seat, session: str, ps=None) -> list[str]:
     """What `pager status` says about the listener, on STDERR: the
-    `monitor:` line, the `required:` line, the
+    `monitor:` line, the `required:` line, the `frozen:` line, the
     `today:` line (this session's inject log, summed), then - when
     nothing at all listens for this session and the pager is on - the (l5)
     sentence: the monitor can only start at launch, and the two ways out."""
-    out = [monitor_status_line(seat, session, ps=ps), required_status_line(seat, session)]
+    out = [monitor_status_line(seat, session, ps=ps), required_status_line(seat, session),
+           frozen_status_line(session)]
     today = today_status_line(seat, session)
     if today:
         out.append(today)
     if (_seat.pager_enabled() and session not in ("", "-")
             and _seat.is_listening(seat, session, ps=ps) is None):
-        out.append(f"pager: {LINE_NO_MONITOR}")
+        # Where no listener can run, the two ways out are no way out: the
+        # platform line takes the sentence's place.
+        out.append(f"pager: {LINE_NO_MONITOR}" if can_listen() else cannot_listen_line())
     return out
 
 
@@ -1193,13 +1264,20 @@ def _ride_item(mid: str, v, entry_lines: list[str], admitted: bool) -> dict:
                            in_mail=in_mail, cut=in_mail > 0 or v.textless)
 
 
-def _page_items(entries: list) -> list[dict]:
+def _page_items(entries: list, *, named: object = None, given: int = 0) -> list[dict]:
     """The `items[]` of a monitor or hand-listen page - the
     arrivals it names, oldest first. A page is a count, never a body: no
     mail's text is in the string, so each is `view: count`, `given: 0`,
-    `in_mail: null` (no view was made), `cut: true`."""
-    return [_injectlog.item(getattr(a, "message_id", None), kind="mail", view="count",
-                            given=0, in_mail=None, cut=True) for a in entries]
+    `in_mail: null` (no view was made), `cut: true`.
+
+    NAMED is the one arrival the monitor's line names by sender and
+    subject (`MonitorNotice.named`): its item is `view: header`, `given`
+    the characters that naming cost. Only the monitor passes it; a hand
+    page's items are counts, as they always were."""
+    return [_injectlog.item(getattr(a, "message_id", None), kind="mail",
+                            view="header" if named is not None and a is named else "count",
+                            given=given if named is not None and a is named else 0,
+                            in_mail=None, cut=True) for a in entries]
 
 
 def _arrival_ms(entries: list, now: float | None = None) -> "int | None":
@@ -1402,6 +1480,29 @@ def _fit(line: str, action: str = "") -> str:
     return (line if len(line) <= room else line[: room - 1] + "…") + tail
 
 
+def _flat(text: str) -> str:
+    """TEXT on one line with no control character: `_views.without_controls`
+    keeping SPACING only so `split()` reads each as a word break, then the
+    white space collapsed. The ride-along header line's strip (`_queue_line`)."""
+    from . import _views            # already loaded: the scoop made its Budget
+    return " ".join(_views.without_controls(text, keep=_views.SPACING).split())
+
+
+def _who_what(parsed) -> tuple[str, str, str]:
+    """(sender, subject, mark) of PARSED, each already `_flat`: who wrote a
+    mail and what it is about, as the ride-along's header line prints them.
+
+    The sender is the address's local part, `?` when there is none; the
+    subject is `(no subject)` when there is none; the fallback is chosen
+    BEFORE the strip, as the line always chose it. The mark is the
+    unreadable-header mark, "" for none, read by getattr: this reads any
+    entry-shaped PARSED (the tests' stand-ins carry none). ONE source for
+    these pieces, so a second renderer never re-spells them."""
+    return (_flat(parsed.sender_local or "?"),
+            _flat(parsed.subject or "(no subject)"),
+            _flat(getattr(parsed, "unreadable_mark", "")))
+
+
 def _queue_line(entry: "_seat.QueueEntry", parsed, extras: tuple[str, ...] = (),
                 action: str = "", heard=None) -> str:
     """One queue entry, one line: when, who, what - from the file itself.
@@ -1435,34 +1536,26 @@ def _queue_line(entry: "_seat.QueueEntry", parsed, extras: tuple[str, ...] = (),
     omitted; extras, the recovered note and the action follow as for mail.
     Every other line is unchanged, byte for byte.
     """
-    from . import _views            # already loaded: the scoop made its Budget
-
-    def flat(text: str) -> str:
-        return " ".join(_views.without_controls(text, keep=_views.SPACING).split())
-
     if parsed is None:
-        line = flat(f"[{RIDE_TAG}] {entry.name}")
+        line = _flat(f"[{RIDE_TAG}] {entry.name}")
     elif heard is not None:
         when = parsed.date.astimezone().strftime("%H:%M:%S") if parsed.date else "--:--:--"
         if getattr(heard, "verified", True):
-            fields = [HEARD_TAG, when, flat(heard.device), flat(heard.speaker) or "?"]
+            fields = [HEARD_TAG, when, _flat(heard.device), _flat(heard.speaker) or "?"]
         else:   # unsigned, so visibly so, and no speaker is shown
-            fields = [HEARD_TAG, UNVERIFIED_TAG, when, flat(heard.device)]
+            fields = [HEARD_TAG, UNVERIFIED_TAG, when, _flat(heard.device)]
         line = "[" + " ".join(f for f in fields if f) + "]"
     else:
         when = parsed.date.astimezone().strftime("%H:%M") if parsed.date else "--:--"
-        line = flat(f"[{RIDE_TAG}] {when}  {parsed.sender_local or '?'}  "
-                    f"{parsed.subject or '(no subject)'}"
-                    # the unreadable mark; by getattr, as this line reads any
-                    # entry-shaped PARSED (the tests' stand-ins carry none)
-                    f"{getattr(parsed, 'unreadable_mark', '')}")
-    tail = "".join(f"  ({flat(x)})" for x in extras)
+        sender, subject, mark = _who_what(parsed)
+        line = _flat(f"[{RIDE_TAG}] {when}  {sender}  {subject}  {mark}")
+    tail = "".join(f"  ({_flat(x)})" for x in extras)
     if entry.recovered:
-        tail += f"  (recovered from {flat(entry.recovered)})"
+        tail += f"  (recovered from {_flat(entry.recovered)})"
     if not extras:
-        return _fit(line + tail, flat(action))
+        return _fit(line + tail, _flat(action))
     if action:
-        tail += f" ({flat(action)})"
+        tail += f" ({_flat(action)})"
     room = LINE_WIDTH - len(tail)
     if len(line) > room:
         line = line[: max(room - 1, 0)] + "…"
@@ -1584,8 +1677,8 @@ def ride_along_line(seat: "_seat.Seat | None", session: str,
         stamp = _seat.stamp_dir(seat, session) / _seat.RIDE_ALONG_STAMP
     except _seat.NoIdentity:
         return ("pager: ride-along - cannot be read: no session id and no seat "
-                "identity in the environment, so there is no stamp to read. "
-                "Take them yourself below.")
+                "identity in the environment" + _seat.inherited_note()
+                + ", so there is no stamp to read. Take them yourself below.")
     try:
         ran_at = stamp.stat().st_mtime
     except OSError:
@@ -1895,15 +1988,15 @@ def reminder_line(count: int, state: str) -> str:
             f"{'it' if count == 1 else 'one'}.")
 
 
-def monitor_line(entries: list, verdicts: "dict[str, rules.Verdict | None]",
-                 promoted: "set[str] | frozenset[str]" = frozenset(),
-                 fresh: bool = True,
-                 reminders: "dict[str, bool] | None" = None) -> str:
-    """THE MONITOR'S PAGE, one line: the quiet page's count, by
-    the address each mail was sent TO, and what woke it - never a sender,
-    never a subject, never a re-arm (there is nothing to re-arm). At most
-    MONITOR_LINE_MAX characters; a cut takes the middle, never the tail
-    that says where the mail is.
+def _monitor_count_line(entries: list, verdicts: "dict[str, rules.Verdict | None]",
+                        promoted: "set[str] | frozenset[str]" = frozenset(),
+                        fresh: bool = True,
+                        reminders: "dict[str, bool] | None" = None) -> str:
+    """The monitor's line with NO mail named: the count, by the address each
+    mail was sent TO, and what woke it. The fallback when no waiting mail
+    can be read (`monitor_notice`), and the bytes the line had before it
+    named its mail. At most MONITOR_LINE_MAX characters; a cut takes the
+    middle, never the tail that says where the mail is.
 
     REMINDERS: entry name -> was it `read`,
     for each entry this session was given before and has not marked done.
@@ -1921,10 +2014,27 @@ def monitor_line(entries: list, verdicts: "dict[str, rules.Verdict | None]",
     parts = [f"{who} {n}" for who, n in list(by.items())[:GROUP_LINES_MAX]]
     if len(by) > GROUP_LINES_MAX:
         parts.append(f"+{len(by) - GROUP_LINES_MAX} more")
-    woke = [w.removeprefix("pager: ") for w in
+    woke = _woke(entries, verdicts, promoted)
+    middle = ", ".join(parts) + (f"; woke: {'; '.join(woke)}" if woke else "")
+    head, tail = _monitor_head_tail(count, rem, fresh)
+    middle = " ".join(middle.split())
+    room = MONITOR_LINE_MAX - len(head) - len(tail) - len(" (). ")
+    if len(middle) > room:
+        middle = middle[: max(0, room - 1)] + "…"
+    return f"{head} ({middle}). {tail}"
+
+
+def _woke(entries: list, verdicts: "dict[str, rules.Verdict | None]",
+          promoted: "set[str] | frozenset[str]") -> list[str]:
+    """What woke the page, one phrase per deciding rule (`why_lines`)."""
+    return [w.removeprefix("pager: ") for w in
             why_lines([verdicts.get(a.name) for a in entries],
                       [a.name in promoted for a in entries])]
-    middle = ", ".join(parts) + (f"; woke: {'; '.join(woke)}" if woke else "")
+
+
+def _monitor_head_tail(count: int, rem: "dict[str, bool]", fresh: bool) -> tuple[str, str]:
+    """The monitor line's head (the count, and the reminder clause) and its
+    tail (where the mail is), by the ride-along's state and REM."""
     head = f"pager: {count} message{'' if count == 1 else 's'} waiting"
     tail = MONITOR_TAIL_FRESH if fresh else MONITOR_TAIL_STALE
     if rem:
@@ -1936,11 +2046,230 @@ def monitor_line(entries: list, verdicts: "dict[str, rules.Verdict | None]",
         else:
             head = f"{head}, {len(rem)} of them a reminder ({state}, not done)"
             tail = f"{tail}. Reminders: {MONITOR_TAIL_REMINDER}"
-    middle = " ".join(middle.split())
-    room = MONITOR_LINE_MAX - len(head) - len(tail) - len(" (). ")
-    if len(middle) > room:
+    return head, tail
+
+
+@dataclass(frozen=True)
+class MonitorNotice:
+    """The monitor's one line, and the arrival it names by sender and
+    subject: NAMED is None when it names none (the count-only line), and
+    GIVEN is the characters that naming cost in LINE (its inject-log item)."""
+    line: str
+    named: object = None
+    given: int = 0
+
+
+def _notice_read(arrival):
+    """ARRIVAL's headers as an `_maildir.Entry`, or None when its file cannot
+    be read: scooped between the page's decision and its line, or gone. A
+    header the parser cannot read is not this: `parse` is total over one,
+    and the entry carries the unreadable mark instead."""
+    from . import _maildir
+    try:
+        return _maildir.parse(arrival.path, 0, True)
+    except Exception:  # noqa: BLE001 - a page is never lost to its notice
+        return None
+
+
+def _notice_cut(text: str, room: int) -> str:
+    """TEXT within ROOM by the shared display cut (`_shorten.trim`): whole
+    words and `...`, or a hard cut when one word is longer than the room.
+    The cut keeps its preconditions: it runs only when TEXT is over, and
+    only with room for one character and the ellipsis."""
+    from . import _shorten
+    if len(text) <= room or room < len(_shorten.ELLIPSIS) + 1:
+        return text
+    return _shorten.trim(text, room)[0]
+
+
+def _notice_sender(parsed) -> str:
+    """PARSED's sender for the notice: the local part, flattened, `?` when
+    nothing is left, cut to NOTICE_SENDER_MAX."""
+    return _notice_cut(_who_what(parsed)[0] or "?", NOTICE_SENDER_MAX)
+
+
+class _Unheard(Exception):
+    """A voice-marked entry whose headers could not be read for its notice."""
+
+
+def _notice_heard(entry, parsed, signed: "Callable[[Path], object] | None"):
+    """ENTRY's heard-header fields when PARSED marks it voice: `_views.
+    voice_header`'s choice (a trusted spoken turn, UNVERIFIED voice, or
+    None for mail), the ONE trust decision the ride-along makes too.
+
+    Plain mail pays nothing: an entry with no `Ears-Kind` returns None
+    before any read. A marked one is parsed again for its HEADERS only
+    (every voice reader reads headers; the verifier reads the file by path),
+    and SIGNED, the seam by path, gives the keeper-signature seam the
+    page's judgement already asked, so a verdict is had once. Raises
+    `_Unheard` when the file cannot be read: the notice then names the next
+    one, never a voice turn's subject as if it were mail's."""
+    if not getattr(parsed, "voice_marked", False):
+        return None
+    from email.parser import BytesHeaderParser
+    from email.policy import default as default_policy
+    from . import _views, _voice
+    try:
+        with open(entry.path, "rb") as handle:
+            msg = BytesHeaderParser(policy=default_policy).parsebytes(_head(handle))
+        seam = (signed or _voice.signed_file)(entry.path)
+        return _views.voice_header(msg, signed=seam)
+    except Exception as exc:  # noqa: BLE001 - a page is never lost to its notice
+        raise _Unheard(str(exc)) from exc
+
+
+def _notice_voice(heard) -> str:
+    """HEARD's naming, the heard header's own fields: `heard from <speaker>
+    on <device>` when trusted, `heard (UNVERIFIED) on <device>` when not.
+    The speaker and the device are each cut to NOTICE_SENDER_MAX; a
+    missing device is left out, as the ride-along leaves it out. No
+    subject: a voice turn's subject is the speech's first words."""
+    if getattr(heard, "verified", True):
+        who = f"{HEARD_TAG} from {_notice_cut(_flat(heard.speaker) or '?', NOTICE_SENDER_MAX)}"
+    else:
+        who = f"{HEARD_TAG} ({UNVERIFIED_TAG})"
+    device = _notice_cut(_flat(heard.device), NOTICE_SENDER_MAX)
+    return f"{who} on {device}" if device else who
+
+
+def monitor_notice(entries: list, verdicts: "dict[str, rules.Verdict | None]",
+                   promoted: "set[str] | frozenset[str]" = frozenset(),
+                   fresh: bool = True,
+                   reminders: "dict[str, bool] | None" = None,
+                   session: str = "",
+                   signed: "Callable[[Path], object] | None" = None) -> MonitorNotice:
+    """THE MONITOR'S PAGE, one line: the count, then WHO wrote the newest
+    waiting mail and WHAT about, who it was for when that was not this
+    session, and what woke it. Never a body, never a re-arm (there is
+    nothing to re-arm). At most MONITOR_LINE_MAX characters.
+
+    The shapes (specs/pager, "The pager is a nudge, and the re-arm
+    carries", the monitor's line):
+
+        pager: 1 message waiting, from <local>: "<subject>" (to <box>; woke: ...). <tail>
+        pager: 3 messages waiting, newest from <local>: "<subject>" (2 more, from a, b; to <box> 2, you 1; woke: ...). <tail>
+
+    The count head and the tail are today's, reminders included
+    (`_monitor_head_tail`). The sender is the address's local part, never
+    the display name, which is outside the signature; the subject is
+    quoted, so a sender's words never read as the pager's. Both come from
+    the ride-along's own renderer (`_who_what`): no control character
+    reaches the line. ENTRIES arrive oldest first, so the NEWEST is the
+    last; on a mixed page the newest NEW one is named, since new mail is
+    what woke the seat. One that cannot be read gives way to the next
+    newest readable one, and when none can be, the line is the count-only
+    line (`_monitor_count_line`): a page is never lost to its notice.
+
+    `you` is SESSION's own box; mail delivered to an address (a project box,
+    a subscription) says `to <address>`. For one mail to this session the
+    clause says nothing.
+
+    A heard voice turn is named as the ride-along's heard header names it,
+    by the same trust decision (`_notice_heard`): `heard from <speaker> on
+    <device>` when trusted, `heard (UNVERIFIED) on <device>` when not, and
+    no subject either way. Mail From the keeper with no `Ears-Kind` is
+    mail. SIGNED is the keeper-signature seam BY PATH the page's judgement
+    asked (`listen` holds one per mail); None makes a fresh one
+    (`_voice.signed_file`).
+
+    Cuts, when the line is over: the middle first (the other senders, the
+    addresses, what woke it), then the subject by the shared display cut,
+    never the count or the tail. Pure: it reads the entries' headers and
+    writes nothing; whether and when a page fires is decided before it."""
+    count = len(entries)
+    rem = {a.name: reminders[a.name] for a in entries if reminders and a.name in reminders}
+
+    def fallback() -> MonitorNotice:
+        return MonitorNotice(_monitor_count_line(entries, verdicts, promoted, fresh, reminders))
+
+    if not entries:
+        return fallback()
+    from . import _maildir
+    parsed = [_notice_read(a) for a in entries]
+    pool = [i for i in range(count) if entries[i].name not in rem] or list(range(count))
+    named, heard = None, None
+    for i in reversed(pool):
+        if parsed[i] is None:
+            continue
+        try:
+            heard = _notice_heard(entries[i], parsed[i], signed)
+        except _Unheard:
+            continue
+        named = i
+        break
+    if named is None:
+        return fallback()
+
+    _, subject, mark = _who_what(parsed[named])
+    sender = _notice_sender(parsed[named])
+    subject = _notice_cut(subject or "(no subject)", NOTICE_SUBJECT_MAX)
+    mark = f" {mark}" if mark else ""
+    lead = "from" if count == 1 else "newest from"
+    voice = _notice_voice(heard) if heard is not None else ""
+
+    me = (session or "").strip().lower()
+    by: dict[str, int] = {}
+    for p in parsed:
+        key = _maildir.original_to_key(p.original_to or "") if p is not None else ""
+        label = ("you" if me and key == me
+                 else _flat(key) or "(no X-Original-To)")
+        by[label] = by.get(label, 0) + 1
+    clauses = []
+    if count > 1:
+        others: list[str] = []
+        for i, p in enumerate(parsed):
+            if i != named and p is not None and (who := _notice_sender(p)) not in others:
+                others.append(who)
+        more = f"{count - 1} more"
+        if others:
+            more += ", from " + ", ".join(others[:NOTICE_OTHERS_MAX])
+            if len(others) > NOTICE_OTHERS_MAX:
+                more += f", +{len(others) - NOTICE_OTHERS_MAX} more"
+        clauses.append(more)
+    if list(by) != ["you"]:
+        if count == 1:
+            clauses.append(f"to {next(iter(by))}")
+        else:
+            parts = [f"{who} {n}" for who, n in list(by.items())[:GROUP_LINES_MAX]]
+            if len(by) > GROUP_LINES_MAX:
+                parts.append(f"+{len(by) - GROUP_LINES_MAX} more")
+            clauses.append("to " + ", ".join(parts))
+    if woke := _woke(entries, verdicts, promoted):
+        clauses.append(f"woke: {'; '.join(woke)}")
+    middle = " ".join("; ".join(clauses).split())
+    head, tail = _monitor_head_tail(count, rem, fresh)
+
+    def naming(subj: str) -> str:
+        if voice:
+            return f", {voice}" if count == 1 else f", newest {voice}"
+        return f", {lead} {sender}: \"{subj}\"{mark}"
+
+    def compose(subj: str, mid: str) -> str:
+        return (f"{head}{naming(subj)} ({mid}). {tail}" if mid
+                else f"{head}{naming(subj)}. {tail}")
+
+    line = compose(subject, middle)
+    if len(line) > MONITOR_LINE_MAX and middle:          # 1. the middle
+        room = MONITOR_LINE_MAX - (len(line) - len(middle))
         middle = middle[: max(0, room - 1)] + "…"
-    return f"{head} ({middle}). {tail}"
+        line = compose(subject, middle)
+    if len(line) > MONITOR_LINE_MAX and not voice:       # 2. the subject
+        subject = _notice_cut(subject, len(subject) - (len(line) - MONITOR_LINE_MAX))
+        line = compose(subject, middle)
+    if len(line) > MONITOR_LINE_MAX:                     # 3. never the count or tail
+        return fallback()
+    return MonitorNotice(line, entries[named], len(naming(subject)))
+
+
+def monitor_line(entries: list, verdicts: "dict[str, rules.Verdict | None]",
+                 promoted: "set[str] | frozenset[str]" = frozenset(),
+                 fresh: bool = True,
+                 reminders: "dict[str, bool] | None" = None,
+                 session: str = "",
+                 signed: "Callable[[Path], object] | None" = None) -> str:
+    """THE MONITOR'S PAGE, one line: `monitor_notice`'s line."""
+    return monitor_notice(entries, verdicts, promoted, fresh, reminders, session,
+                          signed).line
 
 
 def deaf_line(why: str) -> str:
@@ -2075,7 +2404,8 @@ has waited 60 s without riding along on a tool call."""
   MAIL: your box when there is no session
 
 Exit: 0 paged · 1 usage · 2 could not look · 3 already listening
-  0 too when the pager monitor already hears for this session""",
+  0 too when the pager monitor already hears for this session
+  5 this platform has no kqueue, so the pager cannot listen here""",
 )
 # BOX and --timeout are still HONOURED, but the help no longer
 # names them. --timeout is retired, but taskmaster still calls it, so it
@@ -2185,6 +2515,22 @@ def _listen(box: str | None, timeout: float | None, quiet: bool,
             ctx.exit(EX_MONITOR_OFF)
             return
 
+    if not _detect.can_watch():
+        # No kqueue on this platform: no wait can be made, so refuse ONCE,
+        # here, before anything is born, stamped or mailed - a refused
+        # listen leaves no `listening` or `monitor-armed` stamp claiming it
+        # listens. A monitor says it on stdout, the one channel the seat
+        # hears (Claude Code does not restart it, so it is said once); a
+        # bare listen on stderr. No DEAF line and no "listen again": it
+        # cannot work here, so nothing tells the seat to retry.
+        line = cannot_listen_line()
+        if monitor is not None:
+            monitor.say(line)
+        else:
+            click.echo(line, err=True)
+        ctx.exit(EX_UNSUPPORTED)
+        return
+
     if parent == ORPHAN_PARENT:
         # Gone before even this line: an orphan already. Nothing is born,
         # stamped or mailed for a caller that is not there to hear it.
@@ -2195,6 +2541,20 @@ def _listen(box: str | None, timeout: float | None, quiet: bool,
     session = _seat.session_id()
     has_session = session not in ("", "-")
     box = box or None    # `pager listen ""` is the bare verb, as it always was
+    if box is not None:
+        # A short session id becomes the one full id it starts on this host,
+        # or refuses: here, before the box below is resolved and before any
+        # birth, so a refusal writes nothing.
+        from . import _boxes
+        try:
+            short = _boxes.resolve_session(box, source="box")
+        except _boxes.Unresolved as u:
+            stop(_boxes.refusal_text(u), EX_COULD_NOT_LOOK)
+            return
+        if short.full:
+            if not quiet:
+                click.echo(f"pager listen: {short.note}", err=True)
+            box = short.value
     # BOX, in its release of grace, is resolved once, here: the no-session
     # grace line names its path (MAIL=<path>), and the D8 block below uses it.
     box_arg = _box_argument(box, session) if box is not None else None
@@ -2591,7 +2951,8 @@ def _listen(box: str | None, timeout: float | None, quiet: bool,
                        f"{session or '-'} - the queue, the stamps and the marks are under "
                        f"{_seat.session_root(session) or seat.root}", err=True)
         else:
-            click.echo("  seat       : NONE - nothing in the environment says who this is: "
+            click.echo("  seat       : NONE - nothing in the environment says who this is"
+                       + _seat.inherited_note() + ": "
                        "no listening stamp, no seen marks, page age = running", err=True)
         for line in moved.lines:
             click.echo(f"  state      : {line}", err=True)
@@ -2611,8 +2972,11 @@ def _listen(box: str | None, timeout: float | None, quiet: bool,
             for error in at_arm.errors:
                 click.echo(f"  rules      : {error} - that line is skipped, the rest stand",
                            err=True)
+            for warning in at_arm.warnings:
+                click.echo(f"  rules      : {warning} - that line is kept, as written",
+                           err=True)
             if has_session:
-                record_named(session, {str(e) for e in at_arm.errors})
+                record_named(session, {str(e) for e in (*at_arm.errors, *at_arm.warnings)})
 
     if seat is not None:
         # "Is the pager armed?": pid in, removed on every
@@ -2664,6 +3028,17 @@ def _listen(box: str | None, timeout: float | None, quiet: bool,
             click.echo(f"  state mail : {said}", err=True)
     deadline = None if timeout is None else time.monotonic() + timeout
     ignore: set[str] = set()
+    # Mail name -> the keeper-signature seam its judgement asked: the
+    # monitor's line asks the SAME one for a voice turn, so the verifier
+    # answers once per mail (its memo), never again per page. Dropped with
+    # the verdict it served.
+    seams: dict = {}
+
+    def seam(path: Path):
+        from . import _voice
+        if path.name not in seams:
+            seams[path.name] = _voice.signed_file(path)
+        return seams[path.name]
 
     def timed_out() -> None:
         if not quiet:
@@ -2821,17 +3196,33 @@ def _listen(box: str | None, timeout: float | None, quiet: bool,
             # records - the line starts the wake turn, whose UserPromptSubmit
             # claims the carry stamp, so the stamp must already be there.
             # Then back to the wait: no exit, nothing to re-arm.
-            monitor.say(monitor_line(entries, verdicts, promoted,
-                                     fresh=_ride_fresh(seat, session)
-                                     if has_session else False,
-                                     reminders=reminders),
-                        items=_page_items(entries), ms=_arrival_ms(entries))
+            notice = monitor_notice(entries, verdicts, promoted,
+                                    fresh=_ride_fresh(seat, session)
+                                    if has_session else False,
+                                    reminders=reminders,
+                                    session=session if has_session else "",
+                                    signed=seam)
+            monitor.say(notice.line,
+                        items=_page_items(entries, named=notice.named, given=notice.given),
+                        ms=_arrival_ms(entries))
             return
         ctx.exit(EX_PAGE)
 
     # Only a monitor follows (a bare listen returns on a page
     # and its re-arm reads the new id), and only a session can be followed.
     follow = monitor is not None and has_session
+    # The frozen-turn watch (docs/frozen-watch.md), a monitor's only. It is
+    # ticked right after `follow_session` in both loops below, looks at most
+    # once per `_frozen.CHECK_SECONDS`, reads its switch at every look, and
+    # never raises. Detect only: no keys, no mail, no child. A bare listen
+    # never makes one.
+    frozen_watch = None
+    if follow:
+        from . import _frozen
+        frozen_watch = _frozen.Watcher(
+            session, parent, monitor.say,
+            log=lambda what: _injectlog.error(_seat.session_id(), via=via, seat=seat,
+                                              what=what))
     # Spec "The listener logs its own life": these rows, not `marks`, carry
     # it, and `marks` is unchanged. `start` once armed;
     # `exit` on the way out, through the same `finally` that clears the
@@ -2868,11 +3259,13 @@ def _listen(box: str | None, timeout: float | None, quiet: bool,
                     return False
                 for stale in set(early) - set(names):
                     del early[stale]
+                    seams.pop(stale, None)
                 found = False
                 for n in names:
                     if n not in early:
                         v = arrival_verdict(box_path / "new" / n, live, me,
-                                            session=note_session)
+                                            session=note_session,
+                                            signed=seam(box_path / "new" / n))
                         if v is None:
                             continue
                         early[n] = v
@@ -2888,6 +3281,8 @@ def _listen(box: str | None, timeout: float | None, quiet: bool,
             while True:
                 if follow:
                     follow_session(session, parent, seat, followed, life=life)
+                if frozen_watch is not None:
+                    frozen_watch.tick()
                 remaining = None if deadline is None else max(0.0, deadline - time.monotonic())
                 if follow:
                     # A monitor has no deadline, so `detect`
@@ -2919,7 +3314,8 @@ def _listen(box: str | None, timeout: float | None, quiet: bool,
                 # ride was promoted. A listener with a queue (below) keeps
                 # ride meaning ride.
                 verdicts = {a.name: early.get(a.name)
-                            or arrival_verdict(a.path, live, me, session=note_session)
+                            or arrival_verdict(a.path, live, me, session=note_session,
+                                               signed=seam(a.path))
                             for a in fresh}
                 promoted = {n for n, v in verdicts.items() if promotes(v)}
                 # 5.3: each verdict is recorded where the marks live, keyed
@@ -2934,12 +3330,16 @@ def _listen(box: str | None, timeout: float | None, quiet: bool,
                 ringing = wakeable(waking, verdicts)
                 if not ringing:
                     ignore.update(a.name for a in arrivals)
+                    for a in arrivals:
+                        seams.pop(a.name, None)
                     continue
                 page(waking, verdicts, promoted)
                 if monitor is not None:
                     # No queue here, so no marks to skip them by: what
                     # this page saw is not looked at again.
                     ignore.update(a.name for a in arrivals)
+                    for a in arrivals:
+                        seams.pop(a.name, None)
                     continue
                 return
 
@@ -2960,6 +3360,8 @@ def _listen(box: str | None, timeout: float | None, quiet: bool,
                 # Every tick, before anything is judged or paged
                 # under a session claude has left.
                 follow_session(session, parent, seat, followed, life=life)
+            if frozen_watch is not None:
+                frozen_watch.tick(now_m)
             listing_now = queue_listing()
             if monitor is not None:
                 # The monitor never returns, so `given` is re-read every
@@ -2969,7 +3371,7 @@ def _listen(box: str | None, timeout: float | None, quiet: bool,
                 marks_now = quiet_now()
                 given = marks_now.given
                 present = set(listing_now)
-                for kept in (mids, judged):
+                for kept in (mids, judged, seams):
                     for gone in set(kept) - present:
                         del kept[gone]
                 paged &= present
@@ -2988,7 +3390,8 @@ def _listen(box: str | None, timeout: float | None, quiet: bool,
                 if not mids[name] and name in paged:
                     continue
                 if name not in judged:
-                    verdict = arrival_verdict(path, live, me, session=note_session)
+                    verdict = arrival_verdict(path, live, me, session=note_session,
+                                              signed=seam(path))
                     if verdict is None:
                         continue           # scooped before it could be judged
                     judged[name] = verdict
@@ -3196,7 +3599,7 @@ def judge_head(head: bytes, layers, me: "rules.Me", arrived: datetime,
 
 
 def arrival_verdict(path: Path, layers, me: "rules.Me",
-                    *, session: str = "") -> "rules.Verdict | None":
+                    *, session: str = "", signed=None) -> "rules.Verdict | None":
     """Tasks 4.1: the verdict for the mail at PATH, by `judge_head` over its
     headers, at its ARRIVAL time (the inode's mtime: the only clock a focus
     mode's end is checked by, 3.3).
@@ -3206,7 +3609,10 @@ def arrival_verdict(path: Path, layers, me: "rules.Me",
     would be deaf after a healthy banner, and unknown fails toward waking (as
     `wakeable` treats a mail with no address). A Pager-Note mail still rides
     when the RULES cannot be read: the note is checked first.
-    SESSION is whose secret proves a note; empty, none is genuine."""
+    SESSION is whose secret proves a note; empty, none is genuine.
+    SIGNED is the keeper-signature seam for PATH when the caller holds one
+    (so a later reader of the same mail asks the same memo), else a fresh
+    `_voice.signed_file(path)`."""
     try:
         with path.open("rb") as handle:
             arrived = datetime.fromtimestamp(os.fstat(handle.fileno()).st_mtime).astimezone()
@@ -3223,7 +3629,7 @@ def arrival_verdict(path: Path, layers, me: "rules.Me",
     from . import _voice
     try:
         return judge_head(head, layers, me, arrived, session=session, mail=mail,
-                          signed=_voice.signed_file(path))
+                          signed=signed if signed is not None else _voice.signed_file(path))
     except Exception:  # noqa: BLE001 - see the docstring: fail toward waking
         return _unjudged()
 
@@ -3883,6 +4289,13 @@ def bad_line_text(error) -> str:
             "fix it and the next mail reads it")
 
 
+def warned_line_text(warning) -> str:
+    """One WARNED rules line (`rules.lint`), as the ride-along
+    names it: kept and judged as written, so it is named, never skipped."""
+    return (f"pager: rules - {warning} - that line is kept as written; "
+            "fix it and the next mail reads it")
+
+
 def _address_key(arrival) -> str:
     """The coalescing key for one arrival: its `X-Original-To`, normalised.
 
@@ -4018,11 +4431,11 @@ def _rule_layer(who, seat: bool, locked: bool) -> tuple[str, Path]:
     if locked:
         return rules.LOCKED, rules.locked_path()
     if seat:
-        path = rules._seat_rules(who.seat, _seat.home()) if who.seat is not None else None
+        path = rules._seat_rules(who.seat, _seat.seats_root()) if who.seat is not None else None
         if path is None:
             raise RuleRefused("no seat identity in the environment (looked for "
                               + ", ".join(_seat.SEAT_VARS) + "), so no seat layer; "
-                              "nothing written")
+                              "nothing written" + _seat.inherited_note())
         return rules.SEAT, path
     sid, err = rules._session_name(who.session)
     if sid is None:
@@ -4191,6 +4604,9 @@ def _rule_verb(verb: str, words: tuple[str, ...], seat: bool, locked: bool) -> N
         _say(f"added to {layer}: {path}:{number}  {body}")
         if body.split()[0] == START_VERB:
             _say(START_UNHONOURED)
+        got, _ = rules.parse(body, str(path), aliases=rules.operator_aliases(who.op))
+        for w in rules.lint(got):
+            _say(f"warning (kept)  {path}:{number}: {w.reason}")
     else:
         _say(f"removed from {layer}: {path}  {body}"
              + (f" ({len(held)} lines)" if len(held) > 1 else ""))
@@ -4215,7 +4631,11 @@ locked, focus, session, seat, env, built-in. Your SESSION's rules are
 yours; seat, locked and start rules are a privileged seat's, and others
 ask one by mail. Edits apply from the next arrival. Every wake carries.
 
-Exit: 0 ok · 2 usage, or refused · 3 nothing to remove"""
+Exit: 0 ok · 2 usage, or refused · 3 nothing to remove
+
+Globs are * and ? only, and case never counts. [ is literal: write
+subject:*alice*, not *[Aa]lice*, which matches only its own brackets (kept,
+and named as a warning)."""
     ),
 )
 def rule() -> None:
@@ -4261,8 +4681,9 @@ def rule_list(seat: bool, locked: bool, every: bool) -> None:
     if text is None:
         _say(f"{layer}  {path} - no file: no rules of its own; the layers below decide")
         return
-    errors = [e for e in rules.load_layers(who.seat, who.session).errors
-              if e.source == str(path)]
+    loaded = rules.load_layers(who.seat, who.session)
+    errors = [e for e in loaded.errors if e.source == str(path)]
+    warnings = [w for w in loaded.warnings if w.source == str(path)]
     bad_at = {e.line for e in errors}
     _say(f"{layer}  {path}")
     shown = 0
@@ -4274,6 +4695,8 @@ def rule_list(seat: bool, locked: bool, every: bool) -> None:
         _say("  (no rules)")
     for e in errors:
         _say(f"bad (skipped)  {e}")
+    for w in warnings:
+        _say(f"warning (kept)  {w}")
 
 
 def _list_all(layers) -> None:
@@ -4296,6 +4719,8 @@ def _list_all(layers) -> None:
             _say(f"  {r.line:>3}  {r.text}")
     for e in layers.errors:
         _say(f"bad (skipped)  {e}")
+    for w in layers.warnings:
+        _say(f"warning (kept)  {w}")
 
 
 @rule.command(
@@ -4382,6 +4807,17 @@ def _focus_target(who, for_: str | None, fleet: bool) -> tuple[str, Path, str | 
                 "your session.")
         return rules.FLEET, rules.locked_path(), who.session or None
     target = who.session if for_ is None else for_.strip()
+    if for_ is not None and who.privileged:
+        # A short id names the one session it starts on this host, or
+        # refuses; --for is a privileged seat's, so only its call expands.
+        from . import _boxes
+        try:
+            r = _boxes.resolve_session(target, source="session")
+        except _boxes.Unresolved as u:
+            raise FocusRefused(f"--for {_boxes.refusal_text(u)}; nothing changed") from None
+        if r.full:
+            click.echo(f"pager focus: {r.note}", err=True)
+        target = r.value
     if for_ is not None and target != who.session and not who.privileged:
         raise FocusRefused(
             "another session's mode is switched by a privileged seat or its line manager, "
@@ -4661,7 +5097,7 @@ def mute() -> None:
     _seat.write_off(seat, session)
     if pid is None:
         click.echo(f"pager mute: muted session {session or '-'}, but nothing is listening: "
-                   f"{LINE_NO_MONITOR}")
+                   f"{no_listener_line()}")
         ctx.exit(EX_NOTHING)
         return
     click.echo(f"pager mute: {_who(pid, monitor)} is muted: it is still running and pages "
@@ -4699,7 +5135,7 @@ def unmute() -> None:
         return
     _seat.clear_off(seat, session)
     if pid is None:
-        click.echo(f"pager unmute: {LINE_NO_MONITOR}")
+        click.echo(f"pager unmute: {no_listener_line()}")
         ctx.exit(EX_NOTHING)
         return
     click.echo(f"pager unmute: {_who(pid, monitor)} pages again")
@@ -4822,20 +5258,21 @@ def _hook_payload() -> dict:
     epilog=unwrapped(
         f"""Registered by hooks/hooks.json; their lines live in hook_lines.toml.
 Each speaks only when {_settings.SHOWN} holds
-"hooks": true, OFF on a fresh install; SESSIONMAIL_PAGER=off wins.
-`stop` reads the file and never writes it. When no listener is live for
-this session, it says so on stderr with exit 2 - the one way a Stop hook
-is heard - unless the harness says stop_hook_active (never a loop), or
-the seat stood down with `pager stop` (its `off` stamp; `pager listen`
-clears it). It stamps nothing.
-`batch` writes the file OFF when it is missing and says so, once; a
-faulty file is off and says so once. Off: silent, mail included, but
-for DEAF: a seat with `pager_required` that nothing hears says why,
-hooks on or off. On: it stamps ride-along, gives this session's queued
-mail once, then its state line (listening, not listening, or "pager is
-muted" after a `pager mute` or `pager stop`) once, then only on change.
+"hooks": true, OFF on a fresh install, and its own switch ("stop_nag",
+"ride_along", "birth") is not false; SESSIONMAIL_PAGER=off wins.
+`stop` reads the file and never writes it. With no listener live for
+this session, it says so on stderr, exit 2 - the one way a Stop hook is
+heard - unless the harness says stop_hook_active (never a loop), the
+seat stood down with `pager stop` (until `pager listen`), or no listener
+can run here (no kqueue).
+`batch` writes a missing file OFF and says so once; a faulty file is
+off and says so once. Off: silent, mail included, but for DEAF: a seat
+with `pager_required` that nothing hears says why, hooks on or off.
+On: it stamps ride-along, gives this session's queued mail once, then
+its state line (listening, not listening, or muted)
+once, then only on change.
 Inside a subagent (payload agent_id) it takes, marks, stamps, writes and
-says nothing: the seat's mail waits for its own main thread or the page.
+says nothing: the seat's mail waits.
 Exit: 0 always, except stop's 2."""
     ),
 )
@@ -4860,13 +5297,25 @@ def hook_stop() -> None:
     if not _seat.pager_enabled():
         ctx.exit(0)                      # SESSIONMAIL_PAGER=off wins: read nothing, say nothing (D7)
         return
+    if not can_listen():
+        # No kqueue on this platform: no listener can run, so the nag (and
+        # a required seat's DEAF) would tell the agent at every turn end to
+        # run a command certain to fail. The Stop hook's only purpose is
+        # that re-arm, so it says nothing here, required or not. The
+        # platform is said ONCE elsewhere: by the monitor as it refuses, and
+        # by the PostToolBatch hook's state line (once, then on change).
+        ctx.exit(0)
+        return
     # Off on purpose, missing, or a fault: silent - except for the deaf check
     # below, which runs either way and speaks
     # only when this seat's pager is required. The Stop hook READS the file
     # and never writes it (D3): its only channel to the agent is exit 2, the
     # nag, so the ride-along creates the file and says the note. A fault
-    # never makes this hook nag (D1).
-    hooks_on = _settings.read().hooks
+    # never makes this hook nag (D1). The nag has its own switch too,
+    # `stop_nag`, and it acts only when both are on: `hooks` off holds it
+    # off whatever `stop_nag` says, and `stop_nag` false turns off this
+    # hook alone. The deaf check below is outside every switch.
+    hooks_on = _settings.read().hooks and _settings.switches().stop_nag.on
     try:
         seat = _seat.resolve()
     except _seat.NoIdentity as exc:
@@ -4936,6 +5385,9 @@ def deaf_check(seat, session: str, ps=None, env: dict[str, str] | None = None,
     4. grace? claude not running yet for this session, or younger than
        `_seat.GRACE_SECONDS`: None. (Asked after 3 only because it costs a
        `ps`; every one of 2-4 answers None, so the order changes no answer.)
+    4b. a platform with no kqueue, where no listener can run: the
+       platform line (`cannot_listen_line`), never DEAF - there is no way
+       out to name;
     5. otherwise DEAF, with the reason: the monitor was expected (switch on,
        the plugin carries monitors/, claude interactive) and never armed
        (`monitor_missing`, naming tengu_amber_sentinel) or armed and is gone
@@ -4967,6 +5419,10 @@ def deaf_check(seat, session: str, ps=None, env: dict[str, str] | None = None,
     age = _seat.claude_age(claude)
     if age is not None and age < _seat.GRACE_SECONDS:
         return None
+    if not can_listen():
+        # 4b. No kqueue on this platform: nothing CAN listen, so the
+        # reason is the platform, and no way out is offered.
+        return cannot_listen_line()
     expected = _seat.monitor_expected(session, ps=ps, env=env, claude=claude)
     if expected.expected:
         if armed:
@@ -5023,7 +5479,9 @@ def _state_lines(seat, session: str, required: "_seat.Required | None" = None) -
     if required is not None and required.on:
         line = deaf_check(seat, session, ps=ps, required=required)
         return [line] if line else []
-    return [LINE_NOT_LISTENING]
+    # Where no listener can run, "not listening - re-arm" is an order that
+    # cannot be obeyed: the platform line instead.
+    return [LINE_NOT_LISTENING if can_listen() else cannot_listen_line()]
 
 
 def _deaf_unsaid(seat, session: str) -> tuple[list[str], str | None]:
@@ -5105,6 +5563,8 @@ def _ups_carries(payload: dict) -> bool:
         settings = _settings.read()
         if settings.fault or not settings.hooks:
             return False
+        if not _settings.switches().ride_along.on:
+            return False                 # `"ride_along": false`: off, as `hooks` false is
         prompt = str(payload.get("prompt") or "")
         if prompt.lstrip().startswith(TASK_NOTIFICATION):
             return _seat.claim_carry(seat, session)
@@ -5113,6 +5573,15 @@ def _ups_carries(payload: dict) -> bool:
         return rules.carry_on(host) and rules.carry_prompt_on(host)
     except Exception:  # noqa: BLE001 - see the docstring
         return False
+
+
+def _switch_ignored_line(switches: "_settings.Switches") -> str:
+    """The switch_ignored line for SWITCHES, or "" when no per-hook switch
+    holds a value that is not a boolean. One line for all of them, in the
+    order of SWITCH_KEYS; each reason quotes its value bounded by the reader
+    (`_settings.SHOWN_VALUE_MAX`), so the line is bounded too."""
+    reasons = [switches[key].ignored for key in _settings.SWITCH_KEYS if switches[key].ignored]
+    return SWITCH_IGNORED.format(ignored="; ".join(reasons)) if reasons else ""
 
 
 def _log_hook(via: str, text: str, *, seat, payload: dict, event: str, started: float,
@@ -5257,6 +5726,14 @@ def hook_batch() -> None:
         line = SETTINGS_COPIED.format(old=_settings.SHOWN_LEGACY_DIR, new=_settings.SHOWN_DIR)
         if _seat.read_said(seat, drift_session, _seat.SAID_COPIED_STAMP) != line:
             notice.append((line, _seat.SAID_COPIED_STAMP))
+    # The per-hook switches, read from the host file alone (they never fold
+    # in `hooks`; the AND is here). A value that is not a boolean is ignored,
+    # so its hook stays on: ONE line naming each, once per session, on or
+    # off, with its own record, as the drift line is.
+    switches = _settings.switches()
+    line = _switch_ignored_line(switches)
+    if line and _seat.read_said(seat, drift_session, _seat.SAID_IGNORED_STAMP) != line:
+        notice.append((line, _seat.SAID_IGNORED_STAMP))
     if settings.fault:
         # PROVISIONAL: a fault is OFF but never silent - ONE
         # line, the path, "treated as off" and why. No mail, no state line,
@@ -5282,9 +5759,11 @@ def hook_batch() -> None:
             _seat.write_said(seat, session, deaf_record, name=_seat.SAID_DEAF_STAMP)
         ctx.exit(0)
         return
-    if not settings.hooks:
-        # Off on purpose: silent, mail included - no take, no mark, no stamp
-        # (off means off). The drift line, if due, is one exception (above).
+    if not settings.hooks or not switches.ride_along.on:
+        # Off on purpose - `"hooks": false`, or `"ride_along": false` (the
+        # ride-along acts only when both say on): silent, mail included - no
+        # take, no mark, no stamp (off means off). The drift, copied and
+        # switch_ignored lines, if due, are one exception (above).
         # The other is the deaf check: when this seat's pager is
         # REQUIRED and nothing listens, its DEAF line is the one thing said,
         # once, then only on change. Not required, muted, listening or in
@@ -5356,6 +5835,7 @@ def hook_batch() -> None:
         layers_now = None
     named = named_bad_lines(session)
     bad = ([bad_line_text(e) for e in layers_now.errors if str(e) not in named]
+           + [warned_line_text(w) for w in layers_now.warnings if str(w) not in named]
            if layers_now is not None else [])
     said: list[bool] = []
 
@@ -5376,7 +5856,7 @@ def hook_batch() -> None:
            room=HOOK_CONTEXT_MAX - _cost([line for line, _ in notice] + bad + state),
            give_by=started + HOOK_GIVE_BY, ride=ride)
     if layers_now is not None:
-        now_named = {str(e) for e in layers_now.errors}
+        now_named = {str(e) for e in (*layers_now.errors, *layers_now.warnings)}
         if said and now_named != named:
             record_named(session, now_named)
     if notice:
@@ -5401,7 +5881,8 @@ START_FAILED = "sessionmail: {why}"
 
 
 def _start_birth(payload: dict, env: dict[str, str]) -> tuple[list[str], bool, "_seat.Seat | None", str]:
-    """The SessionStart birth, UNGATED (a box is an address, not speech): (lines to say,
+    """The SessionStart birth, not gated by `hooks` (a box is an address, not
+    speech; its one switch, `birth`, is `hook_start`'s): (lines to say,
     failed, seat, session).
 
     The session id has ONE resolver, `_seat.session_id`, over ENV; the
@@ -5440,7 +5921,7 @@ def _start_birth(payload: dict, env: dict[str, str]) -> tuple[list[str], bool, "
     context_settings=CONTEXT_SETTINGS,
     cls=PageCommand,
     usage="",
-    short_help="SessionStart hook: birth this session's box, hooks on or off",
+    short_help="SessionStart hook: birth this session's box",
 )
 def hook_start() -> None:
     """pager hook start - the SessionStart hook: a box from the first moment"""
@@ -5453,16 +5934,27 @@ def hook_start() -> None:
         # parent's id and says nothing - the guard `hook batch` keeps.
         ctx.exit(0)
         return
+    # The birth's own switch, `birth`, read from the host file alone and
+    # never `hooks`: only the boolean false turns it off, and then this hook
+    # does nothing at all - no box, no generator, no line, no row, exit 0.
+    # A file that decides nothing for the switches (not JSON, unreadable, not
+    # an object) leaves it on, and says nothing HERE: every such file is a
+    # fault for `hooks` too, so the speech gate below is shut, and the
+    # ride-along's fault line names the file at the first batch.
+    if not _settings.switches().birth.on:
+        ctx.exit(0)
+        return
     event = str(payload.get("hook_event_name") or "SessionStart")
     env = dict(os.environ)
     try:
         lines, failed, seat, session = _start_birth(payload, env)
     except Exception as exc:  # noqa: BLE001 - R4: a hook is never why a session cannot start
         lines, failed, seat, session = [f"sessionmail: hook start could not finish - {exc}"], True, None, "-"
-    # THE ONE IF: the birth above is ungated; what the hook SAYS is gated -
-    # SESSIONMAIL_PAGER=off, and the settings file read, never written
-    # (missing, off or faulty = silent). Saying the arm line regardless of
-    # the switch, if that is ever wanted, is THIS line, and only this line.
+    # THE ONE IF: the birth above is gated by `birth` alone; what the hook
+    # SAYS is gated - SESSIONMAIL_PAGER=off, and the settings file read,
+    # never written (missing, off or faulty = silent). Saying the arm line
+    # regardless of the switch, if that is ever wanted, is THIS line, and
+    # only this line.
     if not (_seat.pager_enabled() and _settings.read().hooks):
         if failed:
             click.echo(" ".join(lines), err=True)    # unsaid to the model; the hook log keeps why
@@ -5504,7 +5996,7 @@ def hook_start() -> None:
     cls=OrderedGroup,
     context_settings=CONTEXT_SETTINGS,
     options_metavar="",
-    subcommand_metavar="install | migrate [--dry-run] | hooks [on|off]",
+    subcommand_metavar="install | migrate [--dry-run] | hooks [KEY] [on|off]",
     hidden=True,
     short_help="the mail settings: install the schema; hooks on|off; the move to ~/.session",
 )
@@ -5610,14 +6102,16 @@ def settings_install() -> None:
     usage="[--dry-run]",
     short_help="[--dry-run]    a seat's old box files into its mail.json map",
     epilog=unwrapped(
-        """Each seat's box files in ~/.sessionmail/seats/<seat>/subscriptions/
+        """The old folders are read in ~/.sessionmail/ while each is still real
+there, else in ~/.sessionkit/mail/state/ ($SESSIONMAIL_HOME when that is set).
+Each seat's box files in seats/<seat>/subscriptions/ there
 become `true` keys of ~/.session/seats/<seat>/settings/mail.json; each
 file's note goes to the seat's log/settings.jsonl, and the file is
 removed, so a second run does nothing. The map's own value wins over a
 file. An agent's bare name stays put and its block for the agent MD is
 printed; a session id's folder is listed; saved queries and seat rules
 files are left. Then each LIVE session (live, with a box): its box files
-in ~/.sessionmail/sessions/<sid>/subscriptions/ become `true` keys of
+in sessions/<sid>/subscriptions/ there become `true` keys of
 ~/.session/sessions/<sid>/settings/mail.json, and its `address` file
 the `address` key; each converted file is removed. A session that is
 not live is never read. --dry-run says the same and writes nothing, and is open
@@ -5670,13 +6164,15 @@ def _os_user() -> str:
 
 
 def _hooks_was(result) -> str:
-    """The parenthesis: what the file said before."""
+    """The parenthesis: what the file said before, about the key written."""
     from . import _settings
     was = result.was
     if was is _settings.NO_KEY:
-        return '(it had no "hooks")'
+        return f'(it had no "{result.key}")'
     if isinstance(was, bool):
         return f"(it said {json.dumps(was)})"
+    if result.key != _settings.HOOKS_KEY:   # a switch: bounded, as its reader quotes it
+        return f"(it said {_settings._shown_value(was)}, which reads as on)"
     return f"(it said {json.dumps(was)}, which the hooks read as off)"
 
 
@@ -5695,7 +6191,7 @@ def _hooks_audit(result) -> None:
         who = None
     seat = who.seat.address if who is not None and who.seat is not None else None
     _settings.audit({
-        "event": "settings", "key": "hooks", "from": result.before, "to": result.state,
+        "event": "settings", "key": result.key, "from": result.before, "to": result.state,
         "path": str(result.path), "who": seat or _os_user(), "seat": seat,
         "sid": (who.session if who is not None else "") or None})
 
@@ -5720,7 +6216,7 @@ def _hooks_refusal(result) -> str:
     if kind == _settings.REFUSED_UNCHECKED:
         return result.why
     if kind == _settings.REFUSED_READBACK:
-        return (f'wrote "hooks": {json.dumps(result.want)} in {result.path}, but it reads as '
+        return (f'wrote "{result.key}": {json.dumps(result.want)} in {result.path}, but it reads as '
                 f"{result.state}{': ' + result.why if result.why else ''}; a race or a bug: look at the file")
     if result.path == _settings.old_path():
         return (f"{result.path} (the move would carry it to {_settings.SHOWN}): {result.why}; "
@@ -5729,17 +6225,26 @@ def _hooks_refusal(result) -> str:
 
 
 def _hooks_line(result) -> str:
-    """The one stdout line of a write: the state it left first."""
+    """The one stdout line of a write: the state it left first. A switch
+    written on while "hooks" is not says what stays off (SWITCH_OVERRIDDEN)."""
     from . import _settings
+    key = result.key
+    head = _HOOKS if key == _settings.HOOKS_KEY else f"{_HOOKS} {key}"
     word = _settings_word(result.want)
     value = json.dumps(result.want)
-    tail = "; each session's next hook reads it" if result.want else ": the quiet off"
+    if key == _settings.HOOKS_KEY:
+        tail = "; each session's next hook reads it" if result.want else ": the quiet off"
+        over = ""
+    else:
+        tail = "; each session's next hook reads it"
+        over = _switch_overridden(key) if result.want else ""
+        over = f"; {over}" if over else ""
     if result.already:
-        return f'{_HOOKS}: {word} - {result.path} already says "hooks": {value}; nothing written'
+        return f'{head}: {word} - {result.path} already says "{key}": {value}; nothing written{over}'
     if result.made:
         src = _settings.SHOWN_OLD if result.converted else "the template"
-        return f'{_HOOKS}: {word} - made {result.path} from {src}, with "hooks": {value}{tail}'
-    return f'{_HOOKS}: {word} - wrote "hooks": {value} in {result.path} {_hooks_was(result)}{tail}'
+        return f'{head}: {word} - made {result.path} from {src}, with "{key}": {value}{tail}{over}'
+    return f'{head}: {word} - wrote "{key}": {value} in {result.path} {_hooks_was(result)}{tail}{over}'
 
 
 def _hooks_read() -> tuple[str, int]:
@@ -5780,48 +6285,134 @@ def _hooks_note() -> str | None:
             "stays silent, whatever the file says")
 
 
+#: The switches "hooks" also gates (each hook ANDs the two), and what of
+#: each stays off while "hooks" is not on. `mail_guard` is not here: it
+#: needs only its own key. The birth itself needs only `birth`; "hooks"
+#: gates its box line.
+_SWITCH_GATED = {
+    _settings.RIDE_ALONG: "the ride-along",
+    _settings.STOP_NAG: "the Stop nag",
+    _settings.BIRTH: "the birth's box line",
+}
+
+
+def _switch_overridden(key: str) -> str:
+    """SWITCH_OVERRIDDEN for KEY when "hooks" is not on and KEY is one it
+    gates, else "". What "hooks" is comes from the bare read: false, off
+    by mistake (its exit code 2), or not there yet."""
+    from . import _settings
+    if key not in _SWITCH_GATED:
+        return ""
+    said = _settings.read()
+    if said.state == _settings.ON:
+        return ""
+    _line, code = _hooks_read()
+    if code == EX_COULD_NOT_LOOK:
+        hooks = '"hooks" is off by mistake'
+    elif said.state == _settings.OFF:
+        hooks = '"hooks" is false'
+    else:
+        hooks = '"hooks" is off (no file yet)'
+    return SWITCH_OVERRIDDEN.format(hooks=hooks, what=_SWITCH_GATED[key])
+
+
+def _switch_read(key: str) -> tuple[str, int]:
+    """`pager settings hooks KEY`: whether that hook acts, and why; its exit
+    code is the bare form's (0 acts, 3 off). A switch that is on while
+    "hooks" is not leaves a gated hook off, with the bare form's code (2
+    when "hooks" is off by mistake). An ignored value is quoted bounded,
+    by the reader's own reason. Writes nothing."""
+    from . import _settings
+    sw = _settings.switches()
+    one = sw[key]
+    head = f"{_HOOKS} {key}"
+    if not one.on:
+        return f'{head}: off - "{key}": false', EX_NOTHING
+    if one.ignored:
+        own = one.ignored
+    elif sw.why:
+        own = sw.why
+    elif one.set:
+        own = f'"{key}": true'
+    else:
+        own = ""
+    over = _switch_overridden(key)
+    if over and key != _settings.BIRTH:
+        code = _hooks_read()[1]
+        return f"{head}: off - {'; '.join(x for x in (own, over) if x)}", code
+    own = own or "not set, so on"
+    return f"{head}: on - {'; '.join(x for x in (own, over) if x)}", EX_PAGE
+
+
+def _switch_lines() -> list[str]:
+    """The bare form's lines after line 1: one per switch the file SETS, in
+    SWITCH_KEYS order. A file that sets none adds none."""
+    from . import _settings
+    sw = _settings.switches()
+    return [_switch_read(key)[0] for key in _settings.SWITCH_KEYS if sw[key].set]
+
+
 @settings.command(
     "hooks",
     cls=PageCommand,
     context_settings=CONTEXT_SETTINGS,
-    usage="[on|off]",
-    short_help="[on|off]    turn the plugin's hooks on or off; bare: say which",
+    usage="[on|off] | KEY [on|off]",
+    short_help="[KEY] [on|off]    turn the hooks, or one, on or off; bare: say",
     epilog=unwrapped(
-        f"""Sets "hooks" in {_settings.SHOWN} ($HOME's), the one
+        f"""Sets "hooks" in {_settings.SHOWN} ($HOME's), the
 switch for whether the plugin's hooks speak (off on a fresh install).
-`on` sets true; `off` sets false, the quiet off. No file yet: it is made
-first, from the template, as the first hook would make it. Only that one
-value changes; every other key, and every other byte, stays. One atomic
-replace; run again, it writes nothing. A file that is not a JSON object
-is never written: fix it by hand. Each session's next hook reads it.
+`KEY on|off` sets one hook's own switch: ride_along, stop_nag,
+mail_guard or birth, each on when missing. "hooks" off still holds the
+ride-along, the Stop nag and the birth's box line off. No file yet: it
+is made first, from the template. Only that value changes; every other
+byte stays. One atomic replace; a re-run writes nothing. A file that is
+not a JSON object is never written: fix it by hand.
 Bare, it writes nothing and says which: on, off (false, or no file yet),
-or off by mistake, and why.
+or off by mistake, and why; then a line per switch the file sets. `KEY`
+alone says whether that hook acts.
 SESSIONMAIL_PAGER=off still silences a session started with it, and the
 pager monitor has its own key, "monitor". For a person, or an installer
 inside a plan the person said yes to; `message setup` never runs it.
 Never as root or under sudo: refused, nothing written.
 
 Exit: 0 on, or the file now says what was asked · 2 usage, or refused
-(named): as root or sudo, the file could not be read or written, is not
-a JSON object, or the old settings folder is not moved yet, and the
-verb's own write is not made; or it is made but reads back wrong; bare:
-off by mistake · 3 off (bare only)"""
+(named: root or sudo, a file that cannot be read or written or is not a
+JSON object, the old settings folder not moved yet, a write that reads
+back wrong); either read (bare, or KEY alone): off by mistake · 3 off"""
     ),
 )
-@click.argument("word", required=False, type=click.Choice(["on", "off"]), metavar="[on|off]")
-def settings_hooks(word: str | None) -> None:
+@click.argument("word", required=False, metavar="[on|off|KEY]",
+                type=click.Choice(["on", "off", *_settings.SWITCH_KEYS]))
+@click.argument("value", required=False, metavar="[on|off]", type=click.Choice(["on", "off"]))
+def settings_hooks(word: str | None, value: str | None) -> None:
     """pager settings hooks - turn the plugin's hooks on or off; bare: say which"""
     from . import _settings
     ctx = click.get_current_context()
-    if word is None:
-        line, code = _hooks_read()
+    if value is not None and word in ("on", "off"):
+        raise click.UsageError(f"'{value}' may follow only a switch: "
+                               f"{', '.join(repr(k) for k in _settings.SWITCH_KEYS)}", ctx)
+    if word in _settings.SWITCH_KEYS and value is None:
+        line, code = _switch_read(word)
         _say(line)
         note = _hooks_note()
         if note:
             _say(note)
         ctx.exit(code)
         return
-    result = _settings.set_hooks(word == "on")
+    if word is None:
+        line, code = _hooks_read()
+        _say(line)
+        for line in _switch_lines():
+            _say(line)
+        note = _hooks_note()
+        if note:
+            _say(note)
+        ctx.exit(code)
+        return
+    if value is not None:
+        result = _settings.set_switch(word, value == "on")
+    else:
+        result = _settings.set_hooks(word == "on")
     if result.flipped:
         _hooks_audit(result)
     if result.refused:

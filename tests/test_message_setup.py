@@ -89,7 +89,6 @@ def env(tmp_path: Path, mailroot: Path, hooks: Path, stranger) -> dict[str, str]
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     notmuch = write_fake(bin_dir / "notmuch", FAKE_NOTMUCH.format(python=sys.executable))
-    agents = str(mailroot / "agents")
     # The host's notmuch profile (`_index`): setup asks it, and no other.
     profile = tmp_path / ".config" / "notmuch" / "sessionkit" / "config"
     profile.parent.mkdir(parents=True)
@@ -98,7 +97,7 @@ def env(tmp_path: Path, mailroot: Path, hooks: Path, stranger) -> dict[str, str]
         "HOME": str(tmp_path),
         "PATH": f"{bin_dir}{os.pathsep}/usr/bin{os.pathsep}/bin",
         "TMPDIR": str(tmp_path),
-        "SESSION_MAIL_ROOT": agents, "SESSIONMAIL_ROOT": agents,
+        "SESSIONMAIL_ROOT": str(mailroot),
         "SESSION_MAIL_HOST": HOST, "SESSIONMAIL_HOST": HOST,
         "SESSIONMAIL_SENDMAIL": "drop",
         "SESSIONMAIL_VMAILBOX_GEN": str(tmp_path / "no-generator-here"),
@@ -188,12 +187,12 @@ def test_dry_run_prints_the_whole_plan_and_writes_nothing(env, tmp_path, mailroo
 def test_a_run_makes_the_root_the_boxes_and_the_hooks(env, mailroot, hooks):
     rc, out, err = setup(env, "--box", "alpha")
     assert rc == _setup.EX_OK, out + err
-    agents = mailroot / "agents"
+    boxes = mailroot / "stores"
     for name in (ACCOUNT_DEFAULT, "alpha"):
         for sub in ("cur", "new", "tmp"):
-            assert (agents / name / sub).is_dir()
-        assert (agents / name).stat().st_mode & 0o777 == 0o700
-    assert agents.stat().st_mode & 0o777 == 0o700
+            assert (boxes / name / sub).is_dir()
+        assert (boxes / name).stat().st_mode & 0o777 == 0o700
+    assert boxes.stat().st_mode & 0o777 == 0o700
     for name in _setup.HOOK_NAMES:
         assert os.readlink(hooks / name) == str(_setup.PACKAGED_HOOK)
     assert _setup.PACKAGED_HOOK.is_file() and os.access(_setup.PACKAGED_HOOK, os.X_OK)
@@ -228,15 +227,17 @@ def test_unknown_arguments_are_usage(env):
     assert rc == _setup.EX_USAGE and "--frobnicate" in err and out == ""
 
 
-def test_the_roots_differing_is_refused(env, tmp_path):
-    """The two root spellings no longer differ between the sides (SM-910:
-    both read SESSIONMAIL_ROOT first). What still differs is MAIL_ROOT, which
-    the drop reads and the readers do not."""
-    bare = {k: v for k, v in env.items() if k not in ("SESSIONMAIL_ROOT", "SESSION_MAIL_ROOT")}
-    rc, out, err = setup({**bare, "MAIL_ROOT": str(tmp_path / "other")})
-    assert rc == _setup.EX_USAGE
-    assert "REFUSED" in err and str(tmp_path / "other" / "agents") in err
-    assert not (tmp_path / "mailroot").exists() and not (tmp_path / "other").exists()
+def test_a_retired_root_variable_is_named_never_read(env, tmp_path):
+    """One resolver, so no two sides can differ and nothing is refused. The
+    retired spellings (MAIL_ROOT, SESSION_MAIL_ROOT) decide nothing; a set
+    one is NAMED on the mail-root step, so a host still exporting it hears
+    "ignored" rather than silence."""
+    rc, out, err = setup({**env, "MAIL_ROOT": str(tmp_path / "other"),
+                          "SESSION_MAIL_ROOT": str(tmp_path / "older")}, "--dry-run")
+    assert "REFUSED" not in err, err
+    line = next(l for l in out.splitlines() if "mail-root" in l)
+    assert "ignored, retired: $SESSION_MAIL_ROOT, $MAIL_ROOT" in line, out
+    assert not (tmp_path / "other").exists() and not (tmp_path / "older").exists()
 
 
 # ── the boxes ────────────────────────────────────────────────────────────────
@@ -245,8 +246,8 @@ def test_the_operator_box_is_the_configured_mailbox(env, mailroot, stranger):
     stranger('{"operator": {"mailbox": "beta"}}')
     rc, out, _ = setup(env)
     assert rc == _setup.EX_OK, out
-    assert (mailroot / "agents" / "beta" / "new").is_dir()
-    assert not (mailroot / "agents" / ACCOUNT_DEFAULT).exists()
+    assert (mailroot / "stores" / "beta" / "new").is_dir()
+    assert not (mailroot / "stores" / ACCOUNT_DEFAULT).exists()
 
 
 def test_with_no_operator_at_all_the_line_names_the_key(env, mailroot, monkeypatch):
@@ -256,7 +257,7 @@ def test_with_no_operator_at_all_the_line_names_the_key(env, mailroot, monkeypat
     assert rc == _setup.EX_REMAINS, out
     assert state(out, "box:operator") == "MANUAL"
     assert _operator.OPERATOR_KEY in out
-    assert (mailroot / "agents" / "alpha" / "new").is_dir()
+    assert (mailroot / "stores" / "alpha" / "new").is_dir()
 
 
 #: SK-95's walk w2, hazard 1 (SM-875 fix-002): the box `sessionkit setup
@@ -290,14 +291,14 @@ def test_a_re_run_plans_the_operator_the_kit_wrote_not_the_legacy_one(
     rc, out, err = setup(env, *(["--dry-run"] if dry_run else []))
     assert f"box:{WALK_OPERATOR}" in out, out + err
     assert WALK_DECOY not in out + err
-    assert not (mailroot / "agents" / WALK_DECOY).exists()
+    assert not (mailroot / "stores" / WALK_DECOY).exists()
     if not dry_run:
         assert rc == _setup.EX_OK, out + err
-        assert (mailroot / "agents" / WALK_OPERATOR / "new").is_dir()
+        assert (mailroot / "stores" / WALK_OPERATOR / "new").is_dir()
 
 
 def test_an_existing_box_is_done_and_left_alone(env, mailroot):
-    box = mailroot / "agents" / "alpha"
+    box = mailroot / "stores" / "alpha"
     for sub in ("cur", "new", "tmp"):
         (box / sub).mkdir(parents=True)
     (box / "new" / "1.mail").write_text("kept")
@@ -328,7 +329,7 @@ def test_a_failed_rebuild_leaves_the_boxes_and_says_so(env, tmp_path, mailroot):
                         "MAGICDNS_SUFFIX": "example.invalid"}, "--box", "alpha")
     assert rc == _setup.EX_REMAINS, out
     assert "maps" in out and "BLOCKED: generator not found" in out
-    assert (mailroot / "agents" / "alpha" / "new").is_dir()
+    assert (mailroot / "stores" / "alpha" / "new").is_dir()
 
 
 # ── the carrier and the suffix (the seam) ────────────────────────────────────
@@ -754,7 +755,7 @@ def test_on_a_fresh_root_setup_then_send_lands_with_no_suffix(env, tmp_path, mai
     assert rc == _setup.EX_OK, out + err
     rc, out, err = _sender.run(argv, real)
     assert rc == 0, err
-    assert [p.parent.name for p in (mailroot / "agents" / "alpha").glob("*/*")] == ["new"]
+    assert [p.parent.name for p in (mailroot / "stores" / "alpha").glob("*/*")] == ["new"]
 
 
 # ── the carrier row is a contract: a downstream parser reads it ──────────────
@@ -775,3 +776,336 @@ def test_the_carrier_row_is_byte_for_byte(env, tmp_path, carrier, argv):
             "no suffix is needed" if carrier == "drop" else
             f"  carrier                   DONE     the MTA at {mta} (from $SESSIONMAIL_SENDMAIL)")
     assert rows == [want], out
+
+
+# ── the delivery step: nm-deliver with the kit profile baked in (SM-1025) ────
+
+#: postconf, as far as the delivery step asks it: `-M nminsert/unix` prints
+#: $FAKE_MASTER's text (none: no such service), then exits $FAKE_POSTCONF_EXIT.
+FAKE_POSTCONF = """#!/bin/sh
+[ "$1" = "-M" ] && [ "$2" = "nminsert/unix" ] || exit 64
+[ -n "$FAKE_MASTER" ] && [ -f "$FAKE_MASTER" ] && cat "$FAKE_MASTER"
+exit "${{FAKE_POSTCONF_EXIT:-0}}"
+"""
+ME = __import__("pwd").getpwuid(os.getuid()).pw_name
+
+
+def insert_host(env: dict[str, str], tmp_path: Path, *, argv: str | None = None,
+                user: str = ME) -> tuple[dict[str, str], Path]:
+    """ENV on an insert host: postconf names an nminsert service whose argv
+    runs the wrapper in a throwaway install folder (or ARGV). Returns the
+    env and the install target."""
+    tools = tmp_path / "postfix-tools"
+    tools.mkdir(exist_ok=True)
+    postconf = write_fake(tools / "postconf", FAKE_POSTCONF)
+    folder = tmp_path / "postfix-agents"
+    folder.mkdir(exist_ok=True)
+    target = folder / "nm-deliver"
+    master = tmp_path / "master.txt"
+    master.write_text("nminsert unix - n n - - pipe flags=DORhu "
+                      f"user={user} argv={argv or target} ${{recipient}}\n")
+    return {**env, "NM_DELIVER_POSTCONF": str(postconf), "FAKE_MASTER": str(master),
+            _setup.NM_DELIVER_DIR_VAR: str(folder)}, target
+
+
+def kit_profile(env: dict[str, str]) -> Path:
+    return _index.profile_config(_index.host_profile(env)[0], env)
+
+
+def test_dry_run_lists_the_delivery_step(env, tmp_path):
+    """SM-1025: `message setup --dry-run` shows the step. A host
+    with no postconf to ask is not an insert host: DONE, nothing installed."""
+    _rc, out, _ = setup(env, "--dry-run")
+    assert state(out, "delivery") == "DONE", out
+    assert detail(out, "delivery").startswith("not an insert host (no postconf to ask)")
+    run, target = insert_host(env, tmp_path)
+    before = snapshot(tmp_path)
+    _rc, out, _ = setup(run, "--dry-run")
+    assert state(out, "delivery") == "TODO", out
+    assert detail(out, "delivery").startswith(
+        f"install {target}, NOTMUCH_CONFIG={kit_profile(run)} (profile sessionkit")
+    assert not target.exists()
+    assert {k for k in snapshot(tmp_path) if k not in before} <= {"notmuch.log"}
+
+
+def test_a_host_with_no_nminsert_service_gets_no_wrapper(env, tmp_path):
+    run, target = insert_host(env, tmp_path)
+    Path(run["FAKE_MASTER"]).unlink()
+    _rc, out, _ = setup(run)
+    assert state(out, "delivery") == "DONE", out
+    assert "master.cf has no nminsert/unix service" in detail(out, "delivery")
+    assert not target.exists()
+
+
+def test_the_step_installs_the_wrapper_with_the_kit_profile_then_is_done(env, tmp_path):
+    run, target = insert_host(env, tmp_path)
+    rc, out, err = setup(run, "--box", "alpha")
+    assert rc == _setup.EX_OK, out + err
+    assert target.read_bytes() == _setup.render_nm_deliver(kit_profile(run))
+    assert f"KIT_NOTMUCH_CONFIG='{kit_profile(run)}'" in target.read_text()
+    assert target.stat().st_mode & 0o777 == 0o755
+    assert f"installed {target}, NOTMUCH_CONFIG={kit_profile(run)}" in out
+    before = snapshot(target.parent)
+    rc, out, _ = setup(run, "--box", "alpha")
+    assert rc == _setup.EX_OK, out
+    assert state(out, "delivery") == "DONE"
+    assert detail(out, "delivery").endswith(f"nminsert/unix runs {target}")
+    assert snapshot(target.parent) == before
+
+
+def test_a_stale_installed_copy_is_refreshed(env, tmp_path):
+    run, target = insert_host(env, tmp_path)
+    target.write_bytes(_setup.PACKAGED_NM_DELIVER.read_bytes())    # hand-installed, no profile
+    _rc, out, _ = setup(run, "--dry-run")
+    assert state(out, "delivery") == "TODO"
+    assert detail(out, "delivery").startswith(f"refresh (it is not what setup would write) {target}")
+    _rc, out, _ = setup(run)
+    assert target.read_bytes() == _setup.render_nm_deliver(kit_profile(run))
+
+
+def test_a_service_that_runs_another_path_is_reported_never_edited(env, tmp_path):
+    """The transport is reported, read-only: setup installs, and the repoint
+    of master.cf is the human's."""
+    elsewhere = str(_setup.PACKAGED_NM_DELIVER)
+    run, target = insert_host(env, tmp_path, argv=elsewhere)
+    master = Path(run["FAKE_MASTER"]).read_text()
+    rc, out, _ = setup(run)
+    assert f"nminsert/unix runs {elsewhere}, not {target}: repoint its argv= by hand" in out
+    assert target.read_bytes() == _setup.render_nm_deliver(kit_profile(run))
+    rc, out, _ = setup(run)
+    assert rc == _setup.EX_REMAINS
+    assert state(out, "delivery") == "MANUAL", out
+    assert Path(run["FAKE_MASTER"]).read_text() == master
+
+
+def test_a_service_run_as_another_user_is_blocked(env, tmp_path):
+    run, target = insert_host(env, tmp_path, user="nobody-else")
+    _rc, out, _ = setup(run)
+    assert state(out, "delivery") == "BLOCKED", out
+    assert "as user=nobody-else, but setup runs as" in detail(out, "delivery")
+    assert not target.exists()
+
+
+def test_a_failing_postconf_is_blocked(env, tmp_path):
+    run, _target = insert_host(env, tmp_path)
+    _rc, out, _ = setup({**run, "FAKE_POSTCONF_EXIT": "1"}, "--dry-run")
+    assert state(out, "delivery") == "BLOCKED", out
+    assert "cannot tell whether postfix delivers by nminsert" in detail(out, "delivery")
+
+
+def test_a_missing_install_folder_is_manual(env, tmp_path):
+    run, target = insert_host(env, tmp_path)
+    target.parent.rmdir()
+    _rc, out, _ = setup(run)
+    assert state(out, "delivery") == "MANUAL", out
+    assert f"`sudo -- mkdir -p {target.parent}`" in detail(out, "delivery")
+    assert not target.parent.exists()
+
+
+def test_a_profile_path_it_cannot_bake_is_blocked_at_install(env, tmp_path, monkeypatch):
+    run, target = insert_host(env, tmp_path)
+    monkeypatch.setattr(_index, "profile_config", lambda *_a, **_k: Path("/a b/config"))
+    _rc, out, _ = setup(run)
+    assert state(out, "delivery") == "BLOCKED", out
+    assert "cannot be baked into nm-deliver" in detail(out, "delivery")
+    assert not target.exists()
+
+
+@pytest.mark.skipif(os.getuid() == 0, reason="root writes any folder")
+def test_a_folder_it_cannot_write_is_a_privileged_step_printed_first(env, tmp_path):
+    """Never sudo silently: the install is printed in the privileged block
+    with its exact line; without a tty it is not run. Setup stages the
+    rendered copy (no root) so the printed line works as it stands."""
+    run, target = insert_host(env, tmp_path)
+    target.parent.chmod(0o555)
+    try:
+        staged = _setup.staged_nm_deliver(run)
+        line = _setup.sudo_line([_setup.INSTALL, "-m", "0755", str(staged), str(target)])
+        rc, out, _ = setup(run, "--dry-run")
+        privileged = out.split("privileged steps (sudo):\n", 1)[1].split("\nsteps:\n", 1)[0]
+        assert "delivery" in privileged and line in privileged, out
+        assert "  none" not in privileged
+        assert not staged.exists()
+        rc, out, _ = setup(run, tty=False)
+        assert rc == _setup.EX_REMAINS, out
+        assert f"NOT RUN (no tty to ask for a password): run it yourself: {line}" in out
+        assert staged.read_bytes() == _setup.render_nm_deliver(kit_profile(run))
+        assert not target.exists()
+    finally:
+        target.parent.chmod(0o755)
+
+
+def a_database_and_no_profile(env: dict[str, str], mailroot: Path) -> Path:
+    """An insert host's usual state before setup: a notmuch database in the
+    mail root (delivery indexed it through notmuch's default config) and no
+    kit profile, so `notmuch-profile` adopts nothing and stays MANUAL.
+    Returns the kit profile path, which is not there."""
+    kit_profile(env).unlink()                   # the old file the fixture wrote
+    config = kit_profile(env)                   # now the kit's own path
+    (mailroot / ".notmuch").mkdir(parents=True)
+    assert not config.exists()
+    return config
+
+
+def test_no_wrapper_bakes_in_a_profile_setup_will_not_write(env, tmp_path, mailroot):
+    """SM-1025 peer review: the step baked in the kit profile's path whether
+    or not the file was there. On a host whose profile step cannot write it
+    (a database already in the mail root), the refreshed wrapper would then
+    defer every delivery (4.3.0, the config is not a file). Setup waits on
+    the profile step instead, and leaves the wrapper the service runs as it is."""
+    run, target = insert_host(env, tmp_path)
+    config = a_database_and_no_profile(run, mailroot)
+    hand = _setup.PACKAGED_NM_DELIVER.read_bytes()
+    target.write_bytes(hand)                    # hand-installed, delivering today
+    _rc, out, _ = setup(run, "--dry-run")
+    assert state(out, "notmuch-profile") == "MANUAL", out
+    assert state(out, "delivery") == "BLOCKED", out
+    assert detail(out, "delivery").startswith(f"{config} is not there and notmuch-profile is MANUAL: "
+                                              "waits on notmuch-profile"), out
+    rc, out, _ = setup(run)
+    assert rc == _setup.EX_REMAINS, out
+    assert state(out, "delivery") == "BLOCKED", out
+    assert target.read_bytes() == hand
+
+
+def test_an_installed_copy_whose_profile_is_gone_is_not_done(env, tmp_path, mailroot):
+    """A current copy is DONE only while the file it bakes in is there."""
+    run, target = insert_host(env, tmp_path)
+    # The order matters: render AFTER the old file is gone, so the copy bakes
+    # in the path setup resolves now and is current (byte for byte), and the
+    # DONE gate is what is tested, not the refresh branch.
+    config = a_database_and_no_profile(run, mailroot)
+    target.write_bytes(_setup.render_nm_deliver(config))
+    assert target.read_bytes() == _setup.render_nm_deliver(kit_profile(run))
+    _rc, out, _ = setup(run, "--dry-run")
+    assert state(out, "delivery") == "BLOCKED", out
+    line = detail(out, "delivery")
+    assert "waits on notmuch-profile" in line
+    # A copy IS installed: the line says what it does now, never that none is.
+    assert f"{target} bakes it in, so every delivery through it defers (4.3.0)" in line, out
+    assert "installs no wrapper" not in line
+
+
+def applied_line(out: str, step: str) -> str:
+    """STEP's line under `applying:` (after its id), "" when it has none."""
+    for line in out.split("\napplying:\n", 1)[-1].splitlines():
+        parts = line.split(None, 1)
+        if line.startswith("  ") and parts and parts[0] == step:
+            return parts[1] if len(parts) > 1 else ""
+    return ""
+
+
+def a_profile_step_that_writes_nothing(monkeypatch) -> None:
+    """`notmuch-profile` reads TODO, and its apply 'succeeds' without writing
+    the file: the one way the delivery step reaches its apply-time re-check
+    (`present`), since its check passes a profile that is still TODO."""
+    real = _setup.profile_step
+
+    def fake(*args, **kwargs):
+        step = real(*args, **kwargs)
+        if step.apply is not None:
+            step.apply = lambda: "wrote nothing"
+        return step
+    monkeypatch.setattr(_setup, "profile_step", fake)
+
+
+def test_the_apply_checks_the_profile_again(env, tmp_path, monkeypatch):
+    """The check let the install through (the profile step was TODO); the
+    apply looks again after the profile step has run, and the step ends
+    BLOCKED, the run going on, rather than writing a wrapper that defers."""
+    run, target = insert_host(env, tmp_path)
+    kit_profile(run).unlink()
+    config = kit_profile(run)
+    a_profile_step_that_writes_nothing(monkeypatch)
+    _rc, out, _ = setup(run, "--dry-run")
+    assert state(out, "delivery") == "TODO", out
+    rc, out, _ = setup(run, "--box", "alpha")
+    assert rc == _setup.EX_REMAINS, out
+    applied = applied_line(out, "delivery")
+    assert applied.startswith(f"BLOCKED: {config} is not there"), out
+    assert "Setup installs no wrapper" in applied
+    assert not config.exists()
+    assert not target.exists()
+
+
+@pytest.mark.skipif(os.getuid() == 0, reason="root writes any folder")
+def test_the_privileged_stage_checks_the_profile_again(env, tmp_path, monkeypatch):
+    """The same on the privileged path: run_plan treats a Left from the
+    stage (the apply that prepares the sudo line) as BLOCKED. Nothing is
+    staged and the sudo line is never offered or run."""
+    run, target = insert_host(env, tmp_path)
+    kit_profile(run).unlink()
+    a_profile_step_that_writes_nothing(monkeypatch)
+    target.parent.chmod(0o555)
+    try:
+        staged = _setup.staged_nm_deliver(run)
+        rc, out, _ = setup(run, "--box", "alpha", tty=False)
+        assert rc == _setup.EX_REMAINS, out
+        applied = applied_line(out, "delivery")
+        assert applied.startswith("BLOCKED: ") and "waits on notmuch-profile" in applied, out
+        assert "NOT RUN" not in out.split("\napplying:\n", 1)[1]
+        assert "(BLOCKED): " in out.split("step(s) left for you:", 1)[1]
+        assert not staged.exists()
+        assert not target.exists()
+    finally:
+        target.parent.chmod(0o755)
+
+
+def test_a_profile_written_in_the_same_run_is_baked_in(env, tmp_path):
+    """No database yet: the profile step writes the kit profile, and the
+    delivery step, read after it, installs the wrapper in the same run."""
+    run, target = insert_host(env, tmp_path)
+    kit_profile(run).unlink()
+    config = kit_profile(run)
+    assert not config.exists()
+    _rc, out, _ = setup(run, "--dry-run")
+    assert state(out, "notmuch-profile") == "TODO", out
+    assert state(out, "delivery") == "TODO", out
+    rc, out, err = setup(run, "--box", "alpha")
+    assert config.is_file(), out
+    assert target.read_bytes() == _setup.render_nm_deliver(config), out + err
+
+
+@pytest.mark.skipif(os.getuid() == 0, reason="root writes any folder")
+def test_the_privileged_install_waits_on_the_profile_too(env, tmp_path, mailroot):
+    """Nothing is staged and no sudo line is offered for a wrapper that
+    would defer every delivery."""
+    run, target = insert_host(env, tmp_path)
+    a_database_and_no_profile(run, mailroot)
+    target.parent.chmod(0o555)
+    try:
+        staged = _setup.staged_nm_deliver(run)
+        rc, out, _ = setup(run, tty=False)
+        assert rc == _setup.EX_REMAINS, out
+        assert "waits on notmuch-profile" in out
+        assert "NOT RUN" not in out
+        assert not staged.exists()
+        assert not target.exists()
+        # The plan's privileged block offers no line either: it says why.
+        block = out.split("privileged steps (sudo):\n", 1)[1].split("\nsteps:\n", 1)[0]
+        assert "delivery" in block and "BLOCKED" in block, out
+        assert "waits on notmuch-profile" in block, out
+        assert "sudo --" not in block, out
+    finally:
+        target.parent.chmod(0o755)
+
+
+@pytest.mark.skipif(os.getuid() == 0, reason="root writes any folder")
+def test_a_stale_staged_copy_is_never_offered_while_blocked(env, tmp_path, mailroot):
+    """A copy staged by an earlier run (its sudo line never run) is still on
+    disk. While the profile's file is missing, the plan must not print the
+    line that would install it: that wrapper defers every delivery."""
+    run, target = insert_host(env, tmp_path)
+    a_database_and_no_profile(run, mailroot)
+    staged = _setup.staged_nm_deliver(run)
+    staged.parent.mkdir(parents=True)
+    staged.write_bytes(b"#!/bin/sh\n")
+    target.parent.chmod(0o555)
+    try:
+        _rc, out, _ = setup(run, "--dry-run")
+        block = out.split("privileged steps (sudo):\n", 1)[1].split("\nsteps:\n", 1)[0]
+        assert block.split()[:2] == ["delivery", "BLOCKED"], out
+        assert str(staged) not in out, out
+        assert "sudo --" not in out, out
+    finally:
+        target.parent.chmod(0o755)

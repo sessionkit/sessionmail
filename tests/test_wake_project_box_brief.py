@@ -106,7 +106,7 @@ def env(tmp_path: Path, rail_bash: str) -> dict[str, str]:
     home.mkdir()
     (tmp_path / "mail").mkdir()
     return {"PATH": f"{bin_dir}:/usr/bin:/bin", "HOME": str(home),
-            "SESSION_MAIL_ROOT": str(tmp_path / "mail"),
+            "SESSIONMAIL_ROOT": str(tmp_path / "mail"),
             "SESSIONMAIL_PYTHON": sys.executable}
 
 
@@ -131,7 +131,7 @@ def surfaced(out: str, box: str) -> bool:
 # ── the miss ────────────────────────────────────────────────────────────────────────────
 
 def test_a_stale_flat_box_does_not_hide_a_brief_resting_in_the_nested_project_box(env):
-    root = Path(env["SESSION_MAIL_ROOT"])
+    root = Path(env["SESSIONMAIL_ROOT"], "stores")
     stale_flat_box(root)
     drop(nested_project_box(root), "brief.1", brief_to_seat())
     r = wake(env, TM_AGENT_ADDRESS=SEAT)
@@ -145,7 +145,7 @@ def test_a_stale_flat_box_does_not_hide_a_brief_resting_in_the_nested_project_bo
 # ── the controls: green today, and they stay green ────────────────────────────────────────
 
 def test_a_brief_in_the_seats_own_session_box_is_counted(env):
-    root = Path(env["SESSION_MAIL_ROOT"])
+    root = Path(env["SESSIONMAIL_ROOT"], "stores")
     stale_flat_box(root)
     nested_project_box(root)
     drop(maildir(root / SID), "brief.1",
@@ -157,7 +157,7 @@ def test_a_brief_in_the_seats_own_session_box_is_counted(env):
 
 @pytest.mark.parametrize("layout", ["flat", "nested"])
 def test_a_brief_in_a_project_box_that_exists_once_is_counted(env, layout):
-    root = Path(env["SESSION_MAIL_ROOT"])
+    root = Path(env["SESSIONMAIL_ROOT"], "stores")
     box = maildir(root / PROJECT) if layout == "flat" else nested_project_box(root)
     drop(box, "brief.1", brief_to_seat())
     r = wake(env, TM_AGENT_ADDRESS=SEAT)

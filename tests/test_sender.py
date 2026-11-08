@@ -43,7 +43,7 @@ from pathlib import Path
 
 import pytest
 
-from sessionmail import _mhs
+from sessionmail import _mhs, _seat
 
 from conftest import SC6_OPERATOR
 from fakes import write_fake
@@ -124,8 +124,8 @@ def fake_sendmail(bin_dir, tmp_path, monkeypatch):
 
 @pytest.fixture
 def root(tmp_path):
-    r = tmp_path / "mail"
-    r.mkdir()
+    r = tmp_path / "mail" / "stores"
+    r.mkdir(parents=True)
     return r
 
 
@@ -139,7 +139,7 @@ def env(tmp_path, bin_dir, root, fake_sendmail):
         "TMPDIR": str(tmp_path),
         "FAKE_SENDMAIL_ARGV": os.environ["FAKE_SENDMAIL_ARGV"],
         "FAKE_SENDMAIL_WIRE": os.environ["FAKE_SENDMAIL_WIRE"],
-        "SESSION_MAIL_ROOT": str(root), "SESSIONMAIL_ROOT": str(root),
+        "SESSIONMAIL_ROOT": str(root.parent),
         "SESSION_MAIL_HOST": HOST, "SESSIONMAIL_HOST": HOST,
         "SESSIONMAIL_SENDMAIL": str(bin_dir / "sendmail"),
         "SESSIONMAIL_ORIGIN": os.environ["SESSIONMAIL_ORIGIN"],   # conftest's, never the host's
@@ -509,9 +509,21 @@ def test_an_unknown_session_goes_to_the_mail_host_when_it_is_routed(sender, env,
     assert b"\nTo: " + f"{SID}@relay.home".encode() + b"\n" in fake_sendmail.wire
     assert f"general delivery: To '{SID}@{HOST}'" in err
     fake_postfix(f"eve@{HOST}", "relay.home")                           # a hash map keyed by domain
-    rc, _, _ = send(sender, env, tmp_path, "--cc", f"Gc <{SID[:8]}+ext>")
-    assert rc == EX_OK                                                  # the 8-hex short form, +ext kept
-    assert f"Cc: Gc <{SID[:8]}+ext@relay.home>".encode() in fake_sendmail.wire
+    rc, _, _ = send(sender, env, tmp_path, "--cc", f"Gc <{SID}+ext>")
+    assert rc == EX_OK                                                  # +ext and the name kept
+    assert f"Cc: Gc <{SID}+ext@relay.home>".encode() in fake_sendmail.wire
+
+
+def test_the_8_hex_short_form_is_never_relayed_even_when_it_is_routed(sender, env, tmp_path, fake_sendmail, fake_postfix, monkeypatch):
+    """SM-885 (kaizen #179): the short form once relayed here as
+    `<hex>@relay.home`, where no puller could take it. With no box on this
+    host that it starts, it now refuses, exit 3, and nothing is submitted."""
+    monkeypatch.setattr(_seat, "box_via_map", lambda name: None)
+    fake_postfix(f"eve@{HOST}", "relay.home")
+    rc, out, err = send(sender, env, tmp_path, "--cc", f"Gc <{SID[:8]}+ext>")
+    assert rc == EX_MTA and out == "" and fake_sendmail.wire is None
+    assert f"Cc '{SID[:8]}' looks like a short session id" in err and "never relayed" in err
+    assert "general delivery" not in err and "NOTHING WAS SUBMITTED" in err
 
 
 def test_an_unknown_session_with_no_route_and_an_unknown_seat_are_still_refused(sender, env, tmp_path, fake_sendmail, fake_postfix):
@@ -523,6 +535,113 @@ def test_an_unknown_session_with_no_route_and_an_unknown_seat_are_still_refused(
     rc, _, err = send(sender, env, tmp_path, "--cc", "ghost")
     assert rc == EX_MTA and fake_sendmail.wire is None                  # a seat name: a typo, refused
     assert f"Cc 'ghost@{HOST}'" in err
+
+
+# ── SM-885: a short session id resolves on this host, or refuses ───────────
+
+ONE = "c0ffee01-1111-4111-8111-111111111111"
+TWO = "c0ffee01-2222-4222-8222-222222222222"
+
+
+@pytest.fixture
+def boxes(root, monkeypatch):
+    """Make maildirs under the sender's root; `resolve_box`'s map step reads
+    no host map."""
+    monkeypatch.setattr(_seat, "box_via_map", lambda name: None)
+
+    def make(*names):
+        for n in names:
+            for leaf in ("new", "cur", "tmp"):
+                (root / n / leaf).mkdir(parents=True, exist_ok=True)
+    return make
+
+
+def test_U_a_short_to_resolves_to_its_full_box_and_says_so(sender, env, tmp_path, fake_sendmail, fake_postfix, boxes):
+    boxes(ONE)
+    fake_postfix(f"eve@{HOST}", f"{ONE}@{HOST}")                        # postfix knows the FULL id
+    rc, out, err = send(sender, env, tmp_path, to="c0ffee01")
+    assert rc == EX_OK and out, err
+    assert dict(headers_of(fake_sendmail.wire))["To"] == ONE
+    assert (f"{sender.PREFIX}To 'c0ffee01' is session {ONE} (the only session box on this host "
+            f"that starts with it)") in err
+
+
+def test_U_a_short_cc_and_bcc_resolve_keeping_the_name_and_the_tag(sender, env, tmp_path, fake_sendmail, fake_postfix, boxes):
+    boxes(ONE, "c0ffee02-3333-4333-8333-333333333333")
+    fake_postfix(f"eve@{HOST}", f"{ONE}@{HOST}", f"c0ffee02-3333-4333-8333-333333333333@{HOST}")
+    rc, _, err = send(sender, env, tmp_path, "--cc", "Gc <c0ffee01+ext>", "--bcc", "C0FFEE02")
+    assert rc == EX_OK, err
+    h = dict(headers_of(fake_sendmail.wire))
+    assert h["Cc"] == f"Gc <{ONE}+ext>" and h["Bcc"] == "c0ffee02-3333-4333-8333-333333333333"
+    assert f"Cc 'c0ffee01' is session {ONE}" in err and "Bcc 'C0FFEE02' is session" in err
+
+
+@pytest.mark.parametrize("field", ["To", "Cc", "Bcc"])
+def test_A_an_ambiguous_short_id_refuses_naming_both_and_submits_nothing(sender, env, tmp_path, fake_sendmail, fake_postfix, boxes, field):
+    boxes(ONE, TWO)
+    fake_postfix(f"eve@{HOST}", f"{ONE}@{HOST}", f"{TWO}@{HOST}", "relay.home")
+    extra = [] if field == "To" else [f"--{field.lower()}", "c0ffee01"]
+    rc, out, err = send(sender, env, tmp_path, *extra, to="c0ffee01" if field == "To" else "eve")
+    assert rc == EX_MTA and out == "" and fake_sendmail.wire is None
+    assert f"{field} 'c0ffee01' is ambiguous" in err and ONE in err and TWO in err
+    assert "NOTHING WAS SUBMITTED" in err
+
+
+@pytest.mark.parametrize("field", ["To", "Cc", "Bcc"])
+def test_N_a_short_id_matching_no_box_refuses_and_is_never_relayed(sender, env, tmp_path, fake_sendmail, fake_postfix, boxes, field):
+    boxes("deadbeef-3333-4333-8333-333333333333")
+    fake_postfix(f"eve@{HOST}", "relay.home")                           # a relay route exists
+    extra = [] if field == "To" else [f"--{field.lower()}", "c0ffee01"]
+    rc, out, err = send(sender, env, tmp_path, *extra, to="c0ffee01" if field == "To" else "eve")
+    assert rc == EX_MTA and out == "" and fake_sendmail.wire is None
+    assert "general delivery" not in err and "never relayed" in err
+
+
+def test_L_an_exact_legacy_8_hex_box_is_sent_to_as_itself(sender, env, tmp_path, fake_sendmail, fake_postfix, boxes):
+    boxes("c0ffee01", ONE)
+    fake_postfix(f"eve@{HOST}", f"c0ffee01@{HOST}")
+    rc, _, err = send(sender, env, tmp_path, to="c0ffee01")
+    assert rc == EX_OK, err
+    assert dict(headers_of(fake_sendmail.wire))["To"] == "c0ffee01"
+    assert "is session" not in err
+
+
+def test_another_hosts_short_id_is_that_hosts_to_resolve(sender, env, tmp_path, fake_sendmail, fake_postfix, boxes):
+    boxes(ONE)
+    fake_postfix(f"eve@{HOST}")
+    rc, _, err = send(sender, env, tmp_path, "--cc", "c0ffee01@vps")
+    assert rc == EX_OK, err
+    assert dict(headers_of(fake_sendmail.wire))["Cc"] == "c0ffee01@vps"
+
+
+def test_a_short_id_resolves_even_with_no_postfix_tooling(sender, env, tmp_path, fake_sendmail, boxes):
+    """The resolution is not the pre-flight's: it runs on every carrier."""
+    boxes(ONE)
+    rc, _, err = send(sender, env, tmp_path, to="c0ffee01")
+    assert rc == EX_OK, err
+    assert dict(headers_of(fake_sendmail.wire))["To"] == ONE
+    boxes(TWO)
+    rc, _, err = send(sender, env, tmp_path, to="c0ffee01")
+    assert rc == EX_MTA and "is ambiguous" in err
+
+
+def test_relay_refuses_a_bare_8_hex_directly(sender, env, bin_dir, fake_postfix):
+    """Defence in depth: `_relay` takes a FULL id only, whatever reaches it."""
+    fake_postfix("relay.home")
+    postmap, postconf = str(bin_dir / "postmap"), str(bin_dir / "postconf")
+    assert sender._relay("c0ffee01", f"c0ffee01@{HOST}", postmap, postconf, env) is None
+    assert sender._relay(ONE, f"{ONE}@{HOST}", postmap, postconf, env) == f"{ONE}@relay.home"
+
+
+def test_a_signed_send_signs_the_full_id(sender, keyed, tmp_path, fake_sendmail, boxes, verifier):
+    boxes(ONE)
+    rc, _, err = send(sender, keyed, tmp_path, to="c0ffee01")
+    assert rc == EX_OK, err
+    assert dict(headers_of(fake_sendmail.wire))["To"] == ONE
+    delivered = tmp_path / "delivered.eml"
+    delivered.write_bytes(fake_sendmail.wire)
+    done = subprocess.run([str(verifier), str(delivered)], capture_output=True, text=True)
+    assert done.returncode == 0, done.stdout + done.stderr
 
 
 def test_without_postfix_tooling_the_preflight_never_blocks(sender, env, tmp_path, fake_sendmail):
@@ -1159,15 +1278,14 @@ def drop_env(env, tmp_path, bin_dir):
         for sub in ("cur", "new", "tmp"):
             (agents / box / sub).mkdir(parents=True)
     write_fake(bin_dir / "vmailbox-gen", FAKE_VMAILBOX_GEN.format(python=sys.executable))
-    return dict(env, SESSIONMAIL_SENDMAIL="drop", SESSIONMAIL_ROOT=str(agents),
-                SESSION_MAIL_ROOT=str(agents),
+    return dict(env, SESSIONMAIL_SENDMAIL="drop", SESSIONMAIL_ROOT=str(agents.parent),
                 SESSIONMAIL_VMAILBOX_GEN=str(bin_dir / "vmailbox-gen"),
                 FAKE_VMAILBOX="".join(f"{b}@{HOST}\tagents/{b}/\n" for b in ("eve", "ivan")))
 
 
 def dropped(env) -> list[Path]:
     """Every file in every box under the drop root, tmp/ included."""
-    return sorted(p for p in Path(env["SESSIONMAIL_ROOT"]).glob("*/*/*") if p.is_file())
+    return sorted(p for p in Path(env["SESSIONMAIL_ROOT"]).glob("*/*/*/*") if p.is_file())
 
 
 def refused_on_both_roads(sender, env, drop_env, tmp_path, fake_sendmail, *extra):

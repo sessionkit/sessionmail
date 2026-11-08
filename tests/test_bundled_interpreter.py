@@ -127,7 +127,7 @@ def _ls(tmp_path: Path, env: dict[str, str]) -> tuple[list[str], str]:
 
 def _wake(tmp_path: Path, env: dict[str, str]) -> tuple[list[str], str]:
     """`memory wake alpha` against an empty sandbox box."""
-    root = Path(env["SESSION_MAIL_ROOT"])
+    root = Path(env["SESSIONMAIL_ROOT"], "stores")
     for sub in ("new", "cur", "tmp"):
         (root / "alpha" / sub).mkdir(parents=True, exist_ok=True)
     return ["memory", "wake", "alpha"], "═══ COUNTS ═══"

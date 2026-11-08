@@ -6,7 +6,7 @@ marked `seen`, reason `superseded`. Both orders. *(A superseding mail stands
 alone, and a superseded one is not given twice)*
 
 Hermetic, like test_views.py, whose scratch seat and helpers this reuses:
-SESSIONMAIL_HOME and SESSION_MAIL_ROOT sit under tmp_path, notmuch is faked,
+SESSIONMAIL_HOME and SESSIONMAIL_ROOT sit under tmp_path, notmuch is faked,
 and no live box, index or listener is touched.
 """
 

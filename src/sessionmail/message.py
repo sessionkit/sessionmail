@@ -21,7 +21,7 @@ import time
 import json
 from pathlib import Path
 
-from . import (__version__, _archive, _boxes, _maildir, _mhs, _notmuch, _reach, _seat, _send, _subscribe,
+from . import (__version__, _archive, _boxes, _fresh, _maildir, _mhs, _notmuch, _reach, _seat, _send, _subscribe,
                _settings, _setup, _subscription, _tokens, _why)
 from ._help import CONTEXT_SETTINGS, OrderedGroup, PageCommand, unwrapped
 from ._stub import stub
@@ -59,6 +59,7 @@ Exit: 0 ok · 1 usage · 2 refused · 3 the MTA did not accept it"""
 @click.version_option(__version__, "--version", "-V")
 def cli() -> None:
     """message - send, list, tree, read, mark and verify mail in an agent maildir"""
+    _seat.drop_inherited()   # first, before anything resolves
 
 
 def _reply_from(parent_id: str, declared: str) -> tuple[str, str]:
@@ -147,8 +148,8 @@ counts, with no warning. Prints the id on stdout.
 --message-id sends under an id you chose, a NEW one at this host's bare
 short name (<x@HOST>): one another host's, ending .session-mail, or the
 id it replies to is refused, and nothing is sent.
-A host may shorten an over-69 -s by at most its cap, default 10 over;
-SESSIONMAIL_SUBJECT_SHORTEN=off stops it.
+Over 69, -s is shortened by at most its cap, default 10 over; non-ASCII
+is folded; --no-shorten or SESSIONMAIL_SUBJECT_SHORTEN=off refuses both.
 
 Exit: 0 the MTA accepted it · 1 usage · 2 refused (subject, address,
 a malformed or foreign id) · 3 the MTA did not accept it · 4 a human's
@@ -184,7 +185,7 @@ render failed"""
 @click.option("--no-shorten", is_flag=True,
               help="never shorten the subject")
 @click.option("--json", "as_json", is_flag=True,
-              help="one JSON object on stdout: sent, id or KIND, notices")
+              help="JSON on stdout: sent, id or KIND, notices, subject")
 def send(to: tuple[str, ...], subject: str, body_file: str | None, no_body: bool,
          in_reply_to: str | None, supersedes: str | None, message_id: str | None,
          cc: tuple[str, ...], bcc: tuple[str, ...], header: tuple[str, ...], raw: bool,
@@ -243,10 +244,11 @@ def send(to: tuple[str, ...], subject: str, body_file: str | None, no_body: bool
         sender = seat.address
     except _seat.NoIdentity:
         refuse("identity", "no seat in the environment to send From - there is "
-                           "no --from; set an identity", usage=True)
-    # The subject shortener, at the ONE line every door passes. OFF - the tool's default - is `check_subject` exactly as
-    # before and nothing ahead of it. ON (the host's locked file, and neither
-    # the flag nor the seat turned it off): a line break or a control is
+                           "no --from; set an identity" + _seat.inherited_note(), usage=True)
+    # The subject shortener, at the ONE line every door passes. OFF (the
+    # host's locked file `set subject-shorten off`, the seat variable or the
+    # flag) is `check_subject` exactly as before and nothing ahead of it. ON
+    # (the tool's default, and nothing turned it off): a line break or a control is
     # refused FIRST, so it is never laundered into a space; then the subject
     # is fitted, and a subject the shortener declines (gutted, or no room) is
     # refused in today's words with why it was not shortened.
@@ -343,11 +345,14 @@ def send(to: tuple[str, ...], subject: str, body_file: str | None, no_body: bool
     # which does not read $SESSIONMAIL_REQUIRE_SIGNATURE and would fail OPEN;
     # the package's sender signs or refuses. Both read only when the bash is
     # named.
-    v2 = must_sign = False
+    v2 = must_sign = short = False
     if _send.oracle() is not None:
         from . import _sender
         v2 = _sender.keyed(_send.os.environ)
         must_sign = _sender.must_sign(_send.os.environ)
+        # A short session id: the bash would relay it off-host, and
+        # cannot resolve it; the package's sender resolves it, or refuses.
+        short = any(_boxes.short_of(a) for a in [*to, *cc, *bcc] if a)
     # The bash is taken only when the carrier is an MTA (`_settings.carrier`:
     # the variable, else the settings file, else the drop by default). The
     # mail drop goes here: the bash cannot drop, and a host with no postfix
@@ -362,13 +367,13 @@ def send(to: tuple[str, ...], subject: str, body_file: str | None, no_body: bool
     # `is not None`, not truthiness: an EMPTY id must reach
     # `validate` and be refused, never fall through to the bash unsaid.
     chosen = message_id is not None
-    if (as_json or custom or chosen or changed or must_sign or v2 or dropping or unsent
+    if (as_json or custom or chosen or changed or must_sign or v2 or dropping or unsent or short
             or _send.oracle() is None):
         from . import _sender   # only this road needs it
 
         if _send.os.environ.get(_send.ORACLE_VAR):
             # Only --json, a custom header, --message-id, a shortened
-            # subject, must-sign, the mail drop or a keyed seat
+            # subject, must-sign, the mail drop, a short session id or a keyed seat
             # reach here with the oracle named; say which one did.
             # The drop is named before a
             # keyed seat: the bash cannot drop at all, keyed or not, so it is
@@ -381,6 +386,7 @@ def send(to: tuple[str, ...], subject: str, body_file: str | None, no_body: bool
                    if must_sign else
                    "the mail drop (the bash cannot drop)" if dropping else
                    "a carrier that is not one (the package's sender names it)" if unsent else
+                   "a short session id (the bash cannot resolve it)" if short else
                    "a keyed seat (the bash signs v1 only; this send signs v2)")
             notice(f"message send: {why} goes by the package's own sender; "
                    f"${_send.ORACLE_VAR} is not consulted")
@@ -428,7 +434,12 @@ def send(to: tuple[str, ...], subject: str, body_file: str | None, no_body: bool
                 click.echo(n, err=True)
             click.echo(receipt.message_id)
             return
-        answer({"sent": "yes", "id": receipt.message_id, "notices": done}, 0)
+        # `subject` on EVERY success, so a reader never tests for the key:
+        # what was typed, what went, and whether the shortener changed it
+        # (a fold counts). --json only: the MCP tool's signal is the report
+        # in its notices block, as specs/message's shorten change says.
+        answer({"sent": "yes", "id": receipt.message_id, "notices": done,
+                "subject": {"shortened": changed, "original": original, "sent": subject}}, 0)
     argv = _send.argv(to=to[0], sender=sender, subject=subject, body_file=body_file,
                       no_body=no_body, in_reply_to=in_reply_to, supersedes=supersedes,
                       cc=(*to[1:], *cc), bcc=bcc, extra=extra)
@@ -458,6 +469,32 @@ def _looks_like_an_id(token: str) -> bool:
     """
     bare = token.strip().strip("<>")
     return bare.isdigit() or "@" in bare
+
+
+def _leads_with_box(args: tuple[str, ...]) -> bool:
+    """Whether `read`/`mark`'s FIRST token is a BOX: two or more tokens, and
+    the first is a name, or a short session id even when it is all digits.
+    An index of eight or more digits would mean a box holding ten million
+    messages, which is never meant. A lone token is still an id."""
+    return len(args) >= 2 and (not _looks_like_an_id(args[0])
+                               or _boxes.short_form(args[0]) is not None)
+
+
+def _box_door(box: str, prog: str, code: int = EX_REFUSED, source: str = "box") -> str:
+    """BOX as every reader uses it from here on: a short session id becomes
+    the one full id it starts on this host, said once on stderr; one that
+    starts none, or several, refuses with CODE, the verb's own. Anything
+    else, an exact name included, comes back as it was given. SOURCE
+    "session" looks among the session dirs instead (a verb that names a
+    session's state, not its box: `--for WHO`, `--session SID`)."""
+    try:
+        r = _boxes.resolve_session(box, source=source)
+    except _boxes.Unresolved as u:
+        click.echo(_boxes.refusal_text(u, prog), err=True)
+        raise SystemExit(code)
+    if r.full:
+        click.echo(f"{prog}: {r.note}", err=True)
+    return r.value
 
 
 def _receipt(lines: list[str], ids: list[str], what: str, missing: list[str]) -> str:
@@ -576,7 +613,8 @@ def _default_box() -> str:
         seat = _seat.resolve().name
     except _seat.NoIdentity:
         raise click.UsageError("no BOX given and nothing in the environment says "
-                               "which session or seat this is - name the box")
+                               "which session or seat this is - name the box"
+                               + _seat.inherited_note())
     if why:
         # ONLY the surprising case is announced: the reader HAS a session and
         # is being shown a different box. With no session id there is nothing
@@ -606,7 +644,7 @@ Exit: 0 ok (even when empty) · 1 usage · 2 no such box"""
 )
 @click.argument("box", required=False, metavar="BOX")
 @click.option("--unread", is_flag=True,
-              help="only messages you have not marked read")
+              help="only messages you have not marked read or done")
 @click.option("--from", "from_", metavar="M",
               help="sender matches M (substring, case-insensitive)")
 @click.option("--subject", metavar="RE", help="subject matches RE")
@@ -622,8 +660,7 @@ def list_(box: str | None, unread: bool, from_: str | None, subject: str | None,
     # nothing" + "An EOM subject may carry no body, and the listing says so".
     # Reads the physical box by bytes (_maildir); never opens a body beyond
     # the byte that says whether there is one; never renames or flags.
-    if box is None:
-        box = _default_box()
+    box = _default_box() if box is None else _box_door(box, "message list")
     try:
         pattern = re.compile(subject) if subject else None
     except re.error as exc:
@@ -660,8 +697,14 @@ def list_(box: str | None, unread: bool, from_: str | None, subject: str | None,
     for e in entries:
         if e.message_id and e.message_id in superseded:
             hide("superseded"); continue
-        if unread and "read" in marks.get(e.message_id, set()):
-            hide("marked read (--unread)"); continue
+        # One definition of unread (`_maildir.is_unread`, shared with the
+        # page's count): a `done` ends it as a `read` does. The reason
+        # names `read` whenever a read is among the marks; `done` only
+        # when the mail was dealt with unopened.
+        own = marks.get(e.message_id, set())
+        if unread and not _maildir.is_unread(own):
+            hide("marked read (--unread)" if "read" in own
+                 else "marked done (--unread)"); continue
         if from_ and from_.lower() not in e.sender.lower():
             hide("--from"); continue
         if pattern and not pattern.search(e.subject):
@@ -728,7 +771,7 @@ def tree(id: str, depth: int | None, show_all: bool, dates: bool) -> None:
         box = _seat.resolve().name
     except _seat.NoIdentity:
         raise click.UsageError("nothing in the environment says which seat this is - "
-                               "the tree is read from your own box")
+                               "the tree is read from your own box" + _seat.inherited_note())
     try:
         entries = _maildir.enumerate_box(box)
     except _maildir.NoSuchBox as exc:
@@ -795,7 +838,9 @@ DRAFT_NOTE = ("(a DRAFT: an open turn its keeper is still writing, not mail; "
     epilog=unwrapped(
         """Several ids in one call: each is printed in order and ONE receipt
 lists them. A bad id is named and does not stop the others; the exit
-says so. A leading BOX is a name - digits or an `@` make an id.
+says so. A leading BOX is a name - digits or an `@` make an id - or a
+short session id (its first 8 or more characters, even all digits),
+which names the one session box on this host that it starts.
 
 Reading appends `read` to this session's marks (see `message mark`);
 the maildir flag is never touched, so nothing here wakes or silences a
@@ -820,8 +865,8 @@ def read(args: tuple[str, ...], peek: bool, thread: bool, full: bool, raw: bool)
     # _seat.write_mark - the only writer. The maildir is never renamed or flagged; a --peek proves it.
     # specs/message, "Read and mark take many ids in one call": many ids, reported
     # in order, one receipt, and a bad one named rather than fatal.
-    if len(args) >= 2 and not _looks_like_an_id(args[0]):
-        box, wanted = args[0], list(args[1:])
+    if _leads_with_box(args):
+        box, wanted = _box_door(args[0], "message read"), list(args[1:])
     else:
         box, wanted = None, list(args)
     seat = None
@@ -830,7 +875,8 @@ def read(args: tuple[str, ...], peek: bool, thread: bool, full: bool, raw: bool)
     except _seat.NoIdentity:
         if box is None:
             raise click.UsageError("no BOX given and nothing in the environment "
-                                   "says which seat this is - name the box")
+                                   "says which seat this is - name the box"
+                                   + _seat.inherited_note())
         if not peek:
             raise click.UsageError("no seat to record the read mark on - set an "
                                    "identity, or --peek")
@@ -965,6 +1011,26 @@ def read(args: tuple[str, ...], peek: bool, thread: bool, full: bool, raw: bool)
         raise SystemExit(EX_REFUSED)
 
 
+def _done_unread_line(marked: list[str], before: "dict[str, set[str]] | None",
+                      error: "Exception | None") -> str | None:
+    """The stderr line for a `done` that covered unread mail, or None.
+
+    MARKED is the ids this call marked, each once; BEFORE is this session's
+    marks as they stood before the call wrote anything, None when they
+    could not be read (ERROR says why). Said only when at least one marked
+    id was unread before (`_maildir.is_unread`); when the marks could not
+    be read, and something was marked, it says the count is unknown."""
+    if not marked:
+        return None
+    if before is None:
+        return (f"message mark: marked done: {len(marked)}; could not tell how "
+                f"many were unread ({error})")
+    unread = sum(1 for mid in marked if _maildir.is_unread(before.get(mid, ())))
+    if not unread:
+        return None
+    return f"message mark: marked done: {len(marked)}, of which {unread} were unread"
+
+
 @cli.command(
     cls=PageCommand,
     context_settings=CONTEXT_SETTINGS,
@@ -986,6 +1052,8 @@ Several ids in one call, MARK last: one line each, one receipt, and one
 --reason for all of them. A bad id is named and does not stop the
 others; the exit says so. An id given twice is marked once. The
 receipt is stdout's one line: `N of M marked MARK - ids; K refused: ids`.
+
+A `done` says on stderr how many of its ids were unread.
 
 Exit: 0 ok · 1 usage · 2 an id named nothing (the others are marked)"""
     ),
@@ -1024,14 +1092,28 @@ def mark(ids: tuple[str, ...], mark_: str, reason: str) -> None:
         ctx.exit(EX_REFUSED)
         return
 
+    # A `done` over mail never read is said, not refused: how many of the
+    # marked were unread is measured from the marks as they stood BEFORE
+    # any row below is written, so "unread" means exactly what
+    # `list --unread` meant a moment ago (`_maildir.is_unread`). A marks
+    # file that cannot be read does not stop the mark (it never has); the
+    # count is then said to be unknown, never guessed.
+    before: dict[str, set[str]] | None = None
+    before_error: Exception | None = None
+    if mark_ == "done":
+        try:
+            before = _seat.read_marks(seat, _seat.session_id())
+        except (_seat.Malformed, OSError) as exc:
+            before_error = exc
+
     # Measured before this: 177 invocations, 0 marks. `list` prints an INDEX
     # and `mark` wanted a Message-ID, so the number in front of the reader
     # was the one thing the verb would not take. It takes it now, resolved in
     # BOX exactly the way `read` resolves it - same split, same helper, same
     # `_maildir.find` - so the two verbs cannot drift into two grammars.
     box = None
-    if len(ids) >= 2 and not _looks_like_an_id(ids[0]):
-        box, ids = ids[0], ids[1:]
+    if _leads_with_box(ids):
+        box, ids = _box_door(ids[0], "message mark"), ids[1:]
     entries: list["_maildir.Entry"] | None = None
     listed_in = ""          # the box an index was resolved in, for a refusal
 
@@ -1150,6 +1232,11 @@ def mark(ids: tuple[str, ...], mark_: str, reason: str) -> None:
     marked: list[str] = []
     lines: list[str] = []
     missing: list[str] = []
+    # A miss that neither the index nor the seat's own boxes answer
+    # refreshes the host index ONCE per call, then asks it again. A hit, or
+    # mail in an own box, costs no refresh. One refresh covers every id
+    # after it: their first search already reads the refreshed index.
+    refreshed = False
     for raw in ids:
         # An id is tried ONCE per call, first one wins - two
         # files of one Message-ID are two `list` rows, and an id may be
@@ -1194,6 +1281,23 @@ def mark(ids: tuple[str, ...], mark_: str, reason: str) -> None:
             on_disk = own_files(message_id, carried)
             if on_disk:
                 filesets = filesets + [tuple(on_disk)]
+            if ((not filesets or only_drafts(filesets)) and not refused and not refreshed
+                    and _fresh.enabled()):
+                # The host index lags delivery and nothing else
+                # refreshes it. The note (a refresh that did not finish
+                # clean) is said before any refusal, so "no such message"
+                # is never said without the reason beside it.
+                refreshed = True
+                note = _fresh.refresh()
+                if note:
+                    complain(note)
+                disk = [tuple(on_disk)] if on_disk else []
+                try:
+                    filesets = [m.filenames for m in _notmuch.search(f"id:{message_id}")] + disk
+                except _notmuch.CouldNotLook as exc:
+                    complain(f"could not check the index for {message_id} after "
+                             f"refreshing it: {exc}")
+                    refused = True
         if not filesets:
             # Say what it WOULD take, and say what was
             # looked up and where, so "no such message" is never said of a
@@ -1228,12 +1332,15 @@ def mark(ids: tuple[str, ...], mark_: str, reason: str) -> None:
         marked.append(message_id)
 
     marks_file = _seat.marks_path(seat, _seat.session_id())
+    done_line = _done_unread_line(marked, before, before_error) if mark_ == "done" else None
     if len(lines) == 1 and not missing:
         # The single-id form, a regression PIN: one success prints the mark
         # line itself - it names its id and has nothing to hide.
         click.echo(f"{marks_file}: {lines[0]}")
         for line in said:              # e.g. an index it could not read
             click.echo(line, err=True)
+        if done_line:
+            click.echo(done_line, err=True)
         return
     # The summary IS the one receipt (specs/message, "one
     # receipt, not one per id"), on stdout, first; a `2>/dev/null` caller
@@ -1245,6 +1352,8 @@ def mark(ids: tuple[str, ...], mark_: str, reason: str) -> None:
     click.echo(_mark_summary(marked, missing, mark_))
     for line in said:
         click.echo(line, err=True)
+    if done_line:                      # before the tally: it stays last
+        click.echo(done_line, err=True)
     tally = f"{len(marked)} of {len(marked) + len(missing)} marked"
     if missing:
         tally += f", {len(missing)} refused (named above)"
@@ -1254,12 +1363,38 @@ def mark(ids: tuple[str, ...], mark_: str, reason: str) -> None:
         ctx.exit(EX_REFUSED)
 
 
+WHERE_FLAGS = (
+    ("--root", "root", "the mail root (the tree postfix serves), not a box"),
+    ("--boxes", "boxes", "the folder boxes live in (stores/; agents/ on an old tree)"),
+    ("--generator", "generator", "this host's vmailbox-gen; exit 2 when none exists"),
+    ("--notmuch-config", "notmuch", "sessionmail's notmuch profile FILE; exit 2 when none"),
+)
+
+
+def where_options(f):
+    """The four `--root --boxes --generator --notmuch-config` flags on both
+    spellings of the verb (`path`, `box path`). Each is its own parameter,
+    not four spellings of one: the MCP tool draws one property per
+    parameter, and a shared destination named it four times."""
+    for flag, value, text in reversed(WHERE_FLAGS):
+        f = click.option(flag, value, is_flag=True, help=text)(f)
+    return f
+
+
+def where_of(flags: dict[str, bool]) -> str | None:
+    """The one place the flags name, or None for a box; two at once is usage."""
+    chosen = [value for _, value, _ in WHERE_FLAGS if flags.get(value)]
+    if len(chosen) > 1:
+        raise click.UsageError("one place at a time: " + ", ".join(flag for flag, _, _ in WHERE_FLAGS))
+    return chosen[0] if chosen else None
+
+
 @cli.command(
     "path",
     cls=PageCommand,
     context_settings=CONTEXT_SETTINGS,
-    usage="[BOX] [--why]",
-    short_help="[BOX] [--why]                         the maildir BOX resolves to",
+    usage="[BOX|--root|--boxes|--generator|--notmuch-config] [--why]",
+    short_help="[BOX] [--why] | --root | --boxes      the maildir BOX resolves to",
     epilog=unwrapped(
         """Prints the folder and nothing else - for a human at a shell, or a tool
 that needs a folder for neomutt (SessionView's Messages tab). The SAME
@@ -1267,24 +1402,76 @@ resolution `list` and `read` use: a maildir path, `<root>/<name>`, or the
 box postfix delivers `<name>@<host>` to - which is where a project box
 lives, nested under its store. BOX defaults to your seat.
 
-Exit: 0 ok · 1 usage · 2 no such box (stderr names what was tried)"""
+With a flag, a place, not a box, so no tool spells one: `--root` the mail
+root ($SESSIONMAIL_ROOT, else mail.json's `root`, else the default) and
+`--boxes` the folder under it, exit 0 always; `--generator` this host's
+vmailbox-gen and `--notmuch-config` the FILE of sessionmail's notmuch
+profile, exit 2 when none exists (stderr says what was expected). `--why`
+says on stderr how it resolved, and names a retired root variable that is
+still set: ignored, never read.
+
+Exit: 0 ok · 1 usage · 2 no such box, generator or profile (stderr says)"""
     ),
 )
 @click.argument("box", required=False, metavar="BOX")
 @click.option("--why", is_flag=True, help="say on stderr how it resolved")
-def path(box: str | None, why: bool) -> None:
+@where_options
+def path(box: str | None, why: bool, **where: bool) -> None:
     """message path - the maildir a box name resolves to; nothing else"""
     # changes/message-path: a viewer needs a FOLDER, and a project's
     # mail_root is a Message-ID. Public, so a human can check it too.
-    _print_path(box, why, "message path")
+    _print_path(box, why, "message path", where_of(where))
 
 
-def _print_path(box: str | None, why: bool, prog: str) -> None:
+def _print_where(what: str, why: bool, prog: str) -> None:
+    """`message path --root|--boxes|--generator|--notmuch-config`: one
+    place on stdout, from the one resolver each place has."""
+    from . import _generator, _index
+    env = dict(os.environ)
+    ignored = _maildir.retired_root_vars(env)
+    if what == "root":
+        found, how = _maildir.mail_root_why(env)
+        how = f"the mail root, from {how}"
+    elif what == "boxes":
+        mail_root, source = _maildir.mail_root_why(env)
+        name = _maildir.boxes_name(mail_root)
+        found = mail_root / name
+        if name == _maildir.OLD_BOXES:
+            how = (f"{name}/ under {mail_root} (from {source}): an old tree, {name}/ is a "
+                   f"directory and {_maildir.BOXES}/ is not")
+        else:
+            how = f"{name}/ under {mail_root} (from {source})"
+    elif what == "generator":
+        mail_root = _maildir.mail_root(env)
+        hit = _generator.find(env, mail_root, packaged=True)
+        if hit is None:
+            click.echo(f"{prog}: no vmailbox-gen: expected {_generator.expected(env, mail_root)}",
+                       err=True)
+            raise SystemExit(EX_REFUSED)
+        found, how = Path(hit.path), f"vmailbox-gen, from {hit.source}"
+    else:
+        name, via = _index.host_profile(env)
+        file, tried = _index.host_profile_file(name, env)
+        if file is None:
+            click.echo(f"{prog}: no notmuch profile {name} ({via}): no file at "
+                       f"{', '.join(tried)}; `message setup` writes one", err=True)
+            raise SystemExit(EX_REFUSED)
+        found, how = file, f"notmuch profile {name} ({via})"
+    if why:
+        note = (f"; ignored, retired: {', '.join('$' + v for v in ignored)}" if ignored else "")
+        click.echo(f"--{what if what != 'notmuch' else 'notmuch-config'}: {how}{note}", err=True)
+    click.echo(str(found))
+
+
+def _print_path(box: str | None, why: bool, prog: str, what: str | None = None) -> None:
     """What `message path` has always printed, for both its names: `message
     box path` and the alias it keeps (specs/message, "The old verb still
     answers"). Only the prefix on stderr differs - each names itself."""
-    if box is None:
-        box = _default_box()
+    if what is not None:
+        if box is not None:
+            raise click.UsageError(f"--{what} takes no BOX: it prints a place, not a box")
+        return _print_where(what, why, prog)
+    box = _default_box() if box is None else _box_door(box, prog)
     try:
         found, how = _maildir.resolve_box(box)
     except _maildir.NoSuchBox as exc:
@@ -1356,7 +1543,9 @@ def _verify_target(args: tuple[str, ...]) -> Path:
             click.echo(f"message verify: no mail file at {target}", err=True)
             raise SystemExit(EX_VERIFY_USAGE)
         return path
-    box = box or _default_box()
+    # An empty BOX is the default box, as it always was here.
+    box = (_box_door(box, "message verify", EX_VERIFY_USAGE) if box
+           else _default_box())
     try:
         entries = _maildir.enumerate_box(box)
     except _maildir.NoSuchBox as exc:
@@ -1593,9 +1782,10 @@ Exit: 0 ok · 2 usage, or no such box (stderr names what was tried)"""
 )
 @click.argument("box_", required=False, metavar="BOX")
 @click.option("--why", is_flag=True, help="say on stderr how it resolved")
-def box_path(box_: str | None, why: bool) -> None:
+@where_options
+def box_path(box_: str | None, why: bool, **where: bool) -> None:
     """message box path - the maildir a box name resolves to; nothing else"""
-    _print_path(box_, why, "message box path")
+    _print_path(box_, why, "message box path", where_of(where))
 
 
 # ── message box archive|unarchive: dead session boxes ─────────────────────
@@ -1614,6 +1804,31 @@ def _say(err: bool = False):
         except OSError:
             pass
     return emit
+
+
+#: `box archive` and `box unarchive` refused (their epilogs' 3).
+EX_MOVE_REFUSED = 3
+
+
+def _move_door(names: tuple[str, ...], where: Path, prog: str, *, maildirs: bool) -> None:
+    """A box move takes the box's full name: a short session id is never
+    expanded here, as it is by every reader. One that is not a name under
+    WHERE as typed, and starts full ids there, refuses with exit 3 naming
+    them, before anything is read or moved. One that starts none goes on as
+    the exact name it is."""
+    for name in names:
+        short = _boxes.short_form(name)
+        if short is None or (where / name).is_dir() or (where / short).is_dir():
+            continue
+        found = _boxes.starting(short, where, maildirs=maildirs)
+        if not found:
+            continue
+        shown = ", ".join(found[:_boxes.AMBIGUOUS_SHOW])
+        more = (f", … {len(found)} in all" if len(found) > _boxes.AMBIGUOUS_SHOW else "")
+        click.echo(f"{prog}: {name!r} is a short session id, and a move takes the box's full "
+                   f"name: it starts {shown}{more} under {where}; name it in full. "
+                   "Nothing moved", err=True)
+        raise SystemExit(EX_MOVE_REFUSED)
 
 
 def _archive_ctx(days: float, maps: str | None, archive: str | None) -> "_archive.Ctx":
@@ -1662,6 +1877,7 @@ def box_archive(boxes: tuple[str, ...], days: float, do: bool, all_: bool, maps:
                    "for what (a) cannot see", err=True)
         raise SystemExit(EX_REFUSED)
     ctx = _archive_ctx(days, maps, archive_)
+    _move_door(boxes, ctx.root, "message box archive", maildirs=True)
     only = {b.lower() for b in boxes} or None
     raise SystemExit(_archive.apply(ctx, only) if do else _archive.listing(ctx, only, all_))
 
@@ -1694,6 +1910,7 @@ its row did not come back"""
 def box_unarchive(box_: str, merge: bool, do: bool, maps: str | None, archive_: str | None) -> None:
     """message box unarchive - move an archived box back under agents/"""
     ctx = _archive_ctx(_archive.DEFAULT_DAYS, maps, archive_)
+    _move_door((box_,), ctx.archive, "message box unarchive", maildirs=False)
     raise SystemExit(_archive.unarchive(ctx, box_, merge, do))
 
 
@@ -1734,13 +1951,25 @@ def _subscription_verb(verb: str, box_: str, seat: bool, for_: str | None,
                        why: str | None) -> None:
     prog = f"message subscription {verb}"
     who = _subscribe.caller()
+    if for_ is not None and not seat and who.privileged:
+        # --for WHO without --seat names a SESSION: a short id becomes the
+        # one session it starts here, or refuses. --seat names a seat, never
+        # expanded; a caller --for is not for is refused below as it was.
+        for_ = _box_door(for_.strip(), prog, source="session")
     try:
         if verb == "add":
+            # A short session id is STORED as the full id it starts: the
+            # map routes full names only, so a short one would route nothing.
+            box_ = _box_door(box_, prog)
             # THE add path (`_subscribe.add`): gates, no-op and write; the
             # rebuild is ours, below.
             done = _subscribe.add(box_, who, seat=seat, for_=for_, why=why)
         else:
             tgt = _subscribe.target(who, seat=seat, for_=for_)
+            # A name held exactly as typed is removed as itself (one stored
+            # short, before short ids resolved); else as `add` stored it.
+            if not _subscribe.held(tgt, box_):
+                box_ = _box_door(box_, prog)
             stored = _subscription_stored(box_)
             if tgt.map:
                 # session-settings 3.2: a seat's subscriptions are its map.
@@ -1889,6 +2118,7 @@ def subscription_list(box_: str | None, for_: str | None, depth: int) -> None:
     live = _live_sessions()
     g = _reach.graph(root, live=live)
     if box_ is not None:
+        box_ = _box_door(box_, prog)
         found = _reach.find_box(g, box_)
         if found is None:
             click.echo(f"{prog}: no such box {box_!r} under {root} "
@@ -1902,12 +2132,14 @@ def subscription_list(box_: str | None, for_: str | None, depth: int) -> None:
     session, seat = _list_whose(for_)
     if not session and not seat:
         click.echo(f"{prog}: no session id and no seat in the environment (looked for "
-                   + ", ".join(_seat.SESSION_VARS) + "); name one with --for WHO", err=True)
+                   + ", ".join(_seat.SESSION_VARS) + "); name one with --for WHO"
+                   + _seat.inherited_note(), err=True)
         raise SystemExit(EX_REFUSED)
     if session and session not in live and for_ is None:
         live = set(live) | {session}          # the caller is running: count it live
         g = _reach.graph(root, live=live)
-    t = _reach.tree(g, session=session, seat=seat, limit=depth)
+    mine = for_ is None or session.lower() == _subscribe.caller().session.lower()
+    t = _reach.tree(g, session=session, seat=seat, limit=depth, mine=mine)
     # Each row says what the MAP routes now, not only what the settings say:
     # a generator run that missed this session drops its rows, and a list of
     # the settings alone would say subscribed while the seat hears nothing.
@@ -1930,8 +2162,12 @@ def _list_whose(for_: str | None) -> tuple[str, str]:
         # ends with the session vars): that is the root, not a seat branch.
         return who.session, ("" if seat.lower() == who.session.lower() else seat)
     wanted = for_.strip()
-    home = _seat.home()
-    if wanted and "/" not in wanted and ((home / _subscription.SESSIONS_DIR / wanted).is_dir()
+    sessions = _seat.sessions_root()
+    if _boxes.short_form(wanted) and not (sessions / wanted).is_dir():
+        # A short id names the one session it starts on this host, or
+        # refuses: never a literal session no one holds.
+        wanted = _box_door(wanted, "message subscription list", source="session")
+    if wanted and "/" not in wanted and ((sessions / wanted).is_dir()
                                          or _boxes.is_session_id(wanted)):
         return wanted, _session_seat(wanted)
     return "", _seat.fold_address(wanted)
@@ -2023,8 +2259,9 @@ def seat() -> None:
   --machine NAME   the cert's machine: line (default: hostname -s)
   ADDRESS          the seat: a name (bot.alice) or a plus address (heard+airpods)
 
-Generates an ed25519 key in $SESSIONMAIL_HOME/seat-keys/ADDRESS/ (dir
-0700, key 0600), self-signs a birth cert, and registers both in DIR in
+Generates an ed25519 key in KEYS/ADDRESS/ (dir 0700, key 0600), KEYS
+being $SESSIONMAIL_HOME/seat-keys when that is set, else a real
+~/.sessionmail/seat-keys, else ~/.sessionkit/mail/state/seat-keys. It self-signs a birth cert, and registers both in DIR in
 one commit signed by the new key. It prints the sid, the fingerprint and
 the bless command, and never blesses. With no --registry it refuses, so
 a live registry is never touched by accident.
@@ -2048,8 +2285,8 @@ def seat_init(args: tuple[str, ...]) -> None:
     epilog=unwrapped(
         """Runs the seat's own ssh-agent in the foreground, for launchd's
 KeepAlive: this process BECOMES the packaged seat-agent script (an exec).
-It loads $SESSIONMAIL_HOME/seat-keys/ADDRESS/id_ed25519 and checks it
-against seat.pub. SOCKET defaults to agent.sock beside the key.
+It loads KEYS/ADDRESS/id_ed25519 (KEYS as `seat init` finds it) and
+checks it against seat.pub. SOCKET defaults to agent.sock beside the key.
 
 --install loads it as a LaunchAgent (launchctl bootstrap) and waits until
 the agent answers. stdout is SEAT_LABEL, SEAT_PLIST, SEAT_SOCKET, SEAT_PUB
@@ -2358,7 +2595,7 @@ moved (old root named, never read) · 3 no such session: no session dir"""
 )
 @click.argument("message_id", metavar="ID")
 @click.option("--session", "session", metavar="SID", required=True,
-              help="the session asked about, by its FULL id")
+              help="the session asked about: its id, full or short")
 @click.option("--json", "as_json", is_flag=True,
               help="every row as JSON (schema 1, docs/message-receipt.md); text: the newest 40")
 def receipt(message_id: str, session: str, as_json: bool) -> None:
@@ -2370,10 +2607,20 @@ def receipt(message_id: str, session: str, as_json: bool) -> None:
         raise click.UsageError(
             f"ID {message_id!r}: one Message-ID, with its @ (an index is a position in one "
             "box, and a session id here is a swapped argument)")
+    if _boxes.short_form(session):
+        # A short id is the one session it starts on this host, said on
+        # stderr; from here on, and in the answer, the FULL id is used.
+        try:
+            r = _boxes.resolve_session(session, source="session")
+        except _boxes.Unresolved as u:
+            raise click.UsageError(f"--session: {_boxes.refusal_text(u)}") from None
+        if r.full:
+            click.echo(f"message receipt: {r.note}", err=True)
+        session = r.value
     if not RECEIPT_SESSION.fullmatch(session):
         raise click.UsageError(
-            f"--session {session!r}: a FULL session id (8-4-4-4-12 hex); a short id or a "
-            "path is refused, and it is never your own by default")
+            f"--session {session!r}: a session id (8-4-4-4-12 hex, or its first 8 or more "
+            "characters); a path is refused, and it is never your own by default")
     sid = session.lower()
     try:
         found = _receipt_answer(want, sid)

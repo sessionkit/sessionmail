@@ -347,7 +347,7 @@ def _serve(tmp_path, overlap: bool, monkeypatch) -> dict:
     """One fresh `message mcp`; LIST and MARK in one write (OVERLAP) or each awaited.
     The server and its children carry the suite's seams (`tool_call.server_argv`),
     so `mark` reads the sandbox's operator file, never this host's."""
-    root = Path(os.environ["SESSION_MAIL_ROOT"])
+    root = Path(os.environ["SESSIONMAIL_ROOT"], "stores")
     shutil.rmtree(root, ignore_errors=True)
     _mail(root)
     env = {**os.environ, "CLAUDE_CODE_SESSION_ID": SID}

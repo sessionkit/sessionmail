@@ -2,8 +2,8 @@
 becomes, or that it declines. PURE: no environment, no file, no clock.
 
 Whether it runs at all is the door's (`_send.shorten_on`): the tool's
-default is OFF, the host's locked file turns it on, a seat or one mail turns
-it off. With it off, `message send` refuses as it always did. The contract is
+default is ON; the host's locked file (`set subject-shorten off`), a seat or
+one mail turns it off. With it off, `message send` refuses as it always did. The contract is
 openspec/changes/subject-shorten.
 
 A shortener that mechanically shortens a subject that is too long; the tool
@@ -161,6 +161,13 @@ def _trim(text: str, room: int) -> tuple[str, bool]:
         if prefix.strip() and len(prefix) + len(ELLIPSIS) <= room:
             return prefix + ELLIPSIS, False
     return text[:room - len(ELLIPSIS)] + ELLIPSIS, True
+
+
+#: The display cut's public name, for a reader outside send policy (the
+#: pager monitor's notice). The same function, unchanged: it returns
+#: (text, hard_cut), and its caller still owns both preconditions - call it
+#: only when `len(text) > room`, and only with `room >= len(ELLIPSIS) + 1`.
+trim = _trim
 
 
 def _accept(answer: object, room: int) -> str | None:

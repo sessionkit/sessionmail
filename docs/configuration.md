@@ -44,12 +44,19 @@ Detail and defaults: [postfix's settings][postfix-switches], and
 What it is for: [notmuch][]. Its config and hook: [notmuch
 settings][notmuch-settings].
 
-- `~/.config/notmuch/sessionkit/config` (`$XDG_CONFIG_HOME/notmuch/sessionkit/config`):
-  the sessionkit profile, the one notmuch config sessionmail reads.
+- The sessionkit profile, the one notmuch config sessionmail reads.
   `message setup` writes it. Your own `~/.notmuch-config` is never read.
+  - A fresh host: `~/.sessionkit/mail/settings/notmuch/sessionkit/config`.
+  - A host that already has one: `~/.config/notmuch/sessionkit/config`
+    (`$XDG_CONFIG_HOME/notmuch/sessionkit/config`), else
+    `~/.notmuch-config.sessionkit`. While that old file is real, it is read
+    and kept; nothing is moved. The rule: [notmuch
+    settings][notmuch-settings].
+  - The index does not move with it: it stays in the mail root's
+    `.notmuch`.
 - `~/.notmuch-config.<store>`: a store's profile, in store mode only.
 - `post-new` and `post-insert` in the profile's `database.hook_dir`
-  (`~/.mail/.notmuch/hooks` by default): links to the packaged post-new
+  (`<mail root>/.notmuch/hooks` by default): links to the packaged post-new
   hook.
 
 Its settings, the `notmuch` keys in `mail.json` ([settings][settings]); each
@@ -60,6 +67,8 @@ one's variable, when set and not empty, wins over the file:
 - `notmuch.command` (`SESSIONMAIL_NOTMUCH`): the notmuch binary.
 - `notmuch.timeout` (`SESSIONMAIL_NOTMUCH_TIMEOUT`): seconds per call for
   `message mark`, default 10.
+- `notmuch.refresh` (`SESSIONMAIL_NOTMUCH_REFRESH`): seconds the readers'
+  index refresh may take, default 2; 0 turns it off.
 - `SESSIONMAIL_INDEX`, environment only: `host` (the default) or `store`.
 - `NOTMUCH_PROFILE`, notmuch's own: in store mode only, the store's
   profile. An inherited `NOTMUCH_CONFIG` never reaches a notmuch sessionmail runs.

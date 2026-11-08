@@ -167,6 +167,16 @@ def sh(args, resolve=False):
               f"this host's PATH; the section it feeds degrades to "
               f"COULD-NOT-LOOK", file=sys.stderr)
         return None
+    except OSError as e:
+        # The exec itself was refused (an argument past the OS's cap, a
+        # binary that may not be run): no answer, so COULD-NOT-LOOK, never a
+        # traceback mid-readout. The cause is named by its class, not the raw
+        # "[Errno N] …: path" text, for the reason given above.
+        cause = os.strerror(e.errno).lower() if e.errno else type(e).__name__
+        print(f"memory wake: ⚠ could not run '{shlex.join(args[:2])} …' — "
+              f"{cause}; the section it feeds degrades to COULD-NOT-LOOK",
+              file=sys.stderr)
+        return None
     if p.returncode != 0:
         err1 = (p.stderr or "").strip().splitlines()
         print(f"memory wake: ⚠ '{shlex.join(args[:2])} …' exited "
@@ -191,9 +201,15 @@ def resolve_box(argv):
             # Truncating here would make a successor's boot wake read a box
             # that does not exist and report "predecessor left nothing".
             return v.lower(), var
+    # inherited-identity: `memory` dropped the words it found inherited from a claude
+    # this process does not run under, and left the pid here to say why.
+    inherited = os.environ.get("SESSIONMAIL_INHERITED_FROM", "").strip()
+    why = (f"; identity words inherited from claude pid {inherited}, which "
+           f"this process does not run under"
+           if inherited.isdigit() else "")
     sys.exit("memory wake: cannot resolve a box — pass one, or set "
              "SESSION_SEAT / TM_AGENT_ADDRESS / CLAUDE_CODE_AGENT (or run "
-             "inside a Claude Code tool call for the session id).")
+             "inside a Claude Code tool call for the session id)" + why + ".")
 
 def ext_cache_version():
     """The SHARED stamp-cache derivation version, read from mail-ext.lib.sh.
@@ -351,16 +367,36 @@ def require_box(box, root):
     return os.path.basename(path) + sep + ext, os.path.dirname(path)
 
 def env_root(env=None):
-    """The agents root the ENVIRONMENT names: $SESSIONMAIL_ROOT, else the
-    older $SESSION_MAIL_ROOT (each only when set and non-empty), else
-    ~/.mail/agents; `~` expanded. The package's `_maildir.env_root` order,
-    inline: this script loads nothing of the package but `_sig`, by
-    path. The settings file's `root` key is not read here (the package's
-    `_maildir.root` reads it after the variables); tests/test_root_vars.py
-    pins this, the bash rail and the package to one answer."""
+    """The BOXES root, by the package's order (`_maildir.root`), inline:
+    this script loads nothing of the package but `_sig`, by path. The mail
+    root is $SESSIONMAIL_ROOT when set and non-empty (the one variable; it
+    names the root), else what `message path --root` prints (mail.json's
+    `root`, asked only when `message` is on PATH), else ~/.sessionkit/mail;
+    `~` expanded. Under it, stores/, except agents/ while only that one is
+    a directory (an old tree keeps its name). The retired $SESSION_MAIL_ROOT
+    and $MAIL_ROOT are never read. tests/test_root_vars.py pins this, the
+    bash rail and the package to one answer. ENV is the whole world: an ENV
+    with no PATH is an empty search path (which(path=None) would read the
+    host's PATH and ask the host's `message`), and a leading `~` is ENV's
+    HOME when ENV names one, never the host's."""
     env = os.environ if env is None else env
-    given = env.get("SESSIONMAIL_ROOT") or env.get("SESSION_MAIL_ROOT")
-    return os.path.expanduser(given or "~/.mail/agents")
+    given = env.get("SESSIONMAIL_ROOT")
+    if not given:
+        exe = shutil.which("message", path=env.get("PATH", ""))
+        if exe:
+            try:
+                p = subprocess.run([exe, "path", "--root"], capture_output=True, text=True,
+                                   env=dict(env), timeout=10)
+                given = p.stdout.strip() if p.returncode == 0 else ""
+            except (OSError, subprocess.SubprocessError):
+                given = ""
+    root, home = given or "~/.sessionkit/mail", env.get("HOME")
+    if home and (root == "~" or root.startswith("~/")):
+        root = (home.rstrip("/") + root[1:]) or "/"      # expanduser's own rule, ENV's HOME
+    else:
+        root = os.path.expanduser(root)
+    stores, agents = os.path.join(root, "stores"), os.path.join(root, "agents")
+    return agents if not os.path.isdir(stores) and os.path.isdir(agents) else stores
 
 def header_block(path, cap=16384):
     try:
@@ -694,25 +730,130 @@ def shelf_verdict(path, box):
     # not a cat (pinned by test_memory_signed_body).
     return None, f"⊘ body withheld: {why}", S.UNPINNED
 
+def seat_clause(field, box):
+    """The notmuch CANDIDATE clause for this seat: FIELD against each name of
+    the seat (`seat_names`) that reads as an address, OR'd and parenthesised.
+    A bare word (no `+`, `.`, `-` or `@`, such as the role a kicked seat
+    carries in CLAUDE_CODE_AGENT) is left out: it is not an address, and as a
+    notmuch term it would match every seat of that role. The wake box itself
+    is always kept. Each name is quoted and a `"` in it doubled, but a quoted
+    notmuch term is still a PHRASE matched anywhere in the header, not an exact
+    address: `to:"a+b.c"` also finds `a+b.c.token` and `x+a+b.c`. So what this
+    clause returns is only a candidate set; `seat_messages` keeps the exact
+    ones."""
+    boxl = box.lower()
+    names = sorted(n for n in seat_names(box)
+                   if n == boxl or re.search(r"[+.@-]", n))
+    return "(" + " or ".join(
+        f'{field}:"{n.replace(chr(34), chr(34) * 2)}"' for n in names) + ")"
+
+def seat_messages(field, box, q, resolve=False):
+    """The letters query Q matches whose FIELD local part is EXACTLY a name of
+    this seat (`seat_names`, case-folded, domain dropped: the rule ADDRESSED
+    applies), as one list per thread: [(Message-ID, timestamp), ...]. FIELD
+    "to" reads To and Cc, as notmuch's to: does; "from" reads From. One
+    notmuch call whatever the number of letters. None when the index could
+    not be queried (COULD NOT LOOK), [] when nothing passes."""
+    out = sh(["notmuch", "show", "--format=json", "--body=false",
+              "--entire-thread=false", q], resolve=resolve)
+    if out is None:
+        return None
+    me = seat_names(box)
+    heads = ("From",) if field == "from" else ("To", "Cc")
+    def walk(node, got):
+        if isinstance(node, list):
+            for child in node:
+                walk(child, got)
+        elif isinstance(node, dict) and node.get("match") and node.get("id"):
+            h = node.get("headers") or {}
+            addrs = email.utils.getaddresses([h.get(k, "") for k in heads])
+            if {a.split("@", 1)[0].lower() for _, a in addrs if a} & me:
+                got.append((node["id"], node.get("timestamp", 0)))
+    threads = []
+    for thread in json.loads(out or "[]"):  # show's top level: one per thread
+        got = []
+        walk(thread, got)
+        if got:
+            threads.append(got)
+    return threads
+
+def id_query(ids):
+    """A notmuch query naming exactly these Message-IDs."""
+    return " or ".join(f'id:"{i.replace(chr(34), chr(34) * 2)}"' for i in ids)
+
+#: The byte budget of one id query, which notmuch is handed as ONE argument.
+#: Linux refuses an exec whose single argument passes 128 KiB (MAX_ARG_STRLEN)
+#: and macOS one whose whole argv and env pass 1 MiB; a quarter of the smaller
+#: leaves room for the rest. SESSIONMAIL_WAKE_QUERY_BYTES overrides it (read
+#: here only; the tests shrink it to force more than one chunk).
+QUERY_BYTES = 32 * 1024
+
+def query_bytes():
+    try:
+        n = int(os.environ.get("SESSIONMAIL_WAKE_QUERY_BYTES", ""))
+    except ValueError:
+        return QUERY_BYTES
+    return n if n > 0 else QUERY_BYTES
+
+def id_chunks(threads):
+    """THREADS (from `seat_messages`) packed in order into chunks, each a list
+    of threads whose id query fits `query_bytes()`. A cut falls only BETWEEN
+    threads: notmuch's line for a thread ([matched/total], its matched-first
+    authors, its newest subject) is true only when every letter of the thread
+    that is mine is in the one query, and two partial lines cannot be merged
+    back (the authors are joined by ", ", which a name may hold too). A thread
+    whose own ids pass the budget is a chunk of its own, over it; past the
+    OS's cap its search is refused and `sh` degrades it to COULD-NOT-LOOK.
+    COST: the show, then one search per chunk, never one per thread. For B
+    the bytes of the query naming every passing id, the chunks number at least
+    ceil(B / budget); packed next-fit, any two neighbours together pass the
+    budget, so fewer than 2 * B / budget + 1. That is about ceil(B / budget)
+    while each thread is small beside the budget (32 KiB holds ~680 ids)."""
+    budget, chunks, size = query_bytes(), [], 0
+    for t in threads:
+        n = len(id_query([i for i, _ in t]).encode())
+        if chunks and size + 4 + n <= budget:  # 4: " or "
+            chunks[-1].append(t)
+            size += 4 + n
+        else:
+            chunks.append([t])
+            size = n
+    return chunks
+
+def chunk_query(chunk):
+    return id_query([i for t in chunk for i, _ in t])
+
 def closed_thread_ids(box):
     """Threads whose newest to-me activity is my own CLOSED marker (the
     mail-close convention: a reply From me To <box>+closed, Subject leading
-    "CLOSED"). Query-time projection; nothing to rot on an index rebuild.
-    notmuch subject: matching is loose, so candidates are confirmed strictly."""
-    closure_q = f"from:{box} and subject:closed"
-    def newest_by_thread(q):
-        out = sh(["notmuch", "search", "--format=json", "--sort=newest-first", q],
-                 resolve=True)
-        if out is None:
+    "CLOSED"). "Me" is every name of this seat (`seat_names`), matched
+    exactly on the marker's From and the activity's To or Cc. Query-time
+    projection; nothing to rot on an index rebuild. notmuch subject: matching
+    is loose, so candidates are confirmed strictly."""
+    closure_q = f"{seat_clause('from', box)} and subject:closed"
+    def newest_by_thread(field, q):
+        threads = seat_messages(field, box, q, resolve=True)
+        if threads is None:
             return None  # could not look — caller must not treat as "none closed"
+        # One search per chunk (`id_chunks`); the threads' newest entries are
+        # merged by timestamp. Any chunk that cannot answer leaves the whole
+        # map unknown, never a partial one read as complete.
         r = {}
-        for t in json.loads(out or "[]"):
-            r.setdefault(t["thread"], (t["timestamp"], t.get("subject", "")))
+        for chunk in id_chunks(threads):
+            out = sh(["notmuch", "search", "--format=json", "--sort=newest-first",
+                      chunk_query(chunk)], resolve=True)
+            if out is None:
+                return None
+            for t in json.loads(out or "[]"):
+                ts = (t["timestamp"], t.get("subject", ""))
+                if t["thread"] not in r or ts[0] > r[t["thread"]][0]:
+                    r[t["thread"]] = ts
         return r
-    closed = newest_by_thread(closure_q)
+    closed = newest_by_thread("from", closure_q)
     if closed is None:
         return None
-    act = newest_by_thread(f"date:2days.. and to:{box} and not ({closure_q})")
+    act = newest_by_thread("to", f"date:2days.. and {seat_clause('to', box)} "
+                                 f"and not ({closure_q})")
     if act is None:
         return None
     tids = set()
@@ -723,14 +864,53 @@ def closed_thread_ids(box):
             tids.add("thread:" + tid)
     return tids
 
+def recent_lines(threads):
+    """notmuch's one-line summary of each of THREADS, newest first: one search
+    per chunk (`id_chunks`), merged. A chunk's lines come back newest-first, one
+    per thread, so the k-th line is the thread with the k-th newest letter of
+    mine in that chunk, and those timestamps order the merge (stable: equal
+    times keep chunk order, then notmuch's). None when any chunk cannot answer,
+    or when a chunk's lines do not pair with its threads (the index changed
+    between the show and the search): a partial list is never shown as all."""
+    keyed = []
+    for chunk in id_chunks(threads):
+        out = sh(["notmuch", "search", "--sort=newest-first", chunk_query(chunk)])
+        if out is None:
+            return None
+        if DRY:
+            continue
+        lines = out.splitlines()
+        newest = sorted((max(ts for _, ts in t) for t in chunk), reverse=True)
+        if len(lines) != len(newest):
+            print(f"memory wake: ⚠ a RECENT search gave {len(lines)} threads for "
+                  f"{len(newest)} — the index changed under the wake; RECENT "
+                  f"degrades to COULD-NOT-LOOK", file=sys.stderr)
+            return None
+        keyed += zip(newest, lines)
+    seen, merged = set(), []
+    for _, ln in sorted(keyed, key=lambda k: -k[0]):
+        tid = ln.split(None, 1)[0] if ln.strip() else ln
+        if tid in seen:
+            print("memory wake: ⚠ a thread came back from two RECENT searches — "
+                  "the index changed under the wake; RECENT degrades to "
+                  "COULD-NOT-LOOK", file=sys.stderr)
+            return None
+        seen.add(tid)
+        merged.append(ln)
+    return "\n".join(merged)
+
 def recent_section(box):
     # R6/AC7: the header NAMES the scope — these are threads to the
     # INVOKING SEAT (the box the cascade resolved), not "the mailbox".
     print(f"═══ RECENT — threads to {box} active in the last 2 days "
           f"(one line each) ═══")
     cap = 25
-    out = sh(["notmuch", "search", "--sort=newest-first",
-              f"date:2days.. and to:{box}"])
+    # Every name of this seat, as ADDRESSED matches: a letter To the session
+    # id is this seat's as much as one To its seat address. notmuch hands
+    # back candidates; only the letters whose To or Cc is exactly this seat
+    # are listed, by Message-ID.
+    threads = seat_messages("to", box, f"date:2days.. and {seat_clause('to', box)}")
+    out = None if threads is None else recent_lines(threads)
     if out is None:
         # §4/§4bis: COULD NOT LOOK is not "nothing recent". Weakened
         # wording, no counts asserted, no "0 threads shown of 0" — that line

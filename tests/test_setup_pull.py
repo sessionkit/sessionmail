@@ -198,23 +198,22 @@ def test_a_variable_that_moves_a_value_is_refused_naming_both_values(host):
             "SESSIONMAIL_PULL_LISTENER or write pull.listener into") in err, err
 
 
-@pytest.mark.parametrize("var", ["SESSIONMAIL_ROOT", "SESSION_MAIL_ROOT"])
-def test_a_root_variable_that_differs_from_the_file_is_refused(host, tmp_path, var):
-    """The suite's conftest sets SESSION_MAIL_ROOT for every test; this env is
-    built from nothing, so it is set here on purpose (the legacy spelling
-    too: refused, never silently ignored)."""
-    env = {**host.env, var: str(tmp_path / "elsewhere" / "agents")}
+def test_a_root_variable_that_differs_from_the_file_is_refused(host, tmp_path):
+    """This env is built from nothing, so the one variable is set here on
+    purpose, naming another root than the file: refused, never silently
+    ignored. (The retired SESSION_MAIL_ROOT is read by nothing, so it can
+    no longer differ from anything.)"""
+    env = {**host.env, "SESSIONMAIL_ROOT": str(tmp_path / "elsewhere")}
     rc, _out, err = setup(env, "--pull", "--dry-run")
     assert rc == 2, err
-    assert "root (SESSIONMAIL_ROOT or SESSION_MAIL_ROOT or MAIL_ROOT)" in err
+    assert "root (SESSIONMAIL_ROOT)" in err
     assert str(tmp_path / "elsewhere") in err and str(host.root) in err
 
 
 def test_a_root_variable_naming_the_same_place_is_not_refused(host):
-    """Values compare as resolved: the variable names the agents root, the
-    file the mail root, and they are the same place."""
-    agents = str(host.root / "agents")
-    env = {**host.env, "SESSIONMAIL_ROOT": agents, "SESSION_MAIL_ROOT": agents}
+    """Values compare as resolved: the variable and the file both name the
+    mail root, and they are the same place."""
+    env = {**host.env, "SESSIONMAIL_ROOT": str(host.root)}
     rc, out, err = setup(env, "--pull", "--dry-run")
     assert "REFUSED" not in err, err
     assert step(out)[0] == _setup.TODO
@@ -307,7 +306,10 @@ def test_the_log_is_in_the_kits_log_dir_whatever_this_shells_state_home(host, tm
     assert got["StandardOutPath"] == got["StandardErrorPath"] == str(log)
     assert log.parent.is_dir(), "apply makes the log folder"
     assert stat.S_IMODE(log.parent.stat().st_mode) == 0o700
-    state = _operator.settings_home() / ".sessionmail" / "puller"
+    # The puller's state dir as the resolver chooses it (a fresh account: the
+    # state folder's puller/), never a hand-spelled path that may not be it.
+    state = _puller._state_dir("")
+    assert state == _operator.settings_home() / _settings.STATE_DIR / _puller.STATE_LEAF
     assert not (state / "log").exists(), "nothing is made under the state dir for the log"
 
 

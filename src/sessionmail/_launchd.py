@@ -64,6 +64,10 @@ LABEL_PREFIX = "dev.sessionkit.mail.seat-agent."
 ADDRESS_RE = re.compile(r"[a-z0-9][a-z0-9._-]*(?:\+[a-z0-9][a-z0-9._-]*)?\Z")
 SOCK_MAX = 103
 PLACEHOLDER = re.compile(r"@([A-Z_]+)@")
+#: The template's SESSIONMAIL_HOME entry, rendered only when the caller set
+#: SESSIONMAIL_HOME; else it is dropped whole.
+PINNED_HOME = ("    <key>SESSIONMAIL_HOME</key>\n"
+               "    <string>@SESSIONMAIL_HOME@</string>\n")
 
 #: How long the agent has to answer after a load, and the job to go after
 #: a bootout. Module values, so a test can shorten them in-process.
@@ -97,7 +101,7 @@ class Job:
     log: str            # <log_dir>/seat-agent.<address>.log
     log_dir: str        # _settings.log_dir(), the ONE resolver
     old_log: str        # the pre-0.3.2 log, a READ fallback only (until 0.3.3)
-    sessionmail_home: str
+    sessionmail_home: str | None   # the caller's own $SESSIONMAIL_HOME, absolute; None: unset
     message: str        # `command -v message`, not resolved
     domain: str         # gui/<uid>
 
@@ -130,13 +134,24 @@ def _words(done: subprocess.CompletedProcess) -> str:
     return f"rc {done.returncode}" + (f": {said}" if said else "")
 
 
-def _sessionmail_home(env: Mapping[str, str], home: str) -> str:
-    """As the wrapper reads it: $SESSIONMAIL_HOME, a leading ~ expanded, else
-    $HOME/.sessionmail. Absolute, as the template wants it."""
-    value = env.get("SESSIONMAIL_HOME") or os.path.join(home, ".sessionmail")
+def _sessionmail_home(env: Mapping[str, str], home: str) -> str | None:
+    """The caller's own $SESSIONMAIL_HOME, a leading ~ expanded, absolute, as
+    the plist pins it; None when it is unset or empty. Unset, nothing is
+    pinned: the wrapper finds the keys under the job's HOME by the same rule
+    as `_settings.seat_keys_dir`."""
+    value = env.get("SESSIONMAIL_HOME") or ""
+    if not value:
+        return None
     if value == "~" or value.startswith("~/"):
         value = home + value[1:]
     return os.path.abspath(value)
+
+
+def _key_root(env: Mapping[str, str], home: str) -> str:
+    """The seat-keys folder, `_settings.seat_keys_dir` under HOME: the
+    override, else a real old `~/.sessionmail/seat-keys`, else
+    `~/.sessionkit/mail/state/seat-keys`."""
+    return str(_settings.seat_keys_dir({**env, "HOME": home}))
 
 
 def _check_platform() -> None:
@@ -164,7 +179,7 @@ def plan(address: str, socket: str | None, env: Mapping[str, str]) -> Job:
     _check_address(address)
     home = _home(env)
     sm_home = _sessionmail_home(env, home)
-    key_home = os.path.join(sm_home, "seat-keys", address)
+    key_home = os.path.join(_key_root(env, home), address)
     key = os.path.join(key_home, "id_ed25519")
     pub = os.path.join(key_home, "seat.pub")
     if not os.path.isdir(key_home):
@@ -202,14 +217,25 @@ def plan(address: str, socket: str | None, env: Mapping[str, str]) -> Job:
 
 
 def render(template: bytes, job: Job) -> bytes:
-    """The template with its five placeholders filled, each value XML-escaped.
+    """The template with its placeholders filled, each value XML-escaped:
+    ADDRESS, MESSAGE, SOCKET, LOG_DIR and SEAT_PUB always, SESSIONMAIL_HOME
+    only when the caller set it (else its entry is dropped, PINNED_HOME).
     One pass, so a value is never itself read for a placeholder. An unknown
     placeholder, a render plistlib cannot read, or a Label that is not the
     job's is refused."""
     values = {"ADDRESS": job.address, "MESSAGE": job.message,
-              "SESSIONMAIL_HOME": job.sessionmail_home, "SOCKET": job.socket,
-              "LOG_DIR": job.log_dir}
+              "SOCKET": job.socket, "LOG_DIR": job.log_dir,
+              "SEAT_PUB": job.pub}
     text = template.decode("utf-8")
+    if job.sessionmail_home is None:
+        # Unset by the caller: the job carries no SESSIONMAIL_HOME, so the
+        # wrapper resolves the keys under its HOME exactly as `plan` did.
+        if text.count(PINNED_HOME) != 1:
+            raise Refused("the packaged template does not hold its one SESSIONMAIL_HOME "
+                          "entry: a broken install")
+        text = text.replace(PINNED_HOME, "")
+    else:
+        values["SESSIONMAIL_HOME"] = job.sessionmail_home
     unknown = sorted(set(PLACEHOLDER.findall(text)) - set(values))
     if unknown:
         raise Refused("the packaged template holds a placeholder this sessionmail does not "

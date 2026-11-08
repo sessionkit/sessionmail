@@ -1,7 +1,7 @@
 """`message list` - one line per message, and the footer says what it hid.
 
 Hermetic: every test writes its own maildir under `tmp_path` and points
-`SESSION_MAIL_ROOT` at it; `SESSIONMAIL_HOME` is the sandbox conftest gives
+`SESSIONMAIL_ROOT` at it; `SESSIONMAIL_HOME` is the sandbox conftest gives
 every test. No notmuch, no real box. Fixtures are `alpha` and `beta` at
 `example.invalid` (slipbox/project-conventions.md, 9).
 
@@ -77,8 +77,8 @@ def bulk(root, box, n, *, first_key=1923171200):
 
 @pytest.fixture
 def box(tmp_path, monkeypatch):
-    root = tmp_path / "mail"
-    monkeypatch.setenv("SESSION_MAIL_ROOT", str(root))
+    root = tmp_path / "mail" / "stores"
+    monkeypatch.setenv("SESSIONMAIL_ROOT", str(root.parent))
     monkeypatch.setenv("TM_AGENT_ADDRESS", "alpha")
     monkeypatch.delenv("CLAUDE_CODE_AGENT", raising=False)
     return root

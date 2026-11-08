@@ -61,6 +61,17 @@ a key of the writer's choosing, is enough to make mail signed by that key
 run. Write access to the ledger decides whose mail runs: keep it as tight
 as the keys themselves.
 
+## Where the keys are
+
+A seat's key folder is `KEYS/ADDRESS/` (`id_ed25519`, `seat.pub`, the birth
+cert, and by default the agent's socket). `message seat init` mints there,
+and the agent and `--install` read there. KEYS is:
+
+1. `$SESSIONMAIL_HOME/seat-keys` when `SESSIONMAIL_HOME` is set;
+2. else `~/.sessionmail/seat-keys` while that is a real folder: an existing
+   host's keys never move;
+3. else `~/.sessionkit/mail/state/seat-keys`, where a fresh host mints.
+
 ## Installing the agent: `--install` and `--uninstall`
 
 macOS only: on any other system both refuse (exit 2). The seat must be
@@ -70,13 +81,15 @@ registry or the cert.
 ### `message seat agent --install ADDRESS [SOCKET]`
 
 1. **Checks, with nothing written.** It is macOS. ADDRESS is a seat name or a plus address (`heard+airpods`).
-   `$SESSIONMAIL_HOME/seat-keys/ADDRESS/` holds `id_ed25519` and `seat.pub`.
+   `KEYS/ADDRESS/` holds `id_ed25519` and `seat.pub`.
    SOCKET is absolute, 103 bytes at most, and its directory exists; it
    defaults to `agent.sock` beside the key. `message` is on PATH.
 2. **Render.** The packaged template, with each placeholder filled and
    XML-escaped: `@MESSAGE@` is what `command -v message` prints,
-   `@SESSIONMAIL_HOME@` is absolute, `@LOG_DIR@` is `$HOME/.sessionkit/mail/log`
-   (see "The log", below).
+   `@SEAT_PUB@` is `KEYS/ADDRESS/seat.pub`, `@LOG_DIR@` is
+   `$HOME/.sessionkit/mail/log` (see "The log", below). The job's
+   environment carries `SESSIONMAIL_HOME` only when yours sets it; unset,
+   the agent finds KEYS under the job's `HOME` by the same rule.
    The render must parse as a plist, and its `Label` must be
    `dev.sessionkit.mail.seat-agent.ADDRESS`.
 3. **Compare.** `launchctl print gui/<uid>/<label>` says whether the job is
@@ -96,7 +109,7 @@ so `eval "$(message seat agent --install bot.alice)"` sets them:
 SEAT_LABEL=dev.sessionkit.mail.seat-agent.<ADDRESS>
 SEAT_PLIST=<abs $HOME>/Library/LaunchAgents/dev.sessionkit.mail.seat-agent.<ADDRESS>.plist
 SEAT_SOCKET=<abs socket>
-SEAT_PUB=<abs $SESSIONMAIL_HOME>/seat-keys/<ADDRESS>/seat.pub
+SEAT_PUB=<abs KEYS>/<ADDRESS>/seat.pub
 SEAT_LOG=<abs $HOME>/.sessionkit/mail/log/seat-agent.<ADDRESS>.log
 ```
 

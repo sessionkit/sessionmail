@@ -40,7 +40,7 @@ from typing import Callable, Iterable
 
 import sessiontools
 
-from . import _boxes, _layer, _maildir, _seat, _subscription
+from . import _boxes, _layer, _maildir, _seat, _settings, _subscription
 
 #: "Depth stops at 4, with a line saying how to see more."
 DEFAULT_DEPTH = 4
@@ -104,21 +104,39 @@ def graph(root: Path, *, live: Iterable[str], home: Path | None = None,
     for e in scan.entries:
         if e not in kept_entries:
             dropped[e.subscriber.lower()] = dropped.get(e.subscriber.lower(), 0) + 1
-    home_ = _seat.home(env) if home is None else Path(home)
+    # The old folders scan read: each leaf where it resolved (`roots`), and
+    # the old root itself (the resolver's old branch), so a skipped path is
+    # owned under EITHER.
+    seats, sessions = _subscription.roots(home, env)
+    home_ = _settings.old_state_dir(env) if home is None else Path(home)
+    # The maps (3.2, 3.3b): each of sessiontools' two leaves where IT
+    # resolves them, never one's parent taken for the other's (from
+    # sessiontools 0.3.2, seats and sessions need not share a folder).
     try:
-        tree = _layer.seats_root(env).parent    # ~/.session: seats' and sessions' maps
+        maps = (_layer.seats_root(env), _layer.sessions_root(env))
     except _layer.LayerError:
-        tree = None
+        maps = ()
     for path, _why in scan.skipped:
-        owner = _owner_of(path, home_) or (_owner_of(path, tree) if tree else "")
+        owner = (_owner_in(path, seats) or _owner_in(path, sessions) or _owner_of(path, home_)
+                 or next((o for o in (_owner_in(path, m) for m in maps) if o), ""))
         if owner:
             dropped[owner] = dropped.get(owner, 0) + 1
     return Graph(feeds=feeds, boxes=boxes, dropped=dropped)
 
 
+def _owner_in(path: Path, leaf: Path) -> str:
+    """The owner folder a skipped PATH was found under in LEAF (a resolved
+    `seats` or `sessions` leaf: `<leaf>/<owner>/...`), lowercase, or ""."""
+    try:
+        parts = path.relative_to(leaf).parts
+    except ValueError:
+        return ""
+    return parts[0].lower() if len(parts) >= 2 else ""
+
+
 def _owner_of(path: Path, home: Path) -> str:
     """The owner folder a skipped PATH was found under, lowercase, or "".
-    HOME is the sessionmail home (old folders) or `~/.session` (maps)."""
+    HOME is the old sessionmail root (old folders)."""
     try:
         parts = path.relative_to(home).parts
     except ValueError:
@@ -182,9 +200,11 @@ def _walk(g: Graph, key: str, path: tuple[str, ...], depth: int, limit: int,
     return out
 
 
-def tree(g: Graph, *, session: str = "", seat: str = "", limit: int = DEFAULT_DEPTH) -> Tree:
+def tree(g: Graph, *, session: str = "", seat: str = "", limit: int = DEFAULT_DEPTH,
+         mine: bool = True) -> Tree:
     """What reaches SESSION (or, with no session, SEAT) as a tree: the seat
-    first, then the session's own subscriptions, each with what feeds it."""
+    first, then the session's own subscriptions, each with what feeds it.
+    MINE false: SESSION is not the caller's, and its root says so."""
     if limit < 1:
         raise ValueError("the depth bound is at least 1")
     seen: set[str] = set()
@@ -192,7 +212,8 @@ def tree(g: Graph, *, session: str = "", seat: str = "", limit: int = DEFAULT_DE
     walked: set[str] = set()
     seat_key = seat.lower()
     if session:
-        top = Node(label=f"{_short(session)} (this session)", note=unmoved(session))
+        whose = "this session" if mine else "another session"
+        top = Node(label=f"{_short(session)} ({whose})", note=unmoved(session))
         path: tuple[str, ...] = (session.lower(),)
         if seat_key:
             s = Node(label=seat, note="your seat: its row copies seat mail here (D12)",
@@ -335,7 +356,8 @@ def _owner_by_ancestry(pid: int, ppid: dict[int, int], cmd: dict[int, str]) -> s
 
 def unmoved(session: str, env: dict[str, str] | None = None) -> str | None:
     """"not moved; at <old>" when SESSION's state still sits at the root
-    before session-settings 3.3a (`<home>/sessions/<sid>`: a listener armed
+    before session-settings 3.3a (`_seat.old_session_root`, under the
+    `sessions` leaf: a listener armed
     on old code, or a dead id) - and None when it was moved, or there is
     nothing at either place. The reader reads NEW paths only, so the old
     place is named, never read (3.1: say when old != new)."""

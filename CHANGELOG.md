@@ -9,6 +9,390 @@ writer and mirrors it into `.claude-plugin/plugin.json` and `marketplace.json`.
 
 ## [Unreleased]
 
+## [0.3.3] - 2026-11-08
+
+**Needs sessiontools 0.3.3 or newer** (was 0.3.2).
+
+Known issue: with hooks on, a one-shot `claude -p` may arm `pager listen` when the hook asks and then not exit; set "hooks": false for scripted print-mode runs until this is fixed.
+
+### Changed: memory's first refusals name the by-hand recipe (SM-1027)
+
+- **`docs/memory-first-root.md` is new**: the by-hand recipe that gives a
+  fresh seat a root and one label `memory ls /` shows, while `memory init`
+  has no key to mint with. It covers the box (`message setup --box
+  claude`), the `[ROOT]` send and `$CLAUDE_ROOT`, labels addressed
+  `claude@<host>`, and a session key made with stock OpenSSH. The memory
+  skill points at it.
+- **`memory init`'s exit 2 and exit 3 lines, and `memory ls`'s "no agent"
+  (exit 1) and "no memory yet" (exit 2) lines** now say plainly that memory
+  has no automated first step yet, and name that doc. init's exit 3 says
+  it refuses on every box today; its exit 2 names `message setup --box
+  <box>`. "no memory yet" no longer says `see memory init --help`. Exit
+  codes are unchanged.
+
+### Changed: where mail lives, and what `SESSIONMAIL_ROOT` means
+
+- **The mail root is `~/.sessionkit/mail`** (it was `~/.mail`), and boxes
+  live under its `stores/` (they were under `agents/`). `.postfix`,
+  `.state` and `.notmuch` sit beside the boxes, as before. A host born
+  before this release keeps its place by one line in
+  `~/.sessionkit/mail/settings/mail.json`, `"root": "~/.mail"`, or by a
+  symlink `~/.sessionkit/mail -> ~/.mail`; either way its boxes stay in
+  `agents/`: while `<root>/agents` is a directory and `<root>/stores` is
+  not, that is the boxes folder (`message path --boxes --why` says so).
+  Nothing on such a host moves; its notmuch `database.path` and postfix
+  `virtual_mailbox_base` stay true.
+- **`SESSIONMAIL_ROOT` now names the mail root.** It named the boxes folder
+  (`~/.mail/agents`). A host or a test that exports it pointing at a boxes
+  folder now finds its boxes one level down. This is the one change here
+  that silently alters a running host's answer; `message path --root --why`
+  shows what the variable decided.
+- **`SESSION_MAIL_ROOT` and `MAIL_ROOT` are retired** and read by nothing.
+  A set one is named by `message path --why` and on `message setup`'s
+  mail-root step as "ignored, retired".
+- **Deploy order on a host born before this release:**
+  put `"root": "~/.mail"` into `~/.sessionkit/mail/settings/mail.json`
+  BEFORE the fast-forward or the wheel install, check it with
+  `message path --root --why` (it says `from mail.json root`), and only
+  then restart a seat. The resolver has no fallback to an existing
+  `~/.mail` by design: a merge is not a deploy, and each host is its own
+  step.
+- **An old tree nobody named is said, once, on stderr:** when the root is
+  the default, it has no `stores/` or `agents/` yet, and `~/.mail/agents`
+  exists, every `message` and `memory` process says so once ("set
+  `"root": "~/.mail"` in mail.json, or export `SESSIONMAIL_ROOT`") and
+  still answers the default. A host that took the code without the line
+  above is loud, not deaf.
+- One resolver: `_maildir.mail_root_why` (variable, else the file's
+  `root`, else the default) is the only place the order is written;
+  `_drop.mail_root`, `_sender.root_of` and `_setup.roots` call it, and
+  setup no longer refuses "two roots". The bundled scripts that cannot
+  import it (`mail-box.lib.sh`, `session-mail-wake`, `store-index`, a bare
+  `vmailbox-gen`) ask `message path --root` for the file's value instead of
+  spelling the old default; `tests/test_root_vars.py` pins each to the
+  package's answer.
+- The postfix map values carry the folder the tree has (`stores/<box>/`
+  or `agents/<box>/`); `nm-deliver` accepts both; the post-new hook's
+  default queries follow the folder under `database.path`.
+
+### Added
+
+- **`message path --root | --boxes | --generator | --notmuch-config`**
+  print one place each (the mail root; the boxes folder; this host's
+  `vmailbox-gen`; the FILE of sessionmail's notmuch profile) so no plugin,
+  script or document spells one. Exit 0 for the first two always; 2 for
+  the last two when the thing does not exist, with stderr saying what was
+  expected or tried. `--why` names the source. `message box path` answers
+  the same. (Ruling 6: the verb exists before any copy is asked to call it.)
+
+- **One switch per mail hook.** The host settings file
+  (`~/.sessionkit/mail/settings/mail.json`) takes four new booleans:
+  `ride_along`, `stop_nag`, `mail_guard` and `birth`. Each is on when it is
+  missing, so no existing file changes what it does; only the boolean
+  `false` turns its hook off, and a value that is not a boolean is ignored,
+  said once by the ride-along. `"hooks"` keeps its meaning: it still gates the
+  ride-along, the Stop nag and the birth's box line, and each of those acts
+  only when both keys are on. `mail_guard` and the birth itself read only
+  their own key, so "all of them off" is `"hooks": false`,
+  `"mail_guard": false` and `"birth": false`. `"mail_guard": false` turns
+  off the guard's subject and body checks; its subagent rules stay on. The
+  DEAF check on a required seat is under no switch. The schema describes
+  all four.
+- **`pager settings hooks KEY on|off`** sets one switch, the way
+  `pager settings hooks on|off` sets `hooks`, and `pager settings hooks KEY`
+  says whether that hook acts, and why. The bare form adds one line for
+  each switch the file sets; a file that sets none prints what it printed
+  before, with the same exit code. Each change is logged with its key. A
+  subagent may read a switch, never write one.
+
+### Changed
+
+- **sessionmail's notmuch profile moves under `~/.sessionkit` on a fresh
+  host** (SM-1021). `message setup` writes it at
+  `~/.sessionkit/mail/settings/notmuch/<profile>/config`, and host mode
+  reads it there. An existing `$XDG_CONFIG_HOME/notmuch/<profile>/config`,
+  else `~/.notmuch-config.<profile>`, keeps being read, and setup leaves
+  it, while it is a real file (not a link to the new one): nothing is
+  migrated, moved or copied. The index does not move. Store mode and
+  `store-index` keep notmuch's own order, unchanged. The preflight's
+  config list includes the new folder.
+- **The pager monitor's wake line names who wrote and what about.** It said
+  only `pager: N message(s) waiting`, the addresses and what woke the seat,
+  so a seat had to run a command to learn whether the mail was worth
+  stopping for. Now, on every seat, the line adds the newest waiting mail's
+  sender (the address's local part, never the display name) and its subject
+  in quotes, and says who it was for when that is not this session:
+  `pager: 1 message waiting, from ann: "Wake notices: ready for review"
+  (to proj+lead)`. Several name the newest and then up to three other
+  senders. A spoken turn says `heard from <speaker> on <device>`, or
+  `heard (UNVERIFIED) on <device>`, and never its words. The count still
+  comes first, and a line over the limit gives up the middle, then the
+  subject, never the count or the tail. A mail that cannot be read gives way
+  to the next one, then to the old count-only line. The hand `pager listen`
+  page is unchanged and stays quiet. In the inject log the named mail is a
+  `header` item.
+- **`message send` shortens an over-long subject by default, instead of
+  refusing it.** A subject over 69 characters, or one that is not ASCII, is
+  now shortened to fit and sent, exit 0, with a one-line report on stderr
+  (stdout stays the Message-ID) and the exact original in
+  `X-Original-Subject:`. Before, the shortener ran only on a host whose
+  locked file said `set subject-shorten on`; now no line means on.
+  - **The cap is kept:** a subject more than 10 characters over the limit
+    (or the host's `set subject-shorten-max N`) is still refused, with
+    `(not shortened: <k> over; the cap is <N>: ...)`.
+  - **Non-ASCII is folded to ASCII** (`—` to `-`, smart quotes to plain,
+    `é` to `e`); a character that cannot fold is dropped and named, and a
+    subject that folding would gut is refused.
+  - **`--json` says what the subject became:** every success carries
+    `"subject": {"shortened": bool, "original": str, "sent": str}`
+    (`shortened` is true for a fold alone, too). The MCP tool's signal is
+    unchanged: the report in its notices block.
+  - **A line break or control character in a subject** is still refused,
+    exit 2, kind `subject`, but now in the shortener's words ("the subject
+    holds a line break or a control character; it is never shortened"),
+    not the could-execute words. A script matching the old text should
+    match the kind instead.
+  - **To turn it off:** for a host, `set subject-shorten off` in the
+    locked file, `rules.locked`, in `~/.sessionkit/mail/state/` (in
+    `~/.sessionmail/` on an existing host where it is still there); for a
+    seat, `SESSIONMAIL_SUBJECT_SHORTEN=off`; for one mail, `--no-shorten`
+    (MCP: `no_shorten`). Off refuses exactly as before.
+- **sessionmail's state has a new home, `~/.sessionkit/mail/state/`, where
+  a fresh install keeps all of it** (SM-969). One resolver,
+  `_settings.state_path`, decides where each leaf is, for its readers AND
+  its writers alike, in sessiontools' order: `$SESSIONMAIL_HOME/<leaf>`
+  when that is set; else `~/.sessionmail/<leaf>` while it is a real one of
+  its own (not a link to the new one); else
+  `~/.sessionkit/mail/state/<leaf>`, when it is there and as the fresh
+  default (source `fresh-new`), made with its parents by the first writer.
+  When both are real and distinct the
+  old one is used and the new one is never read or merged:
+  `_settings.state_stranded` names it, for a human to settle. This release moves the locked rules
+  file, `rules.locked` (rooted at the account's home, never at `$HOME` or
+  `$SESSIONMAIL_HOME`), and the seat folders, `seats/<seat>/` (seat rules,
+  focus, subscriptions, and a seatless run's marks, stamps and ride): every
+  reader and writer of each, `pager rule`, `pager focus --fleet` and
+  `message subscription add --seat` included, follows the resolver, so what
+  is written is what is read. It also moves the old session folders,
+  `sessions/<sid>/`, and everything that walks either leaf: `pager listen`
+  moves a session's old folder out of the one it found, `pager settings
+  migrate` converts the old box files and `address` files it finds and
+  removes each one in the folder it was read from (never in the other),
+  the Python subscription reader (`message subscription list`, the
+  pager's) names an unconverted file where it lies, and `message receipt`
+  names the old place it looked at. The host-to-host puller's default
+  state folder, `pull.state_dir` unset, is the `puller` leaf, rooted at the
+  account's home like `rules.locked` (no variable moves it, so a hand run
+  takes the LaunchAgent's lock), and the key's default reads
+  `~/.sessionkit/mail/state/puller`; an explicit `pull.state_dir` or
+  `SESSIONMAIL_PULL_STATE_DIR` still wins. The IMAP spike, `python -m
+  sessionmail._pull_imap`, reads and writes its password file and cursors
+  in the one folder the `imap` leaf resolves to. Each chooses its folder
+  once, so its lock and cursors never split. A fresh install writes
+  nothing under `~/.sessionmail/`: its marks, rules, focus, subscriptions,
+  stamps and puller state all land under `~/.sessionkit/mail/state/` (a
+  hermetic test diffs a fresh HOME through the quick start). An existing
+  host whose `~/.sessionmail/` leaves are real reads and writes them
+  exactly as before: nothing is moved or migrated, and no upgrade path is
+  owed to old installs. Seat keys follow the same rule (below). The fallback to `~/.sessionmail/` is dropped
+  in a later release, one release after every peer is deployed on every
+  host.
+- **A fresh host mints seat keys under `~/.sessionkit/mail/state/seat-keys/`**
+  (SM-969). `message seat init`, `message seat agent` and its `--install`
+  find the key folder by one rule: `$SESSIONMAIL_HOME/seat-keys` when that
+  is set; else `~/.sessionmail/seat-keys` while it is a real folder, so no
+  existing key moves; else `~/.sessionkit/mail/state/seat-keys`. The
+  LaunchAgent that `--install` writes pins `SESSIONMAIL_HOME` only when yours is
+  set; unset, the agent finds the keys under its `HOME` by the same rule.
+  A job installed before this release keeps its pinned
+  `~/.sessionmail` and keeps working.
+- **The postfix map generator, `vmailbox-gen`, finds the `seats` and
+  `sessions` folders by the same rule** (SM-969). It reads an agent's
+  subscription files from `seats/` and counts a session's unconverted
+  files in `sessions/`. One shell function finds each folder the way
+  `_settings.state_path` does, so the generator reads what the package
+  writes. `vmailbox-gen --state-leaf seats` (or `sessions`) prints the
+  folder it chose and touches nothing. With only `~/.sessionmail/` on a
+  host, the maps it writes are byte for byte as before; with neither
+  folder (a fresh install), it reads `~/.sessionkit/mail/state/`, where the
+  package writes.
+- **The notmuch hook's post-new command keeps its state in the same new
+  home** (SM-969). Its `lock`, `again` and `log` are in
+  `~/.sessionkit/mail/state/post-new/`, made with its parents on the first
+  run; on an existing host whose `~/.sessionmail/post-new/` is still a real
+  folder of its own, they stay there. The hook never makes the old folder. `HOME` alone decides, never `TMPDIR` or
+  `SESSIONMAIL_HOME`, so launchd, postfix and agents still take one lock.
+  With only `~/.sessionmail/` on a host, the hook does what it did before.
+- **sessionmail finds sessiontools' `seats` and `sessions` folders by
+  asking sessiontools, never by spelling `~/.session`** (SM-969).
+  sessiontools decides where they are (ST-266: `~/.session/<leaf>` while
+  that is a real folder, else `~/.sessionkit/tools/state/<leaf>`), and
+  three readers follow it: the seat layer (`seats/<seat>/settings/`, through
+  `sessiontools.settings.seats_root`), the mail guard's deny log (the
+  session's `log/mail/`, from `session path sessions <sid> --json` when the
+  hook's `python3` cannot import sessiontools), and `vmailbox-gen`'s seat
+  and session layers (from `session path --json`; `vmailbox-gen
+  --tools-leaf seats` or `sessions` prints the folder it chose and touches
+  nothing). With a sessiontools that does not carry ST-266, or no `session`
+  command, each reads `~/.session/seats` and `~/.session/sessions` (or
+  `$SESSIONS_DIR`), as before. Nothing moves until sessiontools moves them.
+
+### Fixed
+
+- **Index at delivery opens the same notmuch profile as `message`.**
+  `nm-deliver` ran `notmuch insert` with no `NOTMUCH_CONFIG`, and pipe(8)
+  passes none, so delivery indexed through notmuch's default config under
+  `HOME` while `message` read the kit profile: they agreed only while both
+  named one database. `message setup` gains a `delivery` step that installs
+  or refreshes `/usr/local/etc/postfix-agents/nm-deliver` with the kit
+  profile's path baked in (one line, `KIT_NOTMUCH_CONFIG='<path>'`,
+  validated at install), and reports, read-only, whether postfix's
+  `nminsert` service runs it. A host with no `nminsert` service gets no
+  wrapper. The install is a printed `sudo` step when the folder is not the
+  user's, and `--dry-run` shows it. It waits on the profile: while the
+  profile's file is not there and setup will not write it, the step is
+  `BLOCKED` and the copy the service runs is left alone. The package copy is unchanged in what it
+  does. `delivery-check` reads notmuch with the config the service's
+  wrapper bakes in, prints which file it read, and reports a wrapper with
+  none as a gap; `--profile PATH` compares it with the profile `message`
+  reads. (SM-1025)
+
+- **`message path`, `message list` and `message read`, and the shell
+  helpers (`mail-box.lib.sh`, `session-mail-wake`), now honour
+  `SESSIONMAIL_ROOT`**, the documented root variable, ahead of the legacy
+  `SESSION_MAIL_ROOT`. Before, they read only the legacy name, while send
+  and drop read both. (SM-910)
+
+- **The pager refuses once, plainly, on a platform with no
+  `select.kqueue`**, instead of a traceback. `pager listen` says one line
+  naming the platform and what is missing, writes no stamp, and exits 5
+  (new). The pager monitor says that line once; the PostToolBatch hook says
+  it in place of "not listening", once; the Stop hook no longer asks for a
+  re-arm that cannot work there; and `pager status`, `pager mute` and
+  `pager unmute` name no way to arm there. Where kqueue exists, nothing
+  changes.
+
+- **A seat with no memory yet is told so plainly, not "shipwreck".** On a
+  fresh seat (no `$<AGENT>_ROOT`, no `[ROOT]` minted), `memory ls`, `tree`
+  and `cat` now print one line, `memory: no memory yet for <agent>: no
+  [ROOT] from <agent> has been minted, and $<AGENT>_ROOT is not set`, and
+  exit 2 ("not found"; it was 1, which their tables call "usage"). The same
+  holds for `--index` and `memory run`'s default `ls /` item. The
+  "shipwreck path" line is now said only when the subject search finds a
+  root that the variable does not name (an old launcher). (SM-1023)
+
+### Security
+
+- **A `Supersedes:` takes effect only when it comes from the target's own
+  sender** (SM-973). The notmuch post-new hook used to tag the target of
+  any `Supersedes:` or `X-Supersedes:` header `superseded`, whoever sent
+  it, so a mail from an unrelated sender could hide another sender's atom
+  from every reader that trusts the tag (`tag:memory and not
+  tag:superseded`, the shipped `memory` named query). Now the carrier's
+  `From:` must equal the target's (the addr-spec, case-blind, the display
+  name ignored), in every file the index holds for the target. Otherwise
+  the target is left alone and the carrier is tagged `supersedes-refused`,
+  which is queryable and never re-read. A carrier whose target is not
+  indexed yet stays pending and is judged when it arrives; an index wipe
+  re-derives the same verdicts. 1a stops accidental cross-sender
+  supersedes; it does NOT stop a deliberate forger, who can copy a From.
+  Signed-only (1c) follows SM-970. Atoms an earlier cross-sender supersede
+  already hid stay hidden: the hook only adds tags, and their repair is
+  separate work.
+- **A `done` mark ends "unread", as a `read` does.** `message mark N done`
+  on mail you never opened used to leave it in `message list --unread`
+  for ever, and in the page's `N unread`. Both now ask one rule: a
+  message is unread until this session marks it `read` or `done`. The
+  footer says `marked done (--unread)` when it was dealt with unopened,
+  and `marked read (--unread)` whenever a read is among its marks.
+  `seen` is unchanged: paged is not opened. `mark ... done` over mail
+  that was unread now says so on stderr, `marked done: K, of which U were
+  unread`; the marks and the exit code are as before.
+- **`memory` and `message mark` no longer read a stale index after setup**
+  (SM-996). Nothing ran `notmuch new` after `message setup` built the empty
+  index, so `memory wake` RECENT showed no mail, `memory ls` found no root
+  and `message mark` said "no such message" about mail resting in the box.
+  The `memory` verbs now run `notmuch --config=<profile> new --no-hooks`
+  before they read, and `message mark` runs it once when an id is missing.
+  It is bounded by the new `notmuch.refresh` setting
+  (`SESSIONMAIL_NOTMUCH_REFRESH`, seconds, default 2; 0 turns it off).
+  At the bound it stops notmuch with SIGINT, which keeps what was indexed,
+  and the reader goes on with one line on stderr. Host mode only; nothing
+  is installed and no maildir file is moved or marked.
+- **A plain pane no longer reads the seat's box it inherited** (SM-998).
+  A tmux server started from inside a claude seat copies the seat's
+  environment into every pane, so `CLAUDE_CODE_AGENT`, the session ids and
+  `TM_AGENT_ADDRESS` all named the seat in a pane that runs under no claude,
+  and `pager`, `memory` and `message` read the seat's mail as the pane's
+  own. Now each of them first checks `CLAUDE_PID`, which claude sets to its
+  own pid in every child. When that pid is not this process or one of its
+  ancestors, those words (and `SESSION_SEAT`) are dropped, for the verb and
+  every script it starts. A process whose claude has exited is treated the
+  same way. With no `CLAUDE_PID`, or a process table that cannot be read,
+  nothing changes. `EMAIL` is untouched. A verb left with no identity says
+  why: `identity words inherited from claude pid N, which this process does
+  not run under`. PROPOSED spec:
+  `openspec/changes/inherited-identity/`.
+- **`memory wake` RECENT, and its closed-thread filter, list threads
+  addressed to every address of this seat** (SM-997), the session id
+  included. RECENT asked notmuch for `to:<box>` alone, so a wake of the seat
+  address never listed a letter sent To the session id, and a CLOSED marker
+  sent From the seat address never closed a thread on a wake of the
+  session-id box. Both now read the same set of names ADDRESSED reads, and
+  match them exactly as ADDRESSED matches: a letter counts only when its To
+  or Cc (a closing marker: its From) is exactly one of the seat's names. So
+  a sibling seat's mail does not show, nor mail To the same role on another
+  task, nor To a per-seat address that only contains this seat's. A wake of
+  another box still matches that box alone.
+- **`message send` to a short session id no longer relays the mail off
+  this host** (SM-885). A pane title shows only a session's first 8 hex, so
+  a seat types those 8 hex as the address. That went out to the mail host
+  as `<8 hex>@relay.home`, where no puller could take it, and the send said
+  exit 0. Now a To, Cc or Bcc on this host that is a strict prefix of a
+  session id (8 to 35 characters of `xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx`)
+  is resolved before anything else reads the address. If it starts exactly
+  one session box here, the full id is used (a display name and `+tag`
+  are kept) and stderr says so: in the receipt's notices for `--json` and
+  the MCP send. If it starts several, the send refuses, exit 3, and names
+  them. If it starts none, the send refuses, exit 3. In both refusals
+  nothing is submitted. An exact box by that name, such as a legacy 8-hex
+  box, is still sent to as itself. An address at another host
+  (`<8 hex>@otherhost`) goes unchanged, since that host's boxes cannot be seen
+  from here. This holds on both carriers, and a short id never takes the
+  bash sender named by `$SESSIONMAIL_SEND_ORACLE`. **A bare 8-hex id that
+  matches no local box now refuses (exit 3) and is no longer relayed;
+  this narrows the general delivery that 0.1.0 brought in. A full UUID
+  still relays.**
+- **Every verb that takes a BOX now takes a short session id too**
+  (SM-885). These are `message list`, `read`, `mark`, `verify`, `path`,
+  `box path`, `subscription list BOX`, `subscription add` and `remove`,
+  `memory wake`, `ls --box`, `tree --box` and `init`, and `pager listen
+  BOX`. A short id resolves by the same rule as the send. If it starts one
+  session box on this host, the verb uses that box and stderr names the
+  full id. If it starts several, or none, the verb refuses with its own
+  code for a box that is not there. An exact box by that name still wins.
+  `subscription add` stores the full id, because the map routes full names
+  only. `subscription remove` takes a name stored exactly as typed first.
+  `pager listen` refuses before its session box is born. In `read` and
+  `mark`, a short id as the first of two or more arguments is the BOX,
+  even when it is all digits. A lone argument is still an id.
+- **Every option that names a SESSION now takes a short session id**
+  (SM-885). These are `message subscription add`, `remove` and `list
+  --for WHO`, `pager focus --for SESSION` and `message receipt --session
+  SID`. A short id here is looked up among this host's session
+  directories, not its boxes. If it starts one, the verb uses that session
+  and stderr names the full id. If it starts several, or none, the verb
+  refuses with its own usage code. `--for WHO --seat` names a seat and is
+  never expanded. `subscription list --for` another session's short id
+  used to print it as `(this session)` with no box; it now roots the tree
+  at the full session, and the root says `(another session)` when it is
+  not yours. `message receipt` answers, text and `--json` alike, with the
+  full id.
+- **`box archive` and `box unarchive` take a box's full name only**
+  (SM-885). A move changes the maps, so a short session id is never
+  expanded there: one that starts full ids refuses, exit 3, naming them,
+  and nothing moves.
+
 ## [0.3.2] - 2026-10-28
 
 ### Added

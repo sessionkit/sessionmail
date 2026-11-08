@@ -134,7 +134,7 @@ class World:
         return (self.maps / "vmailbox").read_text()
 
     def rows(self, sid: str) -> list[str]:
-        return _archive.mailbox_keys(self.vmailbox(), sid)
+        return _archive.mailbox_keys(self.vmailbox(), sid, self.agents.name)
 
     def ledger(self) -> list[list[str]]:
         try:
@@ -175,7 +175,7 @@ def world(tmp_path, monkeypatch) -> World:
         monkeypatch.setenv("REAL_GEN", str(real))
     monkeypatch.setenv("WRAP_MAPS", str(maps))
     monkeypatch.setenv(_seat.GEN_VAR, str(wrap))
-    monkeypatch.setenv("SESSION_MAIL_ROOT", str(agents))
+    monkeypatch.setenv("SESSIONMAIL_ROOT", str(agents.parent))
     monkeypatch.setenv("SESSION_SIDECAR_DIR", str(cars))
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
     monkeypatch.delenv("NOTMUCH_CONFIG", raising=False)
@@ -537,6 +537,19 @@ def test_7_a_profile_config_is_checked_too(fleet):
     assert res.exit_code == 3 and str(prof) in res.stderr
 
 
+def test_7_a_kit_profile_config_is_checked_too(fleet):
+    """A fresh host's profile, under the kit's settings folder (SM-1021)."""
+    prof = (Path(os.environ["HOME"]) / ".sessionkit" / "mail" / "settings" / "notmuch"
+            / "work" / "config")
+    assert _archive.notmuch_configs(dict(os.environ)) == []
+    prof.parent.mkdir(parents=True)
+    prof.write_text(f"[database]\nmail_root={fleet.mail}\n")
+    assert prof in _archive.notmuch_configs(dict(os.environ))
+    res = fleet.archive_run("--apply")
+    assert res.exit_code == 3 and str(prof) in res.stderr
+    assert not fleet.archive.exists()
+
+
 # ── 8. re-checked before the move ──────────────────────────────────────────
 
 def test_8_a_file_written_between_listing_and_move_keeps_the_box(fleet):
@@ -705,8 +718,9 @@ def test_13_neither_git_nor_notmuch_is_ever_run(fleet):
 def test_bn1_mailbox_rows_match_the_value_exactly_never_a_substring():
     text = (f"ab@{HOST}\tagents/ab/\nab@{HOST}.{FQDN_TAIL}\tagents/ab/\n"
             f"abc@{HOST}\tagents/abc/\nx@{HOST}\tagents/store/ab/\n")
-    assert _archive.mailbox_keys(text, "ab") == [f"ab@{HOST}", f"ab@{HOST}.{FQDN_TAIL}"]
-    assert _archive.mailbox_keys(text, "a") == []
+    assert _archive.mailbox_keys(text, "ab", "agents") == [f"ab@{HOST}", f"ab@{HOST}.{FQDN_TAIL}"]
+    assert _archive.mailbox_keys(text, "a", "agents") == []
+    assert _archive.mailbox_keys(text, "ab", "stores") == [], "the folder is part of the value"
 
 
 def test_bn3_output_errors_never_abort_the_run(fleet, monkeypatch):

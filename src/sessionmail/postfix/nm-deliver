@@ -36,7 +36,7 @@
 #   delivered (insert rc 0; --keep keeps an unindexed file)     rc 0
 #   no map entry for the recipient    5.1.1 no mailbox mapping  rc 67  bounce
 #   map value not a safe maildir path 4.3.5                     rc 75  defer
-#   postconf/postmap/HOME/notmuch not usable                    rc 75  defer
+#   postconf/postmap/HOME/notmuch/baked config not usable       rc 75  defer
 #   insert failed, any non-zero rc    4.3.0 (rc N)              rc 75  defer
 #   insert ran past the timeout       4.4.1 index busy          rc 75  defer
 #
@@ -48,10 +48,19 @@
 # Environment. pipe(8) passes only export_environment (TZ MAIL_CONFIG LANG by
 # default) and sets PATH=/usr/bin:/bin. So: notmuch, postconf and postmap
 # are found by absolute path; HOME is set from the passwd entry of the uid
-# this runs as, never from the caller; notmuch finds its config at a default
-# path under that HOME (~/.notmuch-config). The NM_DELIVER_* variables below
+# this runs as, never from the caller. The NM_DELIVER_* variables below
 # exist for TESTS: pipe(8) never passes them unless an operator adds them to
 # export_environment.
+#
+# The notmuch config. `message setup` installs this file with the kit's
+# notmuch profile path baked into KIT_NOTMUCH_CONFIG below: the same file
+# `message` reads (`_index.profile_config`), absolute, resolved once at
+# install, never derived from HOME or XDG_* here. The installed copy exports
+# it as NOTMUCH_CONFIG before `notmuch insert`, and defers (4.3.0) when it is
+# not a file. In the PACKAGE copy the line is empty, and the wrapper runs
+# notmuch exactly as before: notmuch finds its config at its default path
+# under HOME (~/.notmuch-config). It is a plain assignment, never read from
+# the environment.
 
 # The first of each list that is executable, or the test override.
 pick() {
@@ -65,6 +74,11 @@ POSTCONF=${NM_DELIVER_POSTCONF:-$(pick /usr/sbin/postconf /opt/homebrew/sbin/pos
 POSTMAP=${NM_DELIVER_POSTMAP:-$(pick /usr/sbin/postmap /opt/homebrew/sbin/postmap /usr/local/sbin/postmap)}
 PERL=/usr/bin/perl
 TIMEOUT=${NM_DELIVER_TIMEOUT:-120}
+
+# The kit's notmuch config: EMPTY in the package copy. `message setup`
+# writes the installed copy with this ONE line set to a single-quoted
+# absolute path; nothing else in the file differs.
+KIT_NOTMUCH_CONFIG=
 
 # Every refusal drains the message first, so postfix never sees a broken
 # pipe, then prints ONE status line and exits with the sysexits code.
@@ -130,14 +144,16 @@ for key in "$rcpt" "$base@$domain" "@$domain"; do
 done
 [ -n "$value" ] || refuse 67 "5.1.1 <$rcpt>: no mailbox mapping"
 
-# The map value is a maildir relative to the mail root: under agents/, with
-# the trailing / that makes it a maildir for virtual(8). Anything else is an
-# operator fault: defer, so no mail is lost while the map is fixed.
+# The map value is a maildir relative to the mail root: under stores/ (or
+# agents/, the folder a tree born before the move keeps; the generator writes
+# whichever the tree has), with the trailing / that makes it a maildir for
+# virtual(8). Anything else is an operator fault: defer, so no mail is lost
+# while the map is fixed.
 value=$(printf '%s' "$value" | head -n 1)
 bad="4.3.5 nm-deliver: <$rcpt> maps to '$value', not a safe maildir path"
 case $value in
   /*|*//*|*/./*|*/../*|./*|../*) defer "$bad" ;;
-  agents/?*/) ;;
+  stores/?*/|agents/?*/) ;;
   *) defer "$bad" ;;
 esac
 case $value in *[!A-Za-z0-9._@+=/-]*) defer "$bad" ;; esac
@@ -148,6 +164,12 @@ HOME=$("$PERL" -e 'my $h = (getpwuid($<))[7]; print $h if defined $h' 2>/dev/nul
 [ -n "$HOME" ] && [ -d "$HOME" ] || defer "4.3.0 nm-deliver: no home directory for uid $(id -u)"
 export HOME
 cd "$HOME" || defer "4.3.0 nm-deliver: cannot cd to $HOME"
+if [ -n "$KIT_NOTMUCH_CONFIG" ]; then
+  [ -f "$KIT_NOTMUCH_CONFIG" ] \
+    || defer "4.3.0 nm-deliver: notmuch config $KIT_NOTMUCH_CONFIG (set at install) is not a file"
+  NOTMUCH_CONFIG=$KIT_NOTMUCH_CONFIG
+  export NOTMUCH_CONFIG
+fi
 case $TIMEOUT in ''|*[!0-9]*|0) TIMEOUT=120 ;; esac
 rm -f "$errf"
 trap - EXIT

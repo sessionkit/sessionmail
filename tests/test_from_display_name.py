@@ -87,9 +87,9 @@ def test_an_unusable_override_sends_bare_and_the_notice_rides_in_the_object(worl
 
 def _parent(world, box: str, delivered_to: str, mid: str) -> None:
     """One parent in BOX, the way test_message_send's `_parent` writes it. The
-    reply lookup reads $SESSION_MAIL_ROOT (the `replying` fixture sets that
+    reply lookup reads $SESSIONMAIL_ROOT (the `replying` fixture sets that
     spelling), so the world's root is named there too."""
-    d = world.tmp / "mail" / box
+    d = world.tmp / "mail" / "stores" / box
     for sub in ("new", "cur", "tmp"):
         (d / sub).mkdir(parents=True, exist_ok=True)
     (d / "new" / f"1.P1.{HOST}.{abs(hash(mid))}").write_text(
@@ -99,7 +99,7 @@ def _parent(world, box: str, delivered_to: str, mid: str) -> None:
 
 @pytest.fixture
 def replying(world, monkeypatch):
-    monkeypatch.setenv("SESSION_MAIL_ROOT", str(world.tmp / "mail"))
+    monkeypatch.setenv("SESSIONMAIL_ROOT", str(world.tmp / "mail"))
     monkeypatch.setenv("CLAUDE_CODE_SESSION_ID", SESSION)
     return world
 

@@ -78,9 +78,9 @@ def test_timeout_is_still_honoured_while_taskmaster_calls_it(tmp_path, monkeypat
     5.2 still prints `pager listen ... --timeout 15`, so removing the flag
     would leave every dispatch line it prints a usage error. Until 5.2
     lands, `--timeout S` (and `-t S`) returns 124 with nothing paged."""
-    root = tmp_path / "mail"
-    root.mkdir()
-    monkeypatch.setenv("SESSION_MAIL_ROOT", str(root))
+    root = tmp_path / "mail" / "stores"
+    root.mkdir(parents=True)
+    monkeypatch.setenv("SESSIONMAIL_ROOT", str(root.parent))
     monkeypatch.setenv("SESSIONMAIL_HOME", str(tmp_path / "home"))
     monkeypatch.setenv("CLAUDE_CODE_SESSION_ID", "sess-t")
     monkeypatch.setenv(pager.POLL_VAR, "0.05")

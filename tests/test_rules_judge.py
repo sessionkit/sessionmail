@@ -26,7 +26,7 @@ from datetime import datetime, timezone
 
 import pytest
 
-from sessionmail.rules import Facts, Layer, Me, Verdict, judge, parse
+from sessionmail.rules import Facts, Layer, Me, Verdict, built_in, judge, lint, parse
 
 SID = "5c802c34-f0da-2b67-c1f7-c062abd4433a"
 HOST = "hq.tailnet.example"
@@ -576,3 +576,62 @@ def test_me_on_a_nested_address_header_never_raises():
 def test_a_good_recipient_beside_a_malformed_one_is_still_read():
     facts = mail(("To", f"a@b@c, ivan@{HOST}"))
     assert facts.recipients() == (f"ivan@{HOST}",)
+
+
+#: SM-988: a session's rules in the shape that missed: two `carry` lines whose
+#: subject glob is a bracket CLASS for the name's case, above a catch-all
+#: `ride` for the heard box. The turn is shaped like the ears' mail: To and
+#: From `heard+room@<host>` (the keeper's box, `heard`, plus the device),
+#: the Subject the turn's own words (at most 69 characters, sent unshortened),
+#: Ears-* headers, no X-.
+SM988_RULES = (
+    "carry from:heard*@* subject:*[Aa]lice*\n"
+    "carry from:heard*@* subject:*[Aa]lise*\n"
+    "ride from:heard*@*\n"
+)
+SM988_TURN = (
+    ("From", f"Ears <heard+room@{HOST}>"),
+    ("To", f"heard+room@{HOST}"),
+    ("Subject", "Alice, can you check the release notes before tonight's cut"),
+    ("Ears-Kind", "spoken"),
+    ("Ears-Device", "room"),
+)
+
+
+def test_sm988_a_bracket_class_subject_glob_rides_and_lint_names_it():
+    """SM-988, the regression test (was repro-001's strict xfail). The engine
+    is RIGHT, as built: `[` is literal (build decision O-g), so
+    `subject:*[Aa]lice*` looks for the text `[aa]lice` and the turn falls to
+    `ride from:heard*@*`. What was wrong is that nothing said so: `lint`
+    now names both class lines, line and the glob that was meant."""
+    session = layer("session", SM988_RULES)
+    me = Me.of(session=SID, seat="alice", host=HOST)
+    got = judge(mail(*SM988_TURN), (session, built_in()), me, NOW)
+    assert (got.action, got.rule, got.line) == ("ride", "ride from:heard*@*", 3), got
+    warned = lint(session.rules)
+    assert [(w.source, w.line) for w in warned] == [("session", 1), ("session", 2)]
+    assert "write subject:*alice*" in warned[0].reason, warned[0]
+    assert "[Aa]" in warned[0].reason and "literal" in warned[0].reason
+    assert "case-insensitive" in warned[0].reason
+
+
+def test_sm988_the_glob_the_warning_names_carries_the_turn():
+    """The rule the warning tells its writer to write does what was meant."""
+    fixed = SM988_RULES.replace("*[Aa]lice*", "*alice*").replace("*[Aa]lise*", "*alise*")
+    session = layer("session", fixed)
+    me = Me.of(session=SID, seat="alice", host=HOST)
+    got = judge(mail(*SM988_TURN), (session, built_in()), me, NOW)
+    assert (got.action, got.carry, got.rule, got.line) == (
+        "wake", True, "carry from:heard*@* subject:*alice*", 1), got
+    assert lint(session.rules) == ()
+
+
+def test_sm988_a_bracketed_tag_still_matches_itself_and_is_not_warned():
+    """O-g kept: `subject:[draft]*` matches the subject `[draft] ...`, and
+    the tag is not class-shaped, so it draws no warning."""
+    session = layer("session", "wake subject:[draft]*\n")
+    got = judge(mail(("Subject", "[draft] notes for the cut")), (session,), ME, NOW)
+    assert (got.action, got.rule) == ("wake", "wake subject:[draft]*"), got
+    other = judge(mail(("Subject", "d notes")), (session,), ME, NOW)
+    assert other.rule is None, "[ is literal: never a class matching d, r, a, f or t"
+    assert lint(session.rules) == ()

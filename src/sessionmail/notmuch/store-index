@@ -11,8 +11,9 @@ Verbs:
 
   profile STORE [--mail-root DIR] [--force]
       Render notmuch-config.store.template into ~/.notmuch-config.STORE, and
-      write nothing else. mail_root defaults to ~/.mail/agents/STORE (Q2: one
-      parameter). Refuses, writing nothing, when
+      write nothing else. mail_root defaults to STORE under the boxes root
+      (`message path --boxes`: <mail root>/stores, or /agents on a tree born
+      before the move; Q2: one parameter). Refuses, writing nothing, when
         - mail_root holds no store marker (.tm-store), so a typo cannot
           index a random tree;
         - $XDG_CONFIG_HOME/notmuch/STORE/config exists: notmuch reads that
@@ -55,7 +56,7 @@ Verbs:
   environment (E14: an inherited NOTMUCH_DATABASE beats --config, and `new`
   would rewrite whatever database it names); the hook's NOTMUCH_CONFIG is the
   tag copy, and its PATH is launchd's. Neither writes a maildir file (R5,
-  SC5) or anything outside ~/.mail/.notmuch/stores/.
+  SC5) or anything outside <mail root>/.notmuch/stores/.
 
   count STORE
       SC1, made measurable: a file scan of mail_root, the index's
@@ -186,13 +187,47 @@ def dot_profile(store: str, env: dict[str, str]) -> Path:
     return home(env) / f".notmuch-config.{store}"
 
 
+def mail_root(env: dict[str, str]) -> Path:
+    """The mail root, by the package's order (`_maildir.mail_root`), inline:
+    $SESSIONMAIL_ROOT when set and non-empty (the one variable; it names the
+    root), else what `message path --root` prints (mail.json's `root`; this
+    tool imports nothing from sessionmail, so it asks), else the default,
+    ~/.sessionkit/mail. The retired $SESSION_MAIL_ROOT and $MAIL_ROOT are
+    never read. tests/test_root_vars.py pins this to the package's answer.
+    ENV is the whole world: an ENV with no PATH is an empty search path, as
+    in find_notmuch, never the host's (which(path=None) reads os.environ and
+    would ask the LIVE `message` for the LIVE root), so it takes ENV's own
+    default."""
+    given = env.get("SESSIONMAIL_ROOT")
+    if given:
+        return Path(os.path.expanduser(given))
+    exe = shutil.which("message", path=env.get("PATH", ""))
+    if exe:
+        try:
+            p = subprocess.run([exe, "path", "--root"], capture_output=True, text=True,
+                               env=dict(env), timeout=10)
+            if p.returncode == 0 and p.stdout.strip():
+                return Path(p.stdout.strip())
+        except (OSError, subprocess.SubprocessError):
+            pass
+    return home(env) / ".sessionkit" / "mail"
+
+
+def boxes_dir(root: Path) -> Path:
+    """`<root>/stores`, except `<root>/agents` while only that one is a
+    directory: an old tree keeps its name (`_maildir.boxes_name`, inline)."""
+    if not (root / "stores").is_dir() and (root / "agents").is_dir():
+        return root / "agents"
+    return root / "stores"
+
+
 def stores_dir(env: dict[str, str]) -> Path:
     """Where every store's database lives: derived, never committed (R1)."""
-    return home(env) / ".mail" / ".notmuch" / "stores"
+    return mail_root(env) / ".notmuch" / "stores"
 
 
 def default_mail_root(store: str, env: dict[str, str]) -> Path:
-    return home(env) / ".mail" / "agents" / store
+    return boxes_dir(mail_root(env)) / store
 
 
 def check_store(store: str) -> None:
@@ -783,7 +818,7 @@ def main(argv: list[str] | None = None, env: dict[str, str] | None = None) -> in
     p = verbs.add_parser("profile", help="render the store's notmuch profile")
     p.add_argument("store", metavar="STORE")
     p.add_argument("--mail-root", metavar="DIR",
-                   help="the store's maildir tree (default: ~/.mail/agents/STORE)")
+                   help="the store's maildir tree (default: STORE under `message path --boxes`)")
     p.add_argument("--force", action="store_true",
                    help="replace an existing profile that differs")
     b = verbs.add_parser("build", help="build the store's index afresh, then swap it in")

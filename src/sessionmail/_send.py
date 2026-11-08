@@ -43,7 +43,8 @@ def guard_on(env: dict[str, str] | None = None) -> bool:
 
 
 #: The seat's switch for the subject shortener. It can only turn it
-#: OFF; ON is the host's.
+#: OFF; ON is the tool's default, and only the host's locked file turns it
+#: off for the whole host.
 SHORTEN_VAR = "SESSIONMAIL_SUBJECT_SHORTEN"
 
 
@@ -53,9 +54,10 @@ def shorten_on(env: dict[str, str] | None = None, *, no_shorten: bool = False,
     was set and ignored). The layers, highest first: the flag
     `--no-shorten` / `no_shorten` turns it OFF for one mail; the seat
     variable turns it OFF (`off`, `0`, `no`) and can do nothing else; then
-    the host's locked file (`set subject-shorten on`); then the tool's
-    default, OFF. SETTINGS is a `rules.Settings`, read from the locked file
-    when not given - and read only when the two layers above it said nothing."""
+    the host's locked file (`set subject-shorten off` turns it OFF, `on`
+    says the default aloud); then the tool's default, ON (no line, None).
+    SETTINGS is a `rules.Settings`, read from the locked file when not given
+    - and read only when the two layers above it said nothing."""
     if no_shorten:
         return False, ""
     env = os.environ if env is None else env
@@ -63,11 +65,11 @@ def shorten_on(env: dict[str, str] | None = None, *, no_shorten: bool = False,
     if raw in _OFF:
         return False, ""
     note = (f"ignoring ${SHORTEN_VAR}={raw!r} - a seat can only turn the subject "
-            f"shortener off; the host switch turns it on" if raw else "")
+            f"shortener off; it is on unless the host's locked file says off" if raw else "")
     if settings is None:
         from . import rules   # deferred: this door module imports nothing at load
         settings = rules.read_settings()
-    return bool(settings.subject_shorten), note
+    return settings.subject_shorten is not False, note
 
 
 def shorten_max(settings=None, errors=None) -> tuple[int, list[str]]:

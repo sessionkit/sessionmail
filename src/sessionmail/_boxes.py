@@ -3,7 +3,7 @@
 `openspec/changes/message-subscriptions`, tasks 3.1: `message
 box list` lists seat, project and store boxes, each row naming its
 subscribers; session-id boxes only on request (they were 2,007 of 2,845
-under `~/.mail/agents` on one measured host, and 2,202 of 2,993 later).
+under the boxes root on one measured host, and 2,202 of 2,993 later).
 
 The walk is the mailbox map's (`postfix/vmailbox-gen`, `generate()`): a
 directory under the root is a flat box; a directory holding the store
@@ -20,6 +20,7 @@ nothing else. It opens no message and writes nothing.
 
 from __future__ import annotations
 
+import os
 import re
 from dataclasses import dataclass, field
 from fnmatch import fnmatchcase
@@ -273,6 +274,199 @@ def listing(root: Path, *, live: Iterable[str], home: Path | None = None) -> lis
     return boxes
 
 
-__all__ = ["Box", "KINDS", "OWNER_CHARS", "Routed", "STORE_MARKER", "attach", "is_session_id",
-           "listing", "live_sessions", "matches", "owner_kept", "refusal", "routed", "row",
+# ── the short session id: ONE resolver for every verb ───────────────────────
+#
+# A pane title shows a session's first 8 hex, so a seat types that. Every
+# verb used to look the token up as an exact NAME, and the send relayed a
+# miss off-host. This is the one place a short form is expanded: at the
+# EDGE, by each verb's door, never inside `_maildir.resolve_box` (whose
+# internal callers pass names taken from mail headers and the environment).
+# The bash `mail_box_resolve` step 4 keeps its own rule (rule 1 there:
+# "Expansion happens once, here, at the edge").
+
+#: The shortest prefix expanded: what a pane title shows. Below it, a short
+#: all-hex seat name (`faded`, `decade`) could be captured, and 4 hex collide
+#: by the birthday bound on a host with thousands of boxes.
+SHORT_MIN = 8
+
+#: The shape a full session id has; a short form is a STRICT prefix of it.
+UUID_TEMPLATE = "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+
+#: A full session id, and nothing else: the only names a short form expands to.
+FULL_ID = re.compile(r"[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}", re.IGNORECASE)
+
+#: How many candidates an ambiguous refusal names before `…, N in all`
+#: (sessiontools' AMBIGUOUS_SHOW).
+AMBIGUOUS_SHOW = 10
+
+SOURCES = ("box", "session")
+
+
+def short_form(token: str) -> str | None:
+    """TOKEN lowercased when it is a STRICT prefix, SHORT_MIN to 35
+    characters, of UUID_TEMPLATE (hex where it has `x`, `-` where it has
+    `-`); else None. A full id is not a short form: it is exact or nothing."""
+    if not SHORT_MIN <= len(token) < len(UUID_TEMPLATE):
+        return None
+    low = token.lower()
+    for ch, want in zip(low, UUID_TEMPLATE):
+        if want == "-" and ch != "-":
+            return None
+        if want == "x" and ch not in "0123456789abcdef":
+            return None
+    return low
+
+
+@dataclass(frozen=True)
+class Resolved:
+    """What a door uses from here on. VALUE is the input, or the input with
+    the full id spliced in for the short form (display name, `+tag` and any
+    `@domain` kept). FULL is the full id when one was expanded, else "".
+    NOTE is the one stderr line when expanded, else ""; it carries no
+    program name, so each door prefixes its own."""
+
+    value: str
+    full: str = ""
+    note: str = ""
+
+
+class Unresolved(Exception):
+    """A short form this host cannot expand: WHY is "ambiguous" (CANDIDATES,
+    sorted, are every full id it starts) or "none" (no candidate). TOKEN is
+    the short form as typed."""
+
+    def __init__(self, token: str, candidates: list[str], why: str, source: str = "box"):
+        self.token, self.candidates, self.why, self.source = token, sorted(candidates), why, source
+        super().__init__(refusal_text(self))
+
+
+def _address_parts(value: str) -> tuple[int, int, str]:
+    """(start, end, addr): where the address sits in VALUE, the innermost
+    `<...>` when there is one (`_sender.addr_spec`'s rule), else all of it."""
+    i = value.rfind("<")
+    j = value.find(">", i + 1) if i != -1 else -1
+    if i != -1 and j != -1:
+        return i + 1, j, value[i + 1:j]
+    return 0, len(value), value
+
+
+def short_of(value: str) -> str | None:
+    """The short form (`short_form`) VALUE's address carries in the base of
+    its local part, or None: `Gc <c0ffee01+ext@host>` -> `c0ffee01`."""
+    local = _address_parts(value)[2].partition("@")[0]
+    return short_form(local.partition("+")[0])
+
+
+def _sessions_root(env) -> Path | None:
+    """sessiontools' sessions leaf (`$SESSIONS_DIR`, else its old or new
+    folder by its leaf rule), or None when it cannot say. The ONE session-dir
+    resolver every sessionmail reader uses, `_layer.sessions_root`:
+    never mail's own state leaf, never a spelled `~/.session` or
+    `~/.sessionmail`. Imported here: `_layer` loads sessiontools' settings
+    submodule only when asked."""
+    try:
+        from . import _layer
+        return _layer.sessions_root(env)
+    except Exception:          # a resolver never fails on the harness
+        return None
+
+
+def _exact(base: str, source: str, env) -> bool:
+    """Whether BASE already names something exactly: an exact name wins
+    before any expansion (a legacy 8-hex box, a session dir by that name)."""
+    if source == "session":
+        where = _sessions_root(env)
+        return where is not None and (where / base).is_dir()
+    from . import _maildir
+    try:
+        _maildir.resolve_box(base, None if env is None else dict(env))
+    except _maildir.NoSuchBox:
+        return False
+    return True
+
+
+def starting(short: str, where: Path, *, maildirs: bool = True) -> list[str]:
+    """Every name directly under WHERE that is a full id starting with SHORT
+    (a `short_form`), sorted: a MAILDIR, or with MAILDIRS false any
+    directory. Reads only; a WHERE that cannot be read has none."""
+    check = _is_maildir if maildirs else Path.is_dir
+    out: list[str] = []
+    try:
+        with os.scandir(where) as it:
+            for e in it:
+                low = e.name.lower()
+                if low.startswith(short) and FULL_ID.fullmatch(e.name) and check(Path(e.path)):
+                    out.append(e.name)
+    except OSError:
+        return []
+    return sorted(out)
+
+
+def _candidates(short: str, source: str, env) -> list[str]:
+    """Every full id under SOURCE's root that starts with SHORT: a flat
+    MAILDIR named by a full id (`source="box"`; session boxes are always
+    flat, see `walk`), or a session directory (`source="session"`)."""
+    if source == "session":
+        where = _sessions_root(env)
+        return [] if where is None else starting(short, where, maildirs=False)
+    from . import _maildir
+    return starting(short, _maildir.root(env))
+
+
+def resolve_session(value: str, *, source: str = "box", env=None) -> Resolved:
+    """VALUE with a short session id expanded to the one full id it starts,
+    on THIS host. Pure: no stderr, no writes.
+
+    VALUE is a box name or an address: `c0ffee01`, `c0ffee01+notes`,
+    `Gc <c0ffee01+ext>`, `c0ffee01@host`. Only the base of the local part
+    is expanded; the rest is kept. Whether an `@domain` is this host's is
+    the CALLER's call (the send asks `_sender.is_local` first): a box on
+    another host cannot be seen from here.
+
+    In order: a base that is not a short form (`short_form`) comes back
+    unchanged; so does one that already names something exactly; one
+    candidate is spliced in, with a note; more than one, or none, raises
+    Unresolved. SOURCE picks the candidates: "box", the flat full-id
+    maildirs under the mail root; "session", sessiontools' session dirs."""
+    if source not in SOURCES:
+        raise ValueError(f"not a source: {source!r}")
+    start, end, addr = _address_parts(value)
+    local, at, domain = addr.partition("@")
+    base, plus, tag = local.partition("+")
+    short = short_form(base)
+    if short is None:
+        return Resolved(value)
+    if _exact(base, source, env) or (short != base and _exact(short, source, env)):
+        return Resolved(value)
+    found = _candidates(short, source, env)
+    if len(found) != 1:
+        raise Unresolved(base, found, "ambiguous" if found else "none", source)
+    full = found[0]
+    new = f"{full}{plus}{tag}{at}{domain}"
+    kind = "session box" if source == "box" else "session"
+    note = (f"{base!r} is session {full} (the only {kind} on this host that starts "
+            f"with it)")
+    return Resolved(value[:start] + new + value[end:], full, note)
+
+
+def refusal_text(u: Unresolved, prog: str = "") -> str:
+    """The ONE wording of a short id that does not resolve, for every door.
+    PROG, when given, leads the line (`message list: ...`)."""
+    lead = f"{prog}: " if prog else ""
+    kind, kinds = (("session box", "session boxes") if u.source == "box"
+                   else ("session", "sessions"))
+    if u.why == "ambiguous":
+        shown = ", ".join(u.candidates[:AMBIGUOUS_SHOW])
+        more = (f", … {len(u.candidates)} in all" if len(u.candidates) > AMBIGUOUS_SHOW else "")
+        return (f"{lead}{u.token!r} is ambiguous: it starts {len(u.candidates)} {kinds} "
+                f"on this host ({shown}{more}); name one in full")
+    return (f"{lead}{u.token!r} looks like a short session id, and no {kind} on this host "
+            f"starts with it. A short id is resolved on THIS host only and never relayed: "
+            f"for a session on another host, use its full id")
+
+
+__all__ = ["AMBIGUOUS_SHOW", "Box", "FULL_ID", "KINDS", "OWNER_CHARS", "Resolved", "Routed",
+           "SHORT_MIN", "SOURCES", "STORE_MARKER", "UUID_TEMPLATE", "Unresolved", "attach",
+           "is_session_id", "listing", "live_sessions", "matches", "owner_kept", "refusal",
+           "refusal_text", "resolve_session", "routed", "row", "short_form", "short_of", "starting",
            "walk"]

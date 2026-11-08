@@ -456,24 +456,32 @@ mail_box_resolve() {
   return 1
 }
 
-# mail_box_env_root — the agents root the ENVIRONMENT names, on stdout:
-# $SESSIONMAIL_ROOT, else the older $SESSION_MAIL_ROOT (each only when set and
-# non-empty), else ~/.mail/agents; a leading `~/` is $HOME. The SAME order as
-# the package's `_maildir.env_root`, inline because a bash rail
-# cannot import Python; tests/test_root_vars.py pins the two to one answer.
-# The settings file's `root` key is NOT read here: it is JSON, and this rail
-# stays dependency-free. Python's `_maildir.root` reads it after the variables.
-# rc 1, nothing printed, when the root needs $HOME and HOME is unset or empty:
-# `${HOME:-}`, never a bare `$HOME`, because under the CLI's `set -u` a bare
-# `$HOME` with HOME unset aborts bash ("HOME: unbound variable", rc 1) before
-# the CLI can refuse.
+# mail_box_env_root — the BOXES root, on stdout, by the package's order
+# (`_maildir.root`), inline because a bash rail cannot import Python:
+#   1. the mail root: $SESSIONMAIL_ROOT when set and non-empty (the ONE
+#      variable; it names the root; a leading `~/` is $HOME); else what
+#      `message path --root` prints (mail.json's `root`, JSON this rail does
+#      not read; asked only when `message` is on PATH); else the default,
+#      ~/.sessionkit/mail. The retired $SESSION_MAIL_ROOT and $MAIL_ROOT are
+#      never read.
+#   2. the boxes folder under it: stores/, except agents/ while only that one
+#      is a directory (an old tree keeps its name; `_maildir.boxes_name`).
+# tests/test_root_vars.py pins this, the wake script and the package to one
+# answer. rc 1, nothing printed, when the root needs $HOME and HOME is unset
+# or empty: `${HOME:-}`, never a bare `$HOME`, because under the CLI's `set
+# -u` a bare `$HOME` with HOME unset aborts bash ("HOME: unbound variable",
+# rc 1) before the CLI can refuse.
 mail_box_env_root() {
-  local r="${SESSIONMAIL_ROOT:-${SESSION_MAIL_ROOT:-}}" h="${HOME:-}"
+  local r="${SESSIONMAIL_ROOT:-}" h="${HOME:-}"
   case "$r" in
-    "") [ -n "$h" ] || return 1; r="$h/.mail/agents" ;;
     \~) [ -n "$h" ] || return 1; r="$h" ;;   # a LITERAL tilde, escaped: the value is a string
     \~/*) [ -n "$h" ] || return 1; r="$h/${r#\~/}" ;;
   esac
+  if [ -z "$r" ] && command -v message >/dev/null 2>&1; then
+    r="$(message path --root 2>/dev/null)" || r=""
+  fi
+  if [ -z "$r" ]; then [ -n "$h" ] || return 1; r="$h/.sessionkit/mail"; fi
+  if [ ! -d "$r/stores" ] && [ -d "$r/agents" ]; then r="$r/agents"; else r="$r/stores"; fi
   printf '%s\n' "$r"
 }
 
@@ -487,7 +495,7 @@ mail_box_env_root() {
 # refuses (rc 2) when no root can be built: no [root], no root variable, no HOME.
 if [ "${BASH_SOURCE[0]:-$0}" = "$0" ]; then
   set -uo pipefail
-  _mbl_no_root="mail-box.lib.sh: no root — pass one, or set SESSIONMAIL_ROOT (or the older SESSION_MAIL_ROOT) or HOME"
+  _mbl_no_root="mail-box.lib.sh: no root — pass one, or set SESSIONMAIL_ROOT or HOME"
   [ $# -ge 1 ] || { echo "mail-box.lib.sh: usage: mail-box.lib.sh <name> [root] | --env-root" >&2; exit 2; }
   if [ "$1" = "--env-root" ]; then
     mail_box_env_root || { echo "$_mbl_no_root" >&2; exit 2; }

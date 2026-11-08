@@ -26,6 +26,8 @@ import subprocess
 from pathlib import Path
 
 import pytest
+
+import _leaves
 from test_mail_guard import guard
 from test_mail_guard_subagent import ALLOW as BASH_ALLOW
 from test_mail_guard_subagent import DENY as BASH_DENY
@@ -201,7 +203,7 @@ def test_every_one_of_the_26_on_the_main_thread_is_exit_0_and_silent(name):
 
 def test_the_main_thread_is_not_logged(tmp_path):
     """Allowed at once: nothing is read, nothing is written."""
-    log = Path(os.environ["HOME"], ".session", "sessions", SESSION, "log", "mail", "pager.jsonl")
+    log = _leaves.session_dir(SESSION) / "log" / "mail" / "pager.jsonl"
     before = log.read_text() if log.exists() else None
     for _, tool, tool_input in DENY:
         run(tool, tool_input, subagent=False)
@@ -275,8 +277,7 @@ def test_the_bash_deny_text_is_unchanged():
 def test_the_deny_is_logged_like_any_other():
     """SM-518: an MCP deny gets the same row, naming the blocked tool."""
     run("pager_stop", {}, subagent=True)
-    rows = Path(os.environ["HOME"], ".session", "sessions", SESSION,
-                "log", "mail", "pager.jsonl").read_text().splitlines()
+    rows = (_leaves.session_dir(SESSION) / "log" / "mail" / "pager.jsonl").read_text().splitlines()
     row = json.loads(rows[-1])
     assert row["via"] == "pretooluse-deny" and row["sid"] == SESSION
     assert row["blocked_tool"] == full("pager_stop")

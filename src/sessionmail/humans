@@ -7,7 +7,7 @@
 #
 # ADDING A HUMAN IS EDITING THIS FILE — never a code change, never a
 # reinstall. This shipped copy is the FINAL fallback; a deployment overrides
-# it with $SESSIONMAIL_ROOT/.humans (beside the mail boxes — DOT-PREFIXED so
+# it with <boxes root>/.humans (beside the mail boxes — DOT-PREFIXED so
 # no address can ever spell it and no mailbox can ever collide with it, RFC
 # 5321 §4.1.2), and tests point $SESSIONMAIL_HUMANS at a
 # temp file. (The old SESSION_MAIL_* spellings are read too, for one release.)

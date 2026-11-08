@@ -21,6 +21,7 @@ from pathlib import Path
 
 import pytest
 
+import _leaves
 from _seatmap import (session_declare, session_log, session_map_path, session_subscribe,
                       session_values)
 from sessionmail import _migrate, _subscription as sub
@@ -57,11 +58,12 @@ def test_box_files_and_the_address_become_keys_and_the_files_go():
     assert {(s, x) for s, x, _ in r.session_moved} == {(LIVE, "atomnote"),
                                                        (LIVE, "work/demo")}
     assert [(s, x) for s, x, _ in r.addresses] == [(LIVE, "sessionmail+sm-1.foreman")]
-    assert session_values(LIVE) == {"subscriptions": {"atomnote": True,
+    # the migrate writes the layer sessiontools names (the pinned leaf)
+    assert _leaves.session_values(LIVE) == {"subscriptions": {"atomnote": True,
                                                       "work/demo": True},
                                     "address": "sessionmail+sm-1.foreman"}
     assert not a.exists() and not b.exists() and not addr.exists() and q.is_file()
-    log = {x["key"]: x for x in session_log(LIVE)}
+    log = {x["key"]: x for x in _leaves.session_log(LIVE)}
     assert log["subscriptions.atomnote"]["why"].startswith(f"migrated from {a}")
     assert "why: the build" in log["subscriptions.atomnote"]["why"]
     assert log["address"]["value"] == "sessionmail+sm-1.foreman"

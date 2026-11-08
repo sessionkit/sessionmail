@@ -22,3 +22,5 @@
 # The PRIVATE half of the sig_v2 TEST key only: the `.pub` beside it ships, and
 # no test needs the private half (make_vectors.py, which does, says so and exits).
 /tests/fixtures/sig_v2/sessionmail-sig-TEST-VECTORS-ONLY export-ignore
+# CHANGELOG.md: every branch adds a bullet under [Unreleased]; union keeps both.
+CHANGELOG.md merge=union

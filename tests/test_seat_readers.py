@@ -274,13 +274,13 @@ def test_a_bad_byte_no_longer_raises_out_of_message_list_unread(tmp_path, monkey
     5b7ec49: `_seat.read_marks` on this file raised. Now the `read` mark is
     honoured and the message is hidden as read."""
     sid = "5e55a0de-0000-4000-8000-000000000019"
-    mail = tmp_path / "mail"
+    mail = tmp_path / "mail" / "stores"
     for d in ("tmp", "new", "cur"):
         (mail / sid / d).mkdir(parents=True)
     (mail / sid / "new" / "1923171201.M1P1.test").write_text(
         "From: beta@example.invalid\nTo: alpha@example.invalid\nSubject: hello\n"
         "Message-ID: <bad1@x.invalid>\n\nbody\n")
-    monkeypatch.setenv("SESSION_MAIL_ROOT", str(mail))
+    monkeypatch.setenv("SESSIONMAIL_ROOT", str(mail.parent))
     monkeypatch.setenv("SESSIONMAIL_HOME", str(tmp_path / "sessionmail"))
     monkeypatch.setenv("CLAUDE_CODE_SESSION_ID", sid)
     monkeypatch.delenv("TM_AGENT_ADDRESS", raising=False)

@@ -22,8 +22,21 @@ Host mode's profile NAME is `$SESSIONMAIL_NOTMUCH_PROFILE` when set and not
 empty, else the `notmuch.profile` key in mail.json, else `sessionkit`
 (`_settings.setting`, the one reader). notmuch's own variables never choose
 it: a stranger may export `NOTMUCH_PROFILE` or `NOTMUCH_CONFIG` for their
-own mail. The file is found as in store mode's step 1, below. No file is a
-refusal naming the profile and the paths tried; `message setup` writes it.
+own mail. The FILE is host mode's own (`host_profile_file`), and an old
+file wins while it is real (the kit's rule for a leaf that moved):
+
+1. `$XDG_CONFIG_HOME/notmuch/<name>/config`, when it is a file;
+2. else `~/.notmuch-config.<name>`, when it is a file;
+3. else the kit's own, `~/.sessionkit/mail/settings/notmuch/<name>/config`
+   (`kit_profile_config`, off HOME only, never XDG_CONFIG_HOME).
+
+"Real" (rules 1-2) is a file, symlinks followed, that is not the same file
+as the kit's (`os.path.samefile`): a move that leaves a link at the old path
+hands over to the new one. Old and new both real: old is read, new never
+(stranded, never merged). Nothing is moved, copied or migrated. No file is
+a refusal naming the profile and the three paths tried; `message setup`
+writes the kit's path, so a fresh host has nothing under `~/.config/notmuch`
+or `~/.notmuch-config.*`. Store mode below keeps notmuch's own order.
 
 Store mode resolves the profile in this order:
 
@@ -124,18 +137,67 @@ def candidates(profile: str, env: dict[str, str] | None = None) -> tuple[Path, P
     return xdg / "notmuch" / profile / "config", home / f".notmuch-config.{profile}"
 
 
+def kit_profiles(env: dict[str, str] | None = None) -> Path:
+    """`$HOME/.sessionkit/mail/settings/notmuch`: the folder holding host
+    mode's kit profiles, one `<profile>/config` each, under the kit's
+    settings folder (`_settings.DIR`). HOME only, read from ENV at call
+    time, the way every kit path is: XDG_CONFIG_HOME never moves it."""
+    env = os.environ if env is None else env
+    from . import _settings          # here, not at import: _settings is the higher layer
+    return _settings._home(env) / _settings.DIR / "notmuch"
+
+
+def kit_profile_config(profile: str = SESSIONKIT_PROFILE,
+                       env: dict[str, str] | None = None) -> Path:
+    """`$HOME/.sessionkit/mail/settings/notmuch/<profile>/config`: host
+    mode's NEW profile path (`kit_profiles`), where `message setup` writes
+    a profile when no old one is real."""
+    return kit_profiles(env) / profile / "config"
+
+
+def _same(a: Path, b: Path) -> bool:
+    """A and B are one file, symlinks followed (`[ A -ef B ]`)."""
+    try:
+        return os.path.samefile(a, b)
+    except (OSError, ValueError):
+        return False
+
+
+def host_profile_file(profile: str, env: dict[str, str] | None = None
+                      ) -> tuple[Path | None, tuple[str, ...]]:
+    """(host mode's file for PROFILE, the paths tried): an old file while it
+    is real (the XDG file, then the dot file: a file, symlinks followed,
+    that is not the kit's file), else the kit's file when it is one, else
+    None. HOST mode only: store mode keeps `profile_file`, notmuch's own
+    order. A file test, never `notmuch config get` (E5)."""
+    new = kit_profile_config(profile, env)
+    tried: list[str] = []
+    for old in candidates(profile, env):
+        if os.path.isfile(old) and not _same(old, new):
+            return old, tuple(tried)
+        tried.append(str(old))
+    if os.path.isfile(new):
+        return new, tuple(tried)
+    tried.append(str(new))
+    return None, tuple(tried)
+
+
 def profile_config(profile: str = SESSIONKIT_PROFILE, env: dict[str, str] | None = None
                    ) -> Path:
-    """`$XDG_CONFIG_HOME/notmuch/<profile>/config`: the path to WRITE a
-    profile to. HOME and XDG_CONFIG_HOME are read from ENV (default
-    `os.environ`) at call time."""
-    return candidates(profile, env)[0]
+    """Host mode's profile path, to READ and to WRITE: the file
+    `host_profile_file` finds (an old one while it is real), else the
+    kit's, `kit_profile_config`, where `message setup` writes a new one.
+    HOME and XDG_CONFIG_HOME are read from ENV (default `os.environ`) at
+    call time."""
+    found, _tried = host_profile_file(profile, env)
+    return found if found is not None else kit_profile_config(profile, env)
 
 
 def profile_file(profile: str, env: dict[str, str] | None = None
                  ) -> tuple[Path | None, tuple[str, ...]]:
-    """(the file PROFILE names, the paths tried). The file is None when
-    neither exists. A file test, never `notmuch config get` (E5)."""
+    """(the file PROFILE names, the paths tried), in notmuch's own order
+    (`candidates`): STORE mode's lookup, and store-index's. The file is
+    None when neither exists. A file test, never `notmuch config get` (E5)."""
     tried: list[str] = []
     for path in candidates(profile, env):
         if path.is_file():
@@ -236,7 +298,7 @@ def _host(env: dict[str, str]) -> Resolved:
         return Resolved(mode=HOST, via=via, refusal=(
             f"no notmuch profile for this host: {json.dumps(name)} ({via}) is not a "
             f"profile: {why}. The default notmuch config is never read"))
-    path, tried = profile_file(name, env)
+    path, tried = host_profile_file(name, env)
     if path is None:
         return Resolved(mode=HOST, profile=name, via=via, tried=tried, refusal=(
             f'no notmuch profile for this host: profile "{name}" ({via}) has no file; '
@@ -332,6 +394,9 @@ __all__ = [
     "child_env",
     "clear_cache",
     "host_profile",
+    "host_profile_file",
+    "kit_profile_config",
+    "kit_profiles",
     "mode",
     "oracle_env",
     "profile_config",

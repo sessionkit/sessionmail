@@ -9,7 +9,7 @@ like mail)"* half, which is 3.2a's text view.
 
 Hermetic: the pure half builds messages from bytes with an explicit ENV,
 never the box's hostname. The scoop half runs `pager status --new` in a
-scratch SESSIONMAIL_HOME and SESSION_MAIL_ROOT under tmp_path, with a fake
+scratch SESSIONMAIL_HOME and SESSIONMAIL_ROOT under tmp_path, with a fake
 notmuch. Nothing touches ~/.mail, ~/.sessionmail, the real index or a live
 `pager listen`. The keeper's host is the synthetic `hq`, set by env, as
 test_voice_recognition.py sets it.
@@ -313,8 +313,8 @@ def _box(root, name: str, count: int, cur_every: int = 3) -> list[str]:
 
 def test_the_row_is_the_index_message_list_prints(tmp_path, monkeypatch):
     from sessionmail import _maildir
-    monkeypatch.setenv("SESSION_MAIL_ROOT", str(tmp_path))
-    names = _box(tmp_path, "sess-a", 30)
+    monkeypatch.setenv("SESSIONMAIL_ROOT", str(tmp_path))
+    names = _box(tmp_path / "stores", "sess-a", 30)
     listed = _maildir.enumerate_box("sess-a")
     for n in (names[0], names[11], names[-1]):
         box, row = _views.locate(n, ["sess-a"])
@@ -323,9 +323,9 @@ def test_the_row_is_the_index_message_list_prints(tmp_path, monkeypatch):
 
 
 def test_the_pointer_names_the_box_when_it_is_not_the_default(tmp_path, monkeypatch):
-    monkeypatch.setenv("SESSION_MAIL_ROOT", str(tmp_path))
-    _box(tmp_path, "sess-a", 2)
-    names = _box(tmp_path, "alpha", 5)
+    monkeypatch.setenv("SESSIONMAIL_ROOT", str(tmp_path))
+    _box(tmp_path / "stores", "sess-a", 2)
+    names = _box(tmp_path / "stores", "alpha", 5)
     assert _views.pointer(names[3], "4@example.invalid", "sess-a", ("alpha",)) == "alpha 4"
     assert _views.pointer("9.M9P9.gone", "g@example.invalid", "sess-a", ("alpha",)) \
         == "g@example.invalid"
@@ -338,8 +338,8 @@ def test_a_pointer_by_id_is_a_command_a_shell_can_run(tmp_path, monkeypatch):
     import shlex
     import subprocess
     from sessionmail import message
-    monkeypatch.setenv("SESSION_MAIL_ROOT", str(tmp_path))
-    _box(tmp_path, "sess-a", 1)
+    monkeypatch.setenv("SESSIONMAIL_ROOT", str(tmp_path))
+    _box(tmp_path / "stores", "sess-a", 1)
     for mid in ("g@example.invalid", "<g@example.invalid>"):
         p = _views.pointer("9.M9P9.gone", mid, "sess-a")
         assert p == "g@example.invalid"
@@ -354,8 +354,8 @@ def test_a_control_in_a_senders_message_id_never_reaches_the_pointer(tmp_path, m
     sender's words, so every control is dropped from it - an ESC (and the
     CSI it would start) never reaches the pointer. An ordinary id comes
     through unchanged, and stays a command a shell can run."""
-    monkeypatch.setenv("SESSION_MAIL_ROOT", str(tmp_path))
-    _box(tmp_path, "sess-a", 1)
+    monkeypatch.setenv("SESSIONMAIL_ROOT", str(tmp_path))
+    _box(tmp_path / "stores", "sess-a", 1)
     ordinary = "2000000000.11111.11111@hq.session-mail"
     assert _views.pointer("9.M9P9.gone", f"<{ordinary}>", "sess-a") == ordinary
     evil = "<g\x1b[2J\x1b]0;pwn\x07\x9b31m@example.invalid>"
@@ -382,8 +382,8 @@ def test_a_pointer_is_shell_quoted_and_round_trips(tmp_path, monkeypatch, mid):
     read` EXACTLY the id. Proven with `shlex.split` (POSIX shell word
     splitting); the payload is never given to a real shell."""
     import shlex
-    monkeypatch.setenv("SESSION_MAIL_ROOT", str(tmp_path))
-    _box(tmp_path, "sess-a", 1)
+    monkeypatch.setenv("SESSIONMAIL_ROOT", str(tmp_path))
+    _box(tmp_path / "stores", "sess-a", 1)
     for given in (mid, f"<{mid}>"):
         p = _views.pointer("9.M9P9.gone", given, "sess-a")
         assert shlex.split(f"message read {p}") == ["message", "read", mid]
@@ -392,8 +392,8 @@ def test_a_pointer_is_shell_quoted_and_round_trips(tmp_path, monkeypatch, mid):
 
 def test_a_plain_id_prints_unchanged_and_round_trips(tmp_path, monkeypatch):
     import shlex
-    monkeypatch.setenv("SESSION_MAIL_ROOT", str(tmp_path))
-    _box(tmp_path, "sess-a", 1)
+    monkeypatch.setenv("SESSIONMAIL_ROOT", str(tmp_path))
+    _box(tmp_path / "stores", "sess-a", 1)
     for mid in ("2000000000.11111.11111@hq.session-mail", "g@example.invalid",
                 "a+b-c_d.e@h.example"):
         p = _views.pointer("9.M9P9.gone", f"<{mid}>", "sess-a")
@@ -423,8 +423,8 @@ DASH_IDS = ("-rf@h", "--help@h", "-a$(id)@h")
 @pytest.mark.parametrize("mid", DASH_IDS)
 def test_a_leading_dash_id_is_printed_after_the_end_of_options(tmp_path, monkeypatch, mid):
     import shlex
-    monkeypatch.setenv("SESSION_MAIL_ROOT", str(tmp_path))
-    _box(tmp_path, "sess-a", 1)
+    monkeypatch.setenv("SESSIONMAIL_ROOT", str(tmp_path))
+    _box(tmp_path / "stores", "sess-a", 1)
     p = _views.pointer("9.M9P9.gone", f"<{mid}>", "sess-a")
     assert p.startswith("-- ")
     assert shlex.split(f"message read {p}") == ["message", "read", "--", mid]
@@ -476,8 +476,8 @@ def _held_pointer_opens_it(tmp_path, monkeypatch, mid):
     from sessionmail import _maildir
     from sessionmail.message import cli as message_cli
     from test_message_list import deliver
-    root = tmp_path / "mail"
-    monkeypatch.setenv("SESSION_MAIL_ROOT", str(root))
+    root = tmp_path / "mail" / "stores"
+    monkeypatch.setenv("SESSIONMAIL_ROOT", str(root.parent))
     monkeypatch.setenv("TM_AGENT_ADDRESS", "alpha")
     monkeypatch.delenv("CLAUDE_CODE_AGENT", raising=False)
     deliver(root, "alpha", "1923171201", subject="the one", mid=mid)
@@ -509,12 +509,12 @@ def scoop(tmp_path, monkeypatch):
     """A scratch seat `alpha`, session `sess-a`, its box born, armed."""
     home = tmp_path / "sessionmail"
     (home / "seats" / "alpha").mkdir(parents=True)
-    mail = tmp_path / "mail"
+    mail = tmp_path / "mail" / "stores"
     for d in ("tmp", "new", "cur"):
         (mail / SESSION / d).mkdir(parents=True)
     payload = tmp_path / "answer.json"
     payload.write_text(json.dumps(forest()))
-    monkeypatch.setenv("SESSION_MAIL_ROOT", str(mail))
+    monkeypatch.setenv("SESSIONMAIL_ROOT", str(mail.parent))
     monkeypatch.setenv("SESSIONMAIL_HOME", str(home))
     monkeypatch.setenv("TM_AGENT_ADDRESS", "alpha")
     monkeypatch.delenv("CLAUDE_CODE_AGENT", raising=False)

@@ -115,7 +115,7 @@ class Host:
             "HOME": str(self.home), "XDG_CONFIG_HOME": str(self.xdg),
             "PATH": f"{bin_dir}{os.pathsep}/usr/bin{os.pathsep}/bin",
             "TMPDIR": str(tmp),
-            "SESSION_MAIL_ROOT": agents, "SESSIONMAIL_ROOT": agents,
+            "SESSIONMAIL_ROOT": str(Path(agents).parent),
             "SESSION_MAIL_HOST": "testhost", "SESSIONMAIL_HOST": "testhost",
             "SESSIONMAIL_SENDMAIL": "drop",
             "SESSIONMAIL_VMAILBOX_GEN": str(tmp / "no-generator-here"),
@@ -276,7 +276,7 @@ def test_setup_writes_the_profile_from_the_template(tmp_path):
     for section in ("[new]", "[search]", "[maildir]", "[index]", "[query]"):
         assert section in text, section
     assert "\n[sessionmail]\n" not in text, "the hook's own path defaults fit the mail root"
-    assert "\npaper=path:agents/** and tag:unread\n" in text
+    assert "\npaper=path:stores/** and tag:unread\n" in text
     assert sorted(os.listdir(path.parent)) == ["config"], "a hooks dir beside the profile"
     rc, out, _err = setup(host.env)
     assert state(out, "notmuch-profile") == "DONE"

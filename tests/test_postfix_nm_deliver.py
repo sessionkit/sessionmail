@@ -34,6 +34,8 @@ from pathlib import Path
 
 import pytest
 
+from sessionmail import _setup
+
 ROOT = Path(__file__).resolve().parents[1]
 WRAPPER = ROOT / "src" / "sessionmail" / "postfix" / "nm-deliver"
 HOOK = ROOT / "src" / "sessionmail" / "notmuch" / "post-new"
@@ -110,6 +112,7 @@ import json, os, sys, time
 data = sys.stdin.read()
 with open({rec!r}, "a") as f:
     f.write(json.dumps({{"argv": sys.argv[1:], "home": os.environ.get("HOME"),
+                        "config": os.environ.get("NOTMUCH_CONFIG"),
                         "cwd": os.getcwd(), "stdin": data}}) + "\\n")
 mode = {mode!r}
 if mode == "hang":
@@ -160,12 +163,20 @@ class Host:
         return [json.loads(line) for line in self.record.read_text().splitlines()]
 
     def deliver(self, *argv: str, msgid: str = "m1@example.invalid", extra: dict | None = None,
-                timeout: float = 60) -> subprocess.CompletedProcess:
+                timeout: float = 60, wrapper: Path = WRAPPER) -> subprocess.CompletedProcess:
         env = {**self.env, "NM_DELIVER_NOTMUCH": str(self.notmuch), **(extra or {})}
         msg = (f"From: beta@example.invalid\nTo: {argv[0] if argv else ''}\n"
                f"Subject: t\nMessage-ID: <{msgid}>\n\nbody of {msgid}\n")
-        return subprocess.run([str(WRAPPER), *argv], input=msg, capture_output=True,
+        return subprocess.run([str(wrapper), *argv], input=msg, capture_output=True,
                               text=True, env=env, timeout=timeout)
+
+    def install(self, config: Path) -> Path:
+        """The wrapper as `message setup` installs it, CONFIG baked in."""
+        path = self.tmp / "postfix-agents" / "nm-deliver"
+        path.parent.mkdir(exist_ok=True)
+        path.write_bytes(_setup.render_nm_deliver(config))
+        path.chmod(0o755)
+        return path
 
     def files(self) -> list[Path]:
         return sorted(p for p in self.root.rglob("*") if p.is_file()
@@ -459,3 +470,91 @@ def test_it_ships_executable_and_is_posix_sh():
     assert os.access(WRAPPER, os.X_OK)
     assert WRAPPER.read_text().startswith("#!/bin/sh\n")
     assert subprocess.run(["/bin/sh", "-n", str(WRAPPER)]).returncode == 0
+
+
+# ---------------------------------------------------------------------------
+# The kit profile (SM-1025): the installed copy exports the
+# config `message` reads; the package copy behaves exactly as before.
+
+
+def test_the_package_copy_bakes_nothing_and_exports_nothing(tmp_path):
+    """The package copy may be run by path (a checkout symlinked into a live
+    host): it must not export, defer or fail on the new line. Its one marked
+    line is empty, and a caller's NOTMUCH_CONFIG (a test seam only: pipe(8)
+    passes none) still reaches notmuch untouched, as before."""
+    lines = WRAPPER.read_text().splitlines()
+    assert lines.count("KIT_NOTMUCH_CONFIG=") == 1
+    assert not [ln for ln in lines if ln.startswith("KIT_NOTMUCH_CONFIG=") and ln != "KIT_NOTMUCH_CONFIG="]
+    host = Host(tmp_path)
+    host.fake_notmuch()
+    host.row("alpha@host-a", "agents/alpha/")
+    run = host.deliver("alpha@host-a")
+    assert run.returncode == 0, run.stdout + run.stderr
+    (call,) = host.calls()
+    assert call["config"] is None
+    seam = tmp_path / "seam-config"
+    run = host.deliver("alpha@host-a", extra={"NOTMUCH_CONFIG": str(seam)})
+    assert run.returncode == 0, run.stdout + run.stderr
+    assert host.calls()[-1]["config"] == str(seam)
+
+
+def test_the_installed_copy_exports_the_baked_config(tmp_path):
+    """Whatever the environment holds, insert gets the path baked in."""
+    host = Host(tmp_path)
+    host.fake_notmuch()
+    host.row("alpha@host-a", "agents/alpha/")
+    config = tmp_path / "kit" / "config"
+    config.parent.mkdir()
+    config.write_text("")
+    wrapper = host.install(config)
+    for extra in ({}, {"NOTMUCH_CONFIG": str(tmp_path / "callers-config")}):
+        run = host.deliver("alpha@host-a", extra=extra, wrapper=wrapper)
+        assert run.returncode == 0, run.stdout + run.stderr
+        call = host.calls()[-1]
+        assert call["config"] == str(config)
+        assert call["argv"] == ["insert", "--keep", "--create-folder", "--folder=agents/alpha"]
+        assert call["home"] == pwd.getpwuid(os.getuid()).pw_dir
+
+
+def test_an_installed_copy_whose_config_is_gone_defers(tmp_path):
+    host = Host(tmp_path)
+    host.fake_notmuch()
+    host.row("alpha@host-a", "agents/alpha/")
+    gone = tmp_path / "gone" / "config"
+    run = host.deliver("alpha@host-a", wrapper=host.install(gone))
+    assert run.returncode == 75, run.stdout
+    assert run.stdout.startswith(f"4.3.0 nm-deliver: notmuch config {gone} "), run.stdout
+    assert host.calls() == []
+
+
+def test_the_installed_copy_differs_from_the_package_by_one_line(tmp_path):
+    config = tmp_path / "kit" / "config"
+    package = WRAPPER.read_text().split("\n")
+    installed = _setup.render_nm_deliver(config).decode().split("\n")
+    assert len(package) == len(installed)
+    diff = [(a, b) for a, b in zip(package, installed) if a != b]
+    assert diff == [("KIT_NOTMUCH_CONFIG=", f"KIT_NOTMUCH_CONFIG='{config}'")]
+    path = tmp_path / "nm-deliver"
+    path.write_bytes(_setup.render_nm_deliver(config))
+    assert subprocess.run(["/bin/sh", "-n", str(path)], check=False).returncode == 0
+
+
+@pytest.mark.parametrize("value", ["relative/config", "/a b/config", "/a'b/config", "/a$b/config",
+                                   "/a/../config", "/a//config", "/a/./config", "/a/config/", "",
+                                   "/a`b`/config", "/a\nb/config"])
+def test_a_path_it_cannot_bake_is_refused_at_install(value):
+    with pytest.raises(ValueError, match="cannot be baked into nm-deliver"):
+        _setup.render_nm_deliver(value)
+
+
+@needs_notmuch
+def test_the_installed_copy_delivers_through_the_baked_config(tmp_path):
+    """Real notmuch: the caller's NOTMUCH_CONFIG names a file that is not
+    there, so only the baked config can open the scratch database. (A bake
+    that did nothing would fail here, never reach a real index.)"""
+    db = Db(tmp_path)
+    wrapper = db.install(db.config)
+    run = db.deliver("alpha@host-a", msgid="baked@example.invalid", wrapper=wrapper,
+                     extra={"NOTMUCH_CONFIG": str(tmp_path / "no-such-config")})
+    assert run.returncode == 0, run.stdout + run.stderr
+    assert db.count("id:baked@example.invalid") == 1

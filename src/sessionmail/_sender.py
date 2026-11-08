@@ -43,6 +43,7 @@ from collections.abc import Mapping
 
 import sessiontools
 
+from . import _boxes  # the ONE short-session-id resolver
 from . import _drop   # SESSIONMAIL_SENDMAIL=drop: the mail drop, no MTA
 from . import _host   # the ONE host rule
 from . import _settings
@@ -213,16 +214,10 @@ def writing_model(env: Mapping[str, str]) -> str | None:
 
 
 def root_of(env: Mapping[str, str]) -> Path:
-    """The agents root: the variable, else `<root>/agents` from the settings
-    file, else ~/.mail/agents."""
-    given = setting(env, "ROOT")
-    if given:
-        return Path(given).expanduser()
-    mail_root = _settings.file_path("root", env)
-    if mail_root is not None:
-        return Path(mail_root).expanduser() / "agents"
-    home = env.get("HOME") or os.path.expanduser("~")
-    return Path(os.path.join(home, ".mail", "agents")).expanduser()
+    """The boxes root: `_maildir.root`, the one resolver. Kept under this
+    name for its callers; it was a hand copy of the same order once."""
+    from . import _maildir               # here, not at import: _maildir is the lower layer
+    return _maildir.root(env)
 
 
 # ── addresses: pure ──────────────────────────────────────────────────────────
@@ -1108,12 +1103,19 @@ def must_sign(env: Mapping[str, str]) -> bool:
 # ── pre-flight: world ────────────────────────────────────────────────────────
 
 #: General delivery (mailhost (c)): an
-#: unknown same-host address shaped like a SESSION (a UUID, or its 8-hex
-#: short form) goes to the mail host as ID@RELAY_DOMAIN when postfix has a
-#: transport for that. The mail host files it in `_unsorted`, and the puller
-#: on the host where the session lives takes it from there. Unknown SEAT
-#: names are still refused: those are usually typos.
-SESSION_SHAPED = re.compile(r"[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}|[0-9a-f]{8}", re.I)
+#: unknown same-host address shaped like a SESSION goes to the mail host as
+#: ID@RELAY_DOMAIN when postfix has a transport for that. The mail host files
+#: it in `_unsorted`, and the puller on the host where the session lives
+#: takes it from there. Unknown SEAT names are still refused: those are
+#: usually typos.
+#:
+#: A FULL id only. The 8-hex short form once relayed too, and the
+#: receiving puller takes `_unsorted` mail only on an exact vmailbox hit,
+#: which no short form of a full-id box ever is: it rested there, never
+#: taken. A short form is now resolved on THIS host, or refused,
+#: before any carrier (`resolve_recipients`); this narrowing makes "never
+#: relayed" true by construction as well.
+SESSION_SHAPED = _boxes.FULL_ID
 RELAY_DOMAIN_VAR = "SESSIONMAIL_RELAY_DOMAIN"
 RELAY_DOMAIN = "relay.home"
 
@@ -1195,6 +1197,34 @@ def _relay(value: str, addr: str, postmap: str, postconf: str | None,
                for m in done.stdout.replace(",", " ").split() for key in (probe, domain)):
         return None
     return _relayed(value, domain)
+
+
+def resolve_recipients(req: Request, host: str, env: Mapping[str, str], err: list[str]) -> None:
+    """Every same-host To/Cc/Bcc that is a SHORT session id (`_boxes.short_form`:
+    the 8 hex a pane title shows) becomes the one full id it starts on this
+    host, in place, with a notice in ERR; or the whole send is refused,
+    exit 3 (EX_MTA, kind undeliverable, as every other undeliverable
+    recipient on both carriers), naming the candidates when there are
+    several. Never relayed. Runs before render, signing, the
+    carrier choice and either pre-flight, so one call covers both carriers,
+    the --json and MCP doors, `memory init` and the pager's own sends.
+    An address at another host is that host's to resolve: it goes unchanged."""
+    def one(label: str, value: str) -> str:
+        if not value or not is_local(value, host):
+            return value
+        try:
+            r = _boxes.resolve_session(value, source="box", env=env)
+        except _boxes.Unresolved as u:
+            raise Refused(f"REFUSING TO SEND - {label} {_boxes.refusal_text(u)}. NOTHING WAS "
+                          f"SUBMITTED, to this recipient or any other.", EX_MTA,
+                          kind="undeliverable") from None
+        if r.full:
+            err.append(f"{PREFIX}{label} {r.note}")
+        return r.value
+
+    req.to = one("To", req.to)
+    req.cc = [one("Cc", a) for a in req.cc]
+    req.bcc = [one("Bcc", a) for a in req.bcc]
 
 
 # ── the mail drop: no MTA (SESSIONMAIL_SENDMAIL=drop) ────────────────────────
@@ -1457,6 +1487,8 @@ def _deliver(req: Request, body: bytes, env: Mapping[str, str], err: list[str], 
                       "NOTHING WAS SENT.", kind="identity")
     if req.message_id is not None:               # before render, preflight, mint, drop
         check_own_host(req.message_id, host)
+    # A short session id, before anything reads an address.
+    resolve_recipients(req, host, env, err)
 
     # Render before anything else touches the world (send:1642-1855); the
     # title is the subject as typed, before RFC 2047.

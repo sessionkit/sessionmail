@@ -19,8 +19,18 @@ one more run. The command gets cwd `/`, its own process group, stdin
 300 s. A `notmuch new` it runs itself is tagged as usual and does not run it
 again (a command that clears its environment must pass `--no-hooks`
 instead). It must not send mail on every run: sent mail comes back as an
-arrival. Its output and a `start`/`end` line per run go to
-`~/.sessionmail/post-new/log` (rolled to `log.1` past 1 MiB). With the key
-unset, nothing is created and nothing is spawned.
+arrival. Its output and a `start`/`end` line per run go to `log` (rolled
+to `log.1` past 1 MiB) in the hook's state folder, beside its `lock` and
+`again` files. With the key unset, nothing is created and nothing is
+spawned.
+
+The state folder is `~/.sessionkit/mail/state/post-new/`, made with its
+parents on the first run. On an existing host where
+`~/.sessionmail/post-new/` is still a real folder of its own, that one is
+used instead (a link from it to the new folder hands over). Only the new
+folder is ever made. When both are real folders the old one is used and
+the new one is left alone. `HOME` alone decides it, never `TMPDIR` or
+`SESSIONMAIL_HOME`: notmuch runs the hook from launchd, postfix and agents
+alike, and all of them must take the same lock.
 
 [post-new-hook]: notmuch-settings.md#the-post-new-hook

@@ -48,8 +48,10 @@ reads for them are below: [sendmail][sendmail], [notmuch][notmuch-key] and
     `~` is the account's home in the password database, never `$HOME`. A
     changed `$HOME` cannot move them, and a `mail.json` under another
     `$HOME` is not read for them.
-  - `hooks`, `monitor`, `pager_required` and `capture`, and the seat and
-    session layers: `~` is `$HOME`.
+  - `hooks`, the per-hook switches (`ride_along`, `stop_nag`, `mail_guard`,
+    `birth`), `monitor`, `frozen_watch`, `frozen_rules`,
+    `frozen_after_seconds`, `frozen_chain_seconds`, `pager_required` and
+    `capture`, and the seat and session layers: `~` is `$HOME`.
   - Where `$HOME` is the account's home, as it usually is, both are the
     same folder.
 
@@ -69,14 +71,22 @@ files:
 | Key                 | Type             | Default            | Read from                         |
 | ------------------- | ---------------- | ------------------ | --------------------------------- |
 | `hooks`             | boolean          | `false` (off)      | the host `mail.json` only         |
+| `ride_along`        | boolean          | on                 | the host `mail.json` only         |
+| `stop_nag`          | boolean          | on                 | the host `mail.json` only         |
+| `mail_guard`        | boolean          | on                 | the host `mail.json` only         |
+| `birth`             | boolean          | on                 | the host `mail.json` only         |
 | `sendmail`          | `"drop"` or a path | `"drop"`         | the template and the host         |
-| `root`              | string           | `~/.mail`          | the template and the host         |
+| `root`              | string           | `~/.sessionkit/mail` | the template and the host         |
 | `host`              | string           | the short host name | the template and the host        |
 | `magicdns_suffix`   | string           | ask tailscale      | the template and the host         |
 | `notmuch`           | map              | see below          | the template and the host         |
 | `postfix`           | map              | see below          | the template and the host         |
 | `pull`              | map              | see below          | the template and the host         |
 | `monitor`           | boolean          | on                 | the host `mail.json` only         |
+| `frozen_watch`      | boolean          | `false` (off)      | the host `mail.json` only         |
+| `frozen_rules`      | list of strings  | `["silence"]`      | the host `mail.json` only         |
+| `frozen_after_seconds` | number        | `720`, floored     | the host `mail.json` only         |
+| `frozen_chain_seconds` | number        | `900`, floored     | the host `mail.json` only         |
 | `pager_required`    | boolean          | `false`            | host, seat and session            |
 | `capture`           | boolean          | `false`            | host, seat and session            |
 | `address`           | string           | none               | session only                      |
@@ -87,6 +97,9 @@ files:
 | `version`           | integer          | `1`                | not read                          |
 | `$schema`, `_about` | string           | none               | ignored                           |
 | `_locked`           | list of strings  | none               | see [`_locked`][locked]           |
+
+The four `frozen_*` keys are the pager monitor's frozen-turn watch, read at
+each of its checks: [the frozen-turn watch][frozen-watch].
 
 "Host, seat and session" means `mail.json` and `mail.d/` at each layer, and
 the most specific layer that holds the key decides: session over seat over
@@ -102,7 +115,10 @@ reads the file, so nothing needs copying into its environment.
 
 ### hooks
 
-Whether the plugin's Stop, PostToolBatch and UserPromptSubmit hooks speak.
+Whether the hooks that speak do: the plugin's Stop, PostToolBatch and
+UserPromptSubmit hooks, and the box line SessionStart says. It does not
+govern the mail guard, or the birth of a session's box: each of those has
+its own switch ([the per-hook switches][switches]).
 
 - Only the boolean `true` turns them on. `false` is the quiet off.
 - A host file with no `hooks` key, or a value that is not a boolean (`"true"`,
@@ -118,12 +134,76 @@ Whether the plugin's Stop, PostToolBatch and UserPromptSubmit hooks speak.
   not moved yet, and a run as root or under `sudo`.
 - Each change it makes adds one JSON line to
   `~/.sessionkit/mail/log/settings.jsonl`: when, who (the seat, else your
-  account), the session if there is one, from and to, and the file. The
-  switch is the whole host's, so a run from your own shell is logged too.
+  account), the session if there is one, the key, from and to, and the
+  file. The switch is the whole host's, so a run from your own shell is
+  logged too.
 
 ```json
 {"version": 1, "hooks": true}
 ```
+
+### The per-hook switches
+
+One switch for each mail hook, beside `hooks`:
+
+| Key          | Its hook                                                                        | Also needs `hooks`     |
+| ------------ | ------------------------------------------------------------------------------- | ---------------------- |
+| `ride_along` | the ride-along: each PostToolBatch's and UserPromptSubmit's mail and state line | yes                    |
+| `stop_nag`   | the Stop hook's `pager is not listening` (exit 2)                               | yes                    |
+| `mail_guard` | the mail guard's subject and body checks (PreToolUse)                           | no                     |
+| `birth`      | SessionStart's birth of the session's box                                       | no (its box line does) |
+
+- **Missing means on.** Only the boolean `false` turns a hook off. Any other
+  value (`"no"`, `0`, `null`) is ignored, so the hook stays on;
+  `pager settings hooks` names the value, and the ride-along says it once
+  per session. A file that cannot be read, is not JSON or is not a JSON
+  object leaves all four on.
+- **Both must be on.** The ride-along, the Stop nag and the birth's box
+  line act only when `hooks` is `true` and their own switch is not
+  `false`. `"hooks": false` keeps them all quiet, whatever a switch says.
+  `mail_guard`, and the birth itself, read only their own key.
+- **"All of them off" is three keys:** `"hooks": false`,
+  `"mail_guard": false` and `"birth": false`.
+- **`"ride_along": false`:** no mail and no state line, as with
+  `"hooks": false`. Mail rests in the box for `message list` or
+  `pager listen`.
+- **`"stop_nag": false`:** Stop exits 0 and says nothing (but for DEAF,
+  below).
+- **`"birth": false`:** SessionStart makes no box, starts no map generator
+  and says nothing. The session's box is made later, by its first
+  `pager listen`.
+- **`"mail_guard": false`** turns off the subject and body checks only:
+  a send the guard would refuse for its quoting goes through. Its subagent
+  rules stay on whatever the switch says: a subagent still cannot take or
+  mark the seat's mail, write its settings or switch its hooks. With the
+  checks off, nothing reads a subject before the shell runs it, and a
+  backtick or `$(` in a double-quoted subject is run. It is the lever for a
+  guard that is broken ([the mail guard][mail-guard]).
+- **The DEAF check** on a `pager_required` seat is under no switch. With
+  all four off, a required seat that nothing hears still says DEAF. Only
+  `SESSIONMAIL_PAGER=off` silences it. On a platform where no listener can
+  run (no kqueue), the PostToolBatch hook names the platform instead, and
+  the Stop hook says nothing ([the pager][pager]).
+- **Host only.** Each is read from the host `mail.json` alone: not
+  `mail.d/`, not a seat or session layer, and no variable.
+- **Set one** with `pager settings hooks KEY on|off`. It writes that one key
+  the way `pager settings hooks on|off` writes `hooks`: through the same
+  refusals, keeping every other byte. `pager settings hooks KEY` says
+  whether that hook acts, and why: exit 0 it acts, 3 off, and 2 when
+  `hooks` holds it off by mistake. When `hooks` holds a hook off, the verb
+  says so.
+- **A person's switch, by convention.** Every seat runs as the user who
+  owns the host file, so nothing refuses a main-thread agent that writes
+  it, `mail_guard` included. A subagent is refused. Each change the verb
+  makes is logged in `settings.jsonl`, with who made it, the session and
+  the key, so a change made by an agent can be seen afterwards. Change a
+  switch only when a person asks for it.
+
+```json
+{"version": 1, "hooks": true, "stop_nag": false}
+```
+
+That file takes mail with each batch and never nags at Stop.
 
 ### monitor
 
@@ -187,13 +267,20 @@ How sessionmail runs notmuch. A map:
 | --------- | -------------------------- | ----------------------------- |
 | `command` | `notmuch` on `PATH`        | `SESSIONMAIL_NOTMUCH`         |
 | `timeout` | `10` (seconds per call)    | `SESSIONMAIL_NOTMUCH_TIMEOUT` |
+| `refresh` | `2` (seconds; `0` is off)  | `SESSIONMAIL_NOTMUCH_REFRESH` |
 | `profile` | `sessionkit`               | `SESSIONMAIL_NOTMUCH_PROFILE` |
 
-- `profile` is the notmuch profile sessionmail's own calls read:
-  `$XDG_CONFIG_HOME/notmuch/<profile>/config`. No other notmuch config is
-  read, your own `~/.notmuch-config` included. `message setup` writes the
-  `sessionkit` profile. notmuch's own `NOTMUCH_PROFILE` and
-  `NOTMUCH_CONFIG` do not choose it. More: [notmuch settings][notmuch-settings].
+- `profile` is the notmuch profile sessionmail's own calls read. Its file
+  is `~/.sessionkit/mail/settings/notmuch/<profile>/config`. An existing
+  `$XDG_CONFIG_HOME/notmuch/<profile>/config`, else
+  `~/.notmuch-config.<profile>`, is read instead while it is a real file,
+  and nothing is moved. No other notmuch config is read, your own
+  `~/.notmuch-config` included. `message setup` writes the `sessionkit`
+  profile, at the first path when no old file is real. notmuch's own
+  `NOTMUCH_PROFILE` and `NOTMUCH_CONFIG` do not choose it. More: [notmuch settings][notmuch-settings].
+- `refresh` bounds the readers' index refresh: `memory` runs
+  `notmuch new --no-hooks` before it reads, and `message mark` when an id
+  is missing. `0` turns it off. Host mode only.
 
 ```json
 {"version": 1, "notmuch": {"command": "/opt/homebrew/bin/notmuch"}}
@@ -233,7 +320,7 @@ layer.
 | `listener`         | none: required, `HOST:PORT`                 |
 | `vmailbox`         | none: required, a postfix map (`type:path`) |
 | `boxes_file`       | `~/.sessionkit/mail/settings/pull.boxes`    |
-| `state_dir`        | `~/.sessionmail/puller`                     |
+| `state_dir`        | `~/.sessionkit/mail/state/puller` (below)   |
 | `local_domain`     | the `host` key, else the short host name    |
 | `own_ips`          | ask tailscale                               |
 | `unsorted_box`     | none: general delivery off                  |
@@ -248,7 +335,10 @@ layer.
 - With a required key unset, the puller refuses (exit 2) and names each
   one with its variable.
 - `state_dir` moves only when `pull.state_dir` is set: one puller runs per
-  state dir, and a second exits 3.
+  state dir, and a second exits 3. Unset, it is the state folder's
+  `~/.sessionkit/mail/state/puller`; on an existing host whose
+  `~/.sessionmail/puller` is still a real folder, that one. `~` is the
+  account's home; no variable moves it.
 
 ### pager_required
 
@@ -335,8 +425,10 @@ urgent list is the operator and this runner.
   no agent can add a runner.
 - Letters, digits, `.`, `_`, `+` and `-` only, read in lower case. Anything
   else (an `@`, white space, `$`, a glob character) means no runner.
-- A `set urgent` line in `~/.sessionmail/rules.locked` replaces the whole
-  default list, and this key is not read.
+- A `set urgent` line in the locked file, `rules.locked`, replaces the
+  whole default list, and this key is not read. The locked file is in
+  `~/.sessionkit/mail/state/` (in `~/.sessionmail/` on an existing host
+  where it is still a real file there), `~` the account's home.
 
 ### rules
 
@@ -366,8 +458,8 @@ reads the files:
 
 It does not hold across host, seat and session. `pager_required` and
 `capture` read each layer on its own, and the most specific one decides,
-lock or no lock. `hooks` and `monitor` read the host `mail.json` directly,
-and a lock there changes nothing.
+lock or no lock. `hooks`, `monitor` and the per-hook switches read the host
+`mail.json` directly, and a lock there changes nothing.
 
 ## Environment variables are not a layer
 
@@ -382,7 +474,7 @@ read beside them, each in its own way:
 | `SESSIONMAIL_PAGER`          | `hooks`, `monitor`, `pager_required`  | `off` (or `0`, `no`, `false`) silences the hooks and the DEAF check, and stops the monitor |
 | `SESSION_REGISTRY`           | `registry`                            | wins when set                                   |
 | `SESSIONMAIL_SENDMAIL`, `SESSIONMAIL_ROOT`, `SESSIONMAIL_HOST`, `MAGICDNS_SUFFIX` | `sendmail`, `root`, `host`, `magicdns_suffix` | wins over every layer when set and not empty |
-| `SESSIONMAIL_NOTMUCH`, `SESSIONMAIL_NOTMUCH_TIMEOUT`, `SESSIONMAIL_NOTMUCH_PROFILE` | `notmuch.command`, `.timeout`, `.profile` | wins over every layer when set and not empty |
+| `SESSIONMAIL_NOTMUCH`, `SESSIONMAIL_NOTMUCH_TIMEOUT`, `SESSIONMAIL_NOTMUCH_REFRESH`, `SESSIONMAIL_NOTMUCH_PROFILE` | `notmuch.command`, `.timeout`, `.refresh`, `.profile` | wins over every layer when set and not empty |
 | `SESSIONMAIL_VMAILBOX_GEN`, `SESSIONMAIL_RELAY_DOMAIN`, `SESSIONMAIL_ORIGIN` | `postfix.generator`, `.relay_domain`, `.origin` | wins over every layer when set and not empty |
 | `SESSIONMAIL_PULL_*` (`SESSIONMAIL_PULL_IMAP_HOST`, ...) | `pull.*` (`pull.imap_host`, ...) | wins over every layer when set and not empty |
 | `SESSIONMAIL_SUBSCRIBE`      | `subscriptions`                       | copied once, at birth, into a session file      |
@@ -395,7 +487,8 @@ Partly, and per key:
 - `pager_required` and `capture`: a seat or a session overrides the host.
 - `subscriptions` and `address`: seat and session only; the host's are not
   read.
-- `hooks`, `monitor`, `registry` and `alert_runner`: host only. A seat or a
+- `hooks`, the per-hook switches (`ride_along`, `stop_nag`, `mail_guard`,
+  `birth`), `monitor`, `registry` and `alert_runner`: host only. A seat or a
   session cannot change them in a file; for `monitor`, a seat's variable can
   only turn it off.
 - `sendmail`, `root`, `host`, `magicdns_suffix`, `notmuch`, `postfix` and
@@ -404,13 +497,17 @@ Partly, and per key:
 
 [kit-settings]: https://github.com/sessionkit/sessionkit/blob/HEAD/docs/settings.md
 [file-drop]: file-drop.md
+[frozen-watch]: frozen-watch.md
 [locked]: #_locked
+[mail-guard]: ../hooks/mail-guard/README.md
 [map-generator]: postfix-configuration.md#the-map-generator-vmailbox-gen
 [notmuch-settings]: notmuch-settings.md
 [notmuch-key]: #notmuch
+[pager]: pager.md
 [pager-inject-log-capture]: pager-inject-log.md#capture
 [pager-monitor]: pager-monitor.md
 [postfix-configuration]: postfix-configuration.md
 [postfix-key]: #postfix
 [sendmail]: #sendmail
+[switches]: #the-per-hook-switches
 [the-keys]: #the-keys

@@ -5,7 +5,7 @@ a box, and listen reads no other subscriptions. Rulings 1330: T = 0 stopped, ~60
 running, chosen by the stopped stamp. Rulings 1320: the page says what
 to do next; the listener leaves a stamp so "armed" is a fact.
 
-Hermetic: a maildir root under tmp_path (SESSION_MAIL_ROOT), a seat under
+Hermetic: a maildir root under tmp_path (SESSIONMAIL_ROOT), a seat under
 SESSIONMAIL_HOME, deliveries the way an MDA makes them; the running page
 age turned down to fractions of a second. No notmuch anywhere.
 """
@@ -27,6 +27,7 @@ from click.testing import CliRunner
 from sessionmail import _arm, _detect, _seat, pager, rules
 from sessionmail import _settings
 from sessionmail.pager import cli
+import _leaves
 
 EX_PAGE, EX_COULD_NOT_LOOK, EX_TIMEOUT = 0, 2, 124
 RUNNING_T = 0.4          # the running page age, for tests
@@ -37,9 +38,11 @@ FORBIDDEN = re.compile(r"dead|died|fail", re.I)
 
 def _mail(sid: str) -> Path:
     """Where a session's mail state is since session-settings 3.3a: under
-    the session dir sessiontools keeps, `$HOME/.session/sessions/<sid>/mail/`
-    (spelt out, not asked of the code, so the test can see it move)."""
-    return Path(os.environ["HOME"]) / ".session" / "sessions" / sid / "mail"
+    the session dir sessiontools keeps, `<sessions leaf>/<sid>/mail/`. The leaf is
+    sessiontools' own answer for the sandbox HOME, pinned before the test
+    ran (`_leaves`), not asked of sessionmail, so the test can see the
+    code write anywhere else."""
+    return _leaves.session_mail(sid)
 
 
 def counted(result) -> int | None:
@@ -63,9 +66,9 @@ _n = 0
 
 @pytest.fixture
 def rig(tmp_path, monkeypatch):
-    root = tmp_path / "mail"
-    root.mkdir()
-    monkeypatch.setenv("SESSION_MAIL_ROOT", str(root))
+    root = tmp_path / "mail" / "stores"
+    root.mkdir(parents=True)
+    monkeypatch.setenv("SESSIONMAIL_ROOT", str(root.parent))
     monkeypatch.setenv("SESSIONMAIL_HOME", str(tmp_path / "sessionmail"))
     monkeypatch.setenv("TM_AGENT_ADDRESS", "alpha")
     monkeypatch.delenv("CLAUDE_CODE_AGENT", raising=False)
@@ -1982,6 +1985,71 @@ def test_a_box_argument_births_the_session_box_and_says_the_one_line(rig, monkey
     assert result.stderr.count(GRACE) == 1, result.stderr             # the ONE line, once
     assert f"{GRACE} acmecorp" in result.stderr
     assert "message subscription add" not in result.stdout            # stderr only: the page is the page
+
+
+# A short session id as BOX (design 5.2): resolved at the door, before the
+# box is looked up and before any birth, so a refusal writes nothing.
+
+SHORT_ONE = "c0ffee01-1111-4111-8111-111111111111"
+SHORT_TWO = "c0ffee01-2222-4222-8222-222222222222"
+
+
+@pytest.fixture
+def no_map(monkeypatch):
+    monkeypatch.setattr(_seat, "box_via_map", lambda name: None)
+
+
+def test_a_unique_short_session_id_listens_on_the_full_box(rig, monkeypatch, no_map):
+    monkeypatch.setenv("CLAUDE_CODE_SESSION_ID", "sess-c")
+    rig.box(SHORT_ONE)
+    result = run("c0ffee01", "--timeout", "0.1")
+    assert result.exit_code == EX_TIMEOUT, result.stderr
+    assert f"pager listen: 'c0ffee01' is session {SHORT_ONE}" in result.stderr
+    assert "box " + str(rig.root / SHORT_ONE) in result.stderr        # it watches the full box
+    assert f"{GRACE} {SHORT_ONE}" in result.stderr                  # the grace line names it too
+    assert not (rig.root / "c0ffee01").exists()
+
+
+def test_a_short_session_id_under_quiet_says_nothing_but_still_resolves(rig, monkeypatch, no_map):
+    monkeypatch.setenv("CLAUDE_CODE_SESSION_ID", "sess-c")
+    rig.box(SHORT_ONE)
+    result = run("c0ffee01", "--timeout", "0.1", "--quiet")
+    assert result.exit_code == EX_TIMEOUT, result.stderr
+    assert "'c0ffee01' is session" not in result.stderr
+
+
+@pytest.mark.parametrize("twin, words", [(True, "ambiguous"),
+                                         (False, "no session box on this host starts with it")])
+def test_an_ambiguous_or_unknown_short_id_refuses_before_any_birth(rig, monkeypatch, tmp_path,
+                                                                   no_map, twin, words):
+    """Unlike a BOX that is not found (whose listen still births the session
+    box), a short id that resolves to nothing refuses at the door: no
+    session box is born and nothing is written anywhere under the sandbox."""
+    monkeypatch.setenv("CLAUDE_CODE_SESSION_ID", "sess-e")
+    rig.box(SHORT_ONE)
+    if twin:
+        rig.box(SHORT_TWO)
+    short = "c0ffee01" if twin else "c0ffee02"
+    before = sorted(map(str, tmp_path.rglob("*")))
+    result = run(short, "--timeout", "0.1")
+    assert result.exit_code == EX_COULD_NOT_LOOK, result.output
+    assert words in result.stderr
+    if twin:
+        assert SHORT_ONE in result.stderr and SHORT_TWO in result.stderr
+    assert not (rig.root / "sess-e").exists()
+    assert sorted(map(str, tmp_path.rglob("*"))) == before
+    assert GRACE not in result.stderr
+
+
+def test_an_exact_legacy_box_wins_over_a_full_box_sharing_its_prefix(rig, monkeypatch, no_map):
+    monkeypatch.setenv("CLAUDE_CODE_SESSION_ID", "sess-c")
+    rig.box("c0ffee01")
+    rig.box(SHORT_ONE)
+    result = run("c0ffee01", "--timeout", "0.1")
+    assert result.exit_code == EX_TIMEOUT, result.stderr
+    assert f"box {rig.root / 'c0ffee01'}" in result.stderr
+    assert f"box {rig.root / SHORT_ONE}" not in result.stderr
+    assert "'c0ffee01' is session" not in result.stderr
 
 
 def test_the_bare_listen_prints_no_grace_line(rig):

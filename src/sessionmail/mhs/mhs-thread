@@ -276,6 +276,11 @@ def superseded_ids(flats):
 # subject-tag shadows, a fork twin, and the [ROOT] anchor (newest [ROOT] by
 # subject). Headers are not the test — any local sender writes From and To.
 
+# The by-hand first step, while `memory init` has none. A copy of
+# `_root.NO_FIRST_STEP`: this script runs by path and imports no package
+# module for its wording. tests/test_first_root_wording.py pins the two equal.
+NO_FIRST_STEP = ("memory has no automated first step yet: the by-hand recipe is "
+                 "docs/memory-first-root.md in the sessionmail plugin")
 PRIMED = ""   # the root hint's Message-ID once root_thread() has primed it
 
 _SIG = {}     # filename -> True (verified) / False (refused) / None (timed out)
@@ -1570,7 +1575,8 @@ def main():
     # a thread reader that silently assumes an owner reads the wrong memory.
     agent = (os.environ.get("CLAUDE_CODE_AGENT") or os.environ.get("SESSION_AGENT") or "").strip()
     if not agent and not box:
-        sys.exit("memory: no agent — set CLAUDE_CODE_AGENT (or SESSION_AGENT), or pass --box NAME")
+        sys.exit("memory: no agent — set CLAUDE_CODE_AGENT (or SESSION_AGENT), or pass --box NAME. "
+                 + NO_FIRST_STEP)
     cur = os.environ.get("CLAUDE_SESSION_ID", "")[:8]
     # Recipient principal for membership and the root-hint variable.
     recip = box or agent
@@ -1582,8 +1588,9 @@ def main():
         # from the agent MD's environment block — the layer with the fewest
         # writers. Priming check (MHS 90): the hint must resolve to a message
         # whose subject is [ROOT] and From: the agent, or we refuse loudly.
-        # Fallback when the env var is absent (old launcher, shipwreck): the
-        # subject search, and it says so.
+        # Fallback when the env var is absent: the subject search. A root it
+        # finds is the old launcher's shipwreck, and it says so; none found
+        # is a seat with no memory yet, said plainly.
         raw = os.environ.get(root_var)
         hint = (raw or "").strip().strip("<>").strip()
         if raw is not None and not hint:
@@ -1617,12 +1624,25 @@ def main():
             global PRIMED
             PRIMED = hint
             return f"id:{hint}"
-        sys.stderr.write(f"memory: no ${root_var} in the environment — falling back to the subject search (shipwreck path)\n")
+        # No hint: search by subject FIRST, then say which case this is.
+        # A root found with no hint is the old launcher's shipwreck, said
+        # aloud as before. NO root at all is not a shipwreck: it is every new
+        # seat's first run (nothing mints a root until `memory init`), so it
+        # gets one plain line naming the state and the variable it wanted,
+        # and exit 2, "not found" on ls/tree/cat's tables (1 is "usage"
+        # there). `memory init` refuses on every box today (no box key has a
+        # home yet), so the line never sends a seat to it: it names the
+        # by-hand recipe instead (NO_FIRST_STEP).
         tid = sh(["notmuch", "search", "--output=threads", "--limit=1",
                   "--sort=oldest-first",
                   (f'subject:"[ROOT]" and to:{box}' if box else f'subject:"{agent} ROOT" and from:{agent}')], resolve=True).strip()
         if not tid:
-            sys.exit(f"no canonical root found (subject:\"{agent} ROOT\")")
+            sys.stdout.flush()
+            sys.stderr.write(f"memory: no memory yet for {'box ' + box if box else agent}: "
+                             f"no [ROOT] {'to ' + box if box else 'from ' + agent} has been minted, "
+                             f"and ${root_var} is not set. {NO_FIRST_STEP}\n")
+            sys.exit(2)
+        sys.stderr.write(f"memory: no ${root_var} in the environment — falling back to the subject search (shipwreck path)\n")
         return tid
 
     if argv and argv[0] == "--index":

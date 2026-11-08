@@ -127,7 +127,7 @@ def env(tmp_path, bin_dir, mailroot, renamed):
         "HOME": str(tmp_path),
         "PATH": str(bin_dir),
         "TMPDIR": str(tmp_path),
-        "SESSIONMAIL_ROOT": str(mailroot / "agents"),
+        "SESSIONMAIL_ROOT": str(mailroot),
         "SESSIONMAIL_SENDMAIL": "drop",
         "SESSIONMAIL_VMAILBOX_GEN": str(bin_dir / "vmailbox-gen"),
     }

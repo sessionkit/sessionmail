@@ -1,8 +1,12 @@
 """The mail tool's HOST settings file - `$HOME/.sessionkit/mail/settings/mail.json`.
 
 openspec/changes/pager-settings-file (PROPOSED): ONE file decides whether
-the plugin's two pager hooks speak, and enabling them is ONE setting,
-`"hooks": true`.
+the plugin's pager hooks speak, and enabling them is ONE setting,
+`"hooks": true`. Beside it, each mail hook has its own switch
+(`SWITCH_KEYS`: `ride_along`, `stop_nag`, `mail_guard`, `birth`), on when
+absent, off only for the boolean `false`. Where `hooks` also governs a hook
+(the ride-along, the Stop nag, the birth's box line) the hook ANDs the two;
+the mail guard and the birth itself answer to their own key alone.
 
 Host settings for every kit package live in the package's settings
 folder, `~/.sessionkit/<package>/settings/` (package first), as
@@ -19,10 +23,12 @@ becomes a SYMLINK to the new one for readers not yet updated. The file is
 written lazily, by the first tool that needs it and finds it missing. Never under
 SESSIONMAIL_HOME: config is not state.
 
-Four functions, and no I/O at import:
+The main functions, and no I/O at import:
 
 - `path(env)`   where the file is
 - `read(env)`   what it says, under D1's strict-boolean rule; never writes
+- `switches(env)` the four per-hook switches, read raw from the host file
+                alone; never writes, never folds in `hooks`
 - `ensure(env)` `read`, and if the file is missing, create it - from the
                 old file when one is there (the conversion), else from the
                 template - atomically, never replacing anything (D4); then
@@ -30,6 +36,8 @@ Four functions, and no I/O at import:
                 are installed beside the file
 - `set_hooks(on, env)` the one writer of `"hooks"`: `pager
                 settings hooks on|off`, through `ensure` and `with_value`
+- `set_switch(key, on, env)` the same writer for `hooks` or one switch:
+                `pager settings hooks KEY on|off`
 
 This module decides nothing about what a hook says. It reports a state and,
 for a fault, why; the hooks choose their words (`hook_lines.toml`).
@@ -77,6 +85,27 @@ RELATIVE = DIR / f"{TOOL}.json"
 #: account's home. Every help line, note and refusal derives from these.
 SHOWN_DIR = f"~/{DIR.as_posix()}/"
 SHOWN = f"~/{RELATIVE.as_posix()}"
+
+#: The package's STATE folder, `$HOME/<STATE_DIR>`, beside DIR (package
+#: first): where sessionmail keeps what it keeps, its leaves `rules.locked`,
+#: `seats`, `sessions`, `puller` and `imap`. The ONE definition. A leaf is
+#: read and written here unless the old one is a real one of its own
+#: (`state_path`): on a fresh host, with neither, a writer creates it HERE
+#: (rule 4, fresh-new), so a fresh install keeps all its state under
+#: `~/.sessionkit/mail/`.
+STATE_DIR = ROOT / PACKAGE / "state"
+
+#: How user text shows STATE_DIR.
+SHOWN_STATE_DIR = f"~/{STATE_DIR.as_posix()}/"
+
+#: The state folder before the kit's home, relative to the home it sits in:
+#: the ONE place the old root is named in Python (`_seat.DEFAULT_HOME`
+#: derives from it). A leaf that is a real one here wins (`state_path`);
+#: nothing creates one here any more.
+OLD_STATE_DIR = Path(".sessionmail")
+
+#: How user text shows OLD_STATE_DIR.
+SHOWN_OLD_STATE_DIR = f"~/{OLD_STATE_DIR.as_posix()}/"
 
 #: The package's LOG folder, `$HOME/<LOG_DIR>`, beside DIR (package first).
 #: The kit keeps its own logs, never in ~/Library/Logs. The ONE definition
@@ -169,6 +198,189 @@ def old_path(env: Mapping[str, str] | None = None) -> Path:
     """`$HOME/.session/mail/settings.json`: where the file was, and after
     the conversion a symlink to `path()`."""
     return _home(env) / OLD_RELATIVE
+
+
+# ── the state folder: ONE resolver, per leaf ─────────────────────────────
+#
+# Every reader AND every writer of a leaf asks `state_path` (or, for a leaf
+# rooted at the account, `account_state_path`) where it is, so what is
+# written is what is read. A LEAF is one top-level name under the root
+# (`seats`, never `seats/<x>/rules`): after a partial migration each leaf
+# resolves on its own, and old and new are never merged. The order is
+# sessiontools' own, `sessiontools.settings.leaf_path`, so the kit's
+# packages move their state the same way:
+#
+#   1. the override, `$SESSIONMAIL_HOME/<leaf>` (none for an account leaf);
+#   2. OLD, while it is a real folder (a real file, for a FILE leaf) that
+#      is not the same one as NEW (`os.path.samefile`, as tools' `_same_dir`):
+#      a migration that leaves a symlink at old hands over to new;
+#   3. NEW, when it is a folder (a file);
+#   4. else the fresh default, NEW (`fresh-new`): a host with neither is a
+#      fresh install, and its writers create the leaf under the state
+#      folder, parents included. No upgrade path is owed to an old
+#      install, so nothing here moves one.
+#
+# Both real and distinct is STRANDED: old is used, new is never read or
+# merged, and `state_stranded` names it for a human. The resolver only
+# LOOKS: it never creates, moves, converts or writes anything. A host
+# whose old leaf is real resolves exactly as before (rule 2); only a leaf
+# that is nowhere yet goes new.
+#
+# The fallback to the old root is dropped as the kit drops its
+# compatibility links: one release after every peer is deployed on every
+# host, in a later release.
+
+#: Where a leaf was found (the `source` of `state_leaf`), as tools names its
+#: own (`LEAF_SOURCES`).
+OVERRIDE, OLD, NEW, FRESH_NEW = "override", "old", "new", "fresh-new"
+
+#: The leaves that are one FILE, not a folder: rule 2 and 3 ask for a file.
+FILE_LEAVES = frozenset({"rules.locked"})
+
+
+def _leaf(leaf: str) -> str:
+    """LEAF, checked to be one top-level name: never a path, never `.`/`..`."""
+    if not leaf or leaf in (".", "..") or "/" in leaf or "\\" in leaf or "\0" in leaf:
+        raise ValueError(f"a state leaf is one top-level name, not {leaf!r}")
+    return leaf
+
+
+def state_dir(env: Mapping[str, str] | None = None) -> Path:
+    """`$HOME/.sessionkit/mail/state`, HOME from ENV (`_home`)."""
+    return _home(env) / STATE_DIR
+
+
+def old_state_dir(env: Mapping[str, str] | None = None) -> Path:
+    """The root the writers wrote before the state folder: `_seat.home(env)`,
+    which is `$SESSIONMAIL_HOME` when set, else `~/.sessionmail` with `~` the
+    PROCESS home. Kept exactly that, so a reader finds what a writer from
+    before this release wrote."""
+    from . import _seat              # here, not at import: _seat imports this module
+    return _seat.home(dict(os.environ if env is None else env))
+
+
+def _same(a: Path, b: Path) -> bool:
+    """A and B are one file or folder, symlinks followed (`[ A -ef B ]`)."""
+    try:
+        return os.path.samefile(a, b)
+    except (OSError, ValueError):
+        return False
+
+
+def _there(leaf: str, p: Path) -> bool:
+    """Is LEAF at P, as its kind: a file for a FILE leaf, else a folder,
+    symlinks followed. A path that cannot be stat'd reads as absent."""
+    return os.path.isfile(p) if leaf in FILE_LEAVES else os.path.isdir(p)
+
+
+def _choose(leaf: str, old: Path, new: Path) -> tuple[Path, str]:
+    """Rules 2-4 above, for LEAF at OLD and NEW."""
+    if _there(leaf, old) and not _same(old, new):
+        return old, OLD
+    if _there(leaf, new):
+        return new, NEW
+    return new, FRESH_NEW
+
+
+def _stranded(leaf: str, chosen: tuple[Path, str], new: Path) -> Path | None:
+    """NEW when CHOSEN is OLD while new holds something of its own: a file
+    leaf's file, or a folder with any entry (an empty folder is not
+    stranded, as tools' `leaf_stranded`; one that cannot be listed is, since
+    it cannot be shown empty). Names are listed; nothing in new is read."""
+    if chosen[1] != OLD or not _there(leaf, new):
+        return None
+    if leaf in FILE_LEAVES:
+        return new
+    try:
+        return new if os.listdir(new) else None
+    except OSError:
+        return new
+
+
+def state_leaf(leaf: str, env: Mapping[str, str] | None = None) -> tuple[Path, str]:
+    """(path, source) for LEAF under the rule above: `$SESSIONMAIL_HOME/<leaf>`
+    when that is set and not empty; else old `old_state_dir(env)/<leaf>` or
+    new `state_dir(env)/<leaf>` (HOME from ENV) by rules 2-4. Never writes."""
+    leaf = _leaf(leaf)
+    env = os.environ if env is None else env
+    if env.get("SESSIONMAIL_HOME") or "":
+        return old_state_dir(env) / leaf, OVERRIDE
+    return _choose(leaf, old_state_dir(env) / leaf, state_dir(env) / leaf)
+
+
+def state_path(leaf: str, env: Mapping[str, str] | None = None) -> Path:
+    """Where LEAF is read and written: `state_leaf`'s path."""
+    return state_leaf(leaf, env)[0]
+
+
+def state_stranded(leaf: str, env: Mapping[str, str] | None = None) -> Path | None:
+    """LEAF's new path when it is STRANDED (old used, new real and holding
+    something), else None. A read-only report: a human decides."""
+    leaf = _leaf(leaf)
+    return _stranded(leaf, state_leaf(leaf, env), state_dir(env) / leaf)
+
+
+def _account_home() -> Path:
+    from . import _operator          # here, not at import: _operator imports this module
+    return _operator.settings_home()
+
+
+def account_state_leaf(leaf: str) -> tuple[Path, str]:
+    """`state_leaf` for a leaf rooted at the ACCOUNT's home
+    (`_operator.settings_home()`, the password database's), never `$HOME` or
+    `$SESSIONMAIL_HOME`: no environment variable moves it (pager-filters D3,
+    10.28, for `rules.locked`; the puller's `pull.state_dir` default reads
+    the same home). Old `<home>/.sessionmail/<leaf>` while it is real, else
+    new `<home>/.sessionkit/mail/state/<leaf>` (there, or the fresh
+    default), by rules 2-4; no override."""
+    leaf = _leaf(leaf)
+    home = _account_home()
+    return _choose(leaf, home / OLD_STATE_DIR / leaf, home / STATE_DIR / leaf)
+
+
+def account_state_path(leaf: str) -> Path:
+    """Where an account-rooted LEAF is read and written."""
+    return account_state_leaf(leaf)[0]
+
+
+def account_state_stranded(leaf: str) -> Path | None:
+    """`state_stranded` for an account-rooted LEAF."""
+    leaf = _leaf(leaf)
+    return _stranded(leaf, account_state_leaf(leaf), _account_home() / STATE_DIR / leaf)
+
+
+#: The leaf that holds one folder per seat KEY (`seat-keys/<address>/`:
+#: `id_ed25519`, `seat.pub`, the birth cert, the agent's socket).
+SEAT_KEYS = "seat-keys"
+
+
+def seat_keys_leaf(env: Mapping[str, str] | None = None) -> tuple[Path, str]:
+    """(path, source) for the seat-keys folder: the rule above, with `~` and
+    both roots under ENV's HOME, the way the seat-agent wrapper reads them
+    under launchd, where the process is the job's:
+
+      1. `$SESSIONMAIL_HOME/seat-keys` when that is set and not empty (a
+         leading `~` is ENV's HOME), `override`;
+      2. `$HOME/.sessionmail/seat-keys` while it is a real folder that is
+         not the new one, `old`: an existing host's keys never move;
+      3. `$HOME/.sessionkit/mail/state/seat-keys` when it is a folder, `new`;
+      4. else that same new path, `fresh-new`: a fresh host mints there.
+
+    The wrapper (`seat/seat-agent`) restates this in bash, and a test pins
+    the two equal case by case. Never writes."""
+    env = os.environ if env is None else env
+    home = _home(env)
+    given = env.get("SESSIONMAIL_HOME") or ""
+    if given:
+        if given == "~" or given.startswith("~/"):
+            given = str(home) + given[1:]
+        return Path(os.path.abspath(given)) / SEAT_KEYS, OVERRIDE
+    return _choose(SEAT_KEYS, home / OLD_STATE_DIR / SEAT_KEYS, home / STATE_DIR / SEAT_KEYS)
+
+
+def seat_keys_dir(env: Mapping[str, str] | None = None) -> Path:
+    """Where seat keys are minted and read: `seat_keys_leaf`'s path."""
+    return seat_keys_leaf(env)[0]
 
 
 def log_dir(env: Mapping[str, str] | None = None) -> Path:
@@ -388,6 +600,124 @@ def monitor_host(env: Mapping[str, str] | None = None) -> HostMonitor:
                                "only the boolean false turns the monitor off")
 
 
+# ── one switch per mail hook ────────────────────────────────────────────────
+#
+# Four host keys, one per mail hook, read by ONE rule: a key that is absent
+# means ON, only the boolean `false` turns its hook off, and a value that is
+# not a boolean is ignored (ON) with a reason. They are read from the host
+# file alone and raw, the way `monitor` is, and never fold in `hooks`: where
+# `hooks` also governs a hook (the ride-along, the Stop nag, the birth's box
+# line), each hook ANDs the two itself. A file that is a fault for `hooks`
+# (no `hooks` key, `"hooks": "true"`) can still say `"birth": false`, and a
+# file with `"hooks": false` and no per-hook key leaves all four switches
+# ON.
+
+RIDE_ALONG = "ride_along"   # the ride-along: PostToolBatch and UserPromptSubmit
+STOP_NAG = "stop_nag"       # the Stop hook's not-listening nag
+MAIL_GUARD = "mail_guard"   # the mail guard: PreToolUse, Bash and MCP
+BIRTH = "birth"             # the session-start box birth
+
+#: The four switch keys, in the order the verb lists them. Each is a flat,
+#: top-level boolean in the host file, beside `hooks` and `monitor`.
+SWITCH_KEYS: tuple[str, ...] = (RIDE_ALONG, STOP_NAG, MAIL_GUARD, BIRTH)
+
+
+@dataclass(frozen=True)
+class Switch:
+    """What the host file says about one hook's switch.
+
+    `on` is False only for the boolean `false`. `set` is True when the file
+    names the key at all, whatever its value, so a reader can list every
+    switch the file sets. `ignored` says why a value that was there decided
+    nothing (it is not a boolean): the switch is then ON. It is empty for
+    an absent key, `true` and `false`."""
+
+    on: bool = True
+    set: bool = False
+    ignored: str = ""
+
+
+@dataclass(frozen=True)
+class Switches:
+    """The four switches, one field per key of SWITCH_KEYS. `why` is
+    non-empty only when the file is there and decided nothing for any of
+    them: it could not be read, it is not JSON, or its top level is not an
+    object. Every switch is then ON. A missing file is simply not there:
+    all four ON, and no `why`."""
+
+    ride_along: Switch = Switch()
+    stop_nag: Switch = Switch()
+    mail_guard: Switch = Switch()
+    birth: Switch = Switch()
+    why: str = ""
+
+    def __getitem__(self, key: str) -> Switch:
+        """The switch named KEY, one of SWITCH_KEYS; KeyError for any other."""
+        if key not in SWITCH_KEYS:
+            raise KeyError(key)
+        return getattr(self, key)
+
+
+#: The most of an ignored value's JSON that its reason quotes. The reason is
+#: said to the model (the ride-along's switch_ignored line) and listed by the
+#: verb, so a long string in the file must never land in either whole: past
+#: this many characters it is cut, and ends in "...". The JSON is ASCII (its
+#: escapes are kept), so the cut can split an escape but never a character.
+SHOWN_VALUE_MAX = 40
+
+
+def _shown_value(value: object) -> str:
+    """VALUE as its reason quotes it: its JSON, bounded by SHOWN_VALUE_MAX,
+    or its kind when it has no JSON. Never raises."""
+    try:
+        shown = json.dumps(value)
+    except (ValueError, RecursionError):   # never raises: name its kind instead
+        return f"a {_JSON_KIND.get(type(value), type(value).__name__)}"
+    if len(shown) > SHOWN_VALUE_MAX:
+        shown = shown[:SHOWN_VALUE_MAX - 3] + "..."
+    return shown
+
+
+def _switch(data: Mapping[str, object], key: str) -> Switch:
+    """KEY in DATA, a JSON object, under the one rule."""
+    if key not in data:
+        return Switch()
+    value = data[key]
+    if value is False:
+        return Switch(on=False, set=True)
+    if value is True:
+        return Switch(set=True)
+    shown = _shown_value(value)
+    return Switch(set=True, ignored=f'"{key}": {shown} in {SHOWN} is ignored: '
+                                     "only the boolean false turns it off, so it is on")
+
+
+def switches(env: Mapping[str, str] | None = None) -> Switches:
+    """The host file's four per-hook switches. Reads the file alone, raw,
+    and never `hooks`. Never writes, never raises for the file's sake: a
+    file that is missing, cannot be read, is not JSON or is not a JSON
+    object gives four switches that are ON."""
+    p = path(env)
+    try:
+        raw = p.read_bytes()
+    except FileNotFoundError as err:
+        if os.path.lexists(p):   # a dangling symlink: something IS there
+            return Switches(why=f"{SHOWN} could not be read ({_os_why(err)}, a symlink to "
+                                "nothing), so every switch is on")
+        return Switches()
+    except OSError as err:
+        return Switches(why=f"{SHOWN} could not be read ({_os_why(err)}), so every switch is on")
+    try:
+        data = json.loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, ValueError, RecursionError):
+        return Switches(why=f"{SHOWN} is not JSON, so every switch is on")
+    if not isinstance(data, dict):
+        kind = _JSON_KIND.get(type(data), type(data).__name__)
+        return Switches(why=f"the top level of {SHOWN} is a {kind}, not an object, "
+                            "so every switch is on")
+    return Switches(**{key: _switch(data, key) for key in SWITCH_KEYS})
+
+
 def host_value(key: str, env: Mapping[str, str] | None = None) -> tuple[bool, object, str]:
     """KEY in the host file: `(present, value, why)`. WHY is non-empty only
     when the file is there and cannot be read or is not a JSON object; a
@@ -409,6 +739,301 @@ def host_value(key: str, env: Mapping[str, str] | None = None) -> tuple[bool, ob
     if key not in data:
         return False, None, ""
     return True, data[key], ""
+
+
+# ── the frozen-turn watch: its switch and its two numbers ───────────────────
+#
+# Four flat, top-level keys in the host file,
+# beside `hooks` and `monitor`, read raw from the host file alone, the way
+# `monitor` is, and never folded into `hooks`. They are read at each of the
+# monitor's checks, not once at start, so a switch turned off takes effect
+# within one check.
+#
+# - `frozen_watch`: the detector's switch. OFF unless it is the boolean
+#   `true` (the `hooks` rule, `_parse`): a new watcher that reads transcripts
+#   arrives off, so a deploy changes no seat. Any other value is ignored with
+#   a reason, and the detector stays off.
+# - `frozen_rules`: which rules run, "silence" (rule 2a) and "chain" (rule
+#   2b). The default is ["silence"] alone: rule 2b is opt-in, and runs only
+#   on a host that names it. An unknown name is ignored with a reason.
+# - `frozen_after_seconds` (N, rule 2a) and `frozen_chain_seconds` (R, rule
+#   2b): seconds, each raised to its FLOOR when it asks for less, and the
+#   reason names the floor and its inputs.
+#
+# There is no notice address: this build detects only and sends no mail.
+
+FROZEN_WATCH = "frozen_watch"
+FROZEN_RULES = "frozen_rules"
+FROZEN_AFTER = "frozen_after_seconds"
+FROZEN_CHAIN = "frozen_chain_seconds"
+
+#: The four keys, in the order a reader lists them.
+FROZEN_KEYS: tuple[str, ...] = (FROZEN_WATCH, FROZEN_RULES, FROZEN_AFTER, FROZEN_CHAIN)
+
+#: The two rules' names, as `frozen_rules` spells them.
+SILENCE, CHAIN = "silence", "chain"
+FROZEN_RULE_NAMES: tuple[str, ...] = (SILENCE, CHAIN)
+#: The rules that run when the file names none.
+FROZEN_RULES_DEFAULT: tuple[str, ...] = (SILENCE,)
+
+#: N's and R's defaults, in seconds.
+FROZEN_AFTER_DEFAULT = 720
+FROZEN_CHAIN_DEFAULT = 900
+
+#: The floors: max(FROZEN_FLOOR_MIN, the inputs + FROZEN_FLOOR_MARGIN).
+FROZEN_FLOOR_MIN = 600
+FROZEN_FLOOR_MARGIN = 120
+
+#: Claude Code's own timers the floors follow, read from the monitor's
+#: environment (inherited from the claude that started it), in ms. A value
+#: that is unset or cannot be read is the default, in seconds (Claude
+#: Code's own: API_TIMEOUT_MS 600 s; the first-byte deadline 180 s).
+API_TIMEOUT_VAR = "API_TIMEOUT_MS"
+FIRST_BYTE_VAR = "CLAUDE_STREAM_FIRST_BYTE_TIMEOUT_MS"
+API_TIMEOUT_DEFAULT = 600
+FIRST_BYTE_DEFAULT = 180
+
+#: The most of an ignored value's JSON a reason quotes; past it, "...".
+#: Its own constant, so this block shares nothing with the other settings
+#: readers; fold it into a shared bound if one is added.
+_FROZEN_SHOWN_MAX = 40
+
+
+def _frozen_shown(value: object) -> str:
+    """VALUE as a reason quotes it: its JSON, bounded, or its kind when it
+    has no JSON. Never raises."""
+    try:
+        shown = json.dumps(value)
+    except (ValueError, RecursionError):
+        return f"a {_JSON_KIND.get(type(value), type(value).__name__)}"
+    if len(shown) > _FROZEN_SHOWN_MAX:
+        shown = shown[:_FROZEN_SHOWN_MAX - 3] + "..."
+    return shown
+
+
+@dataclass(frozen=True)
+class EnvSeconds:
+    """One of Claude Code's timers, as the floor reads it. SECONDS is the
+    value the floor uses. SOURCE says where it came from, in the words a
+    reason quotes: `API_TIMEOUT_MS=300000`, or `API_TIMEOUT_MS unset, so 600
+    s`. IGNORED is non-empty when the variable was set and could not be read
+    (the default is then used)."""
+
+    var: str
+    seconds: float
+    source: str
+    ignored: str = ""
+
+
+@dataclass(frozen=True)
+class FrozenSeconds:
+    """N or R, resolved. SECONDS is what the rule waits; ASKED is what the
+    file asked for (the default when it asked nothing usable); FLOOR is the
+    least it may be. RAISED is True when ASKED was under FLOOR, so SECONDS is
+    FLOOR, and FLOORED says so in words, naming the floor and its inputs:
+    the gauge's floor note. IGNORED says why the
+    file's value decided nothing (it is not a positive number): ASKED is
+    then the default."""
+
+    key: str
+    seconds: float
+    asked: float
+    floor: float
+    raised: bool = False
+    floored: str = ""
+    ignored: str = ""
+
+
+@dataclass(frozen=True)
+class FrozenWatch:
+    """The frozen-turn watch, resolved: the one typed object the detector
+    and the gauge read.
+
+    `on` is True only for `"frozen_watch": true`. `rules` is the rules that
+    run, in FROZEN_RULE_NAMES order. `after` is N (rule 2a) and `chain` is R
+    (rule 2b), each with its floor. `ignored` lists, in key order, every
+    value that decided nothing and why. `why` is non-empty only when the
+    file is there and decided nothing at all (it cannot be read, it is not
+    JSON, or its top level is not an object): the watch is then off. A
+    missing file is simply not there: off, the defaults, and no `why`.
+    `reasons` is every reason in one tuple: the file's `why`, each ignored
+    value, each timer that could not be read, then each floor applied."""
+
+    on: bool
+    rules: tuple[str, ...]
+    after: FrozenSeconds
+    chain: FrozenSeconds
+    api_timeout: EnvSeconds
+    first_byte: EnvSeconds
+    ignored: tuple[str, ...] = ()
+    why: str = ""
+
+    @property
+    def after_seconds(self) -> float:
+        """N, in seconds: what rule 2a waits."""
+        return self.after.seconds
+
+    @property
+    def chain_seconds(self) -> float:
+        """R, in seconds: what rule 2b waits."""
+        return self.chain.seconds
+
+    @property
+    def floored(self) -> tuple[str, ...]:
+        """Each floor applied, in words: N's, then R's."""
+        return tuple(n.floored for n in (self.after, self.chain) if n.raised)
+
+    @property
+    def reasons(self) -> tuple[str, ...]:
+        """Every reason, in the order the class docstring names."""
+        head = (self.why,) if self.why else ()
+        envs = tuple(e.ignored for e in (self.api_timeout, self.first_byte) if e.ignored)
+        return head + self.ignored + envs + self.floored
+
+
+def _env_seconds(env: Mapping[str, str], var: str, default: int) -> EnvSeconds:
+    """VAR, a count of milliseconds, in seconds; DEFAULT when it is unset,
+    empty, or not a whole number of ms above zero (said in `ignored`)."""
+    raw = (env.get(var) or "").strip()
+    if not raw:
+        return EnvSeconds(var, default, f"{var} unset, so {default} s")
+    try:
+        ms = int(raw, 10)
+    except ValueError:
+        ms = 0
+    if ms <= 0:
+        shown = _frozen_shown(raw)
+        return EnvSeconds(var, default, f"{var} unreadable, so {default} s",
+                          ignored=f"{var}={shown} is ignored: it is not a whole number of "
+                                  f"milliseconds above zero, so the floor takes {default} s")
+    return EnvSeconds(var, ms / 1000, f"{var}={ms}")
+
+
+def _seconds_text(s: float) -> str:
+    """S seconds as a reason says them: `600 s`, `0.5 s`."""
+    return f"{int(s)} s" if float(s).is_integer() else f"{s:g} s"
+
+
+def _frozen_number(data: Mapping[str, object], key: str, default: int,
+                   floor: float, inputs: str) -> FrozenSeconds:
+    """KEY in DATA: a JSON number above zero (never a boolean, never NaN or
+    an infinity), else DEFAULT with a reason; then raised to FLOOR if under
+    it, with a reason naming FLOOR and INPUTS (how FLOOR was worked out)."""
+    import math   # here, so this block leaves the module's imports alone
+
+    ignored = ""
+    asked: float = default
+    if key in data:
+        value = data[key]
+        if (isinstance(value, (int, float)) and not isinstance(value, bool)
+                and math.isfinite(value) and value > 0):
+            asked = value
+        else:
+            ignored = (f'"{key}": {_frozen_shown(value)} in {SHOWN} is ignored: '
+                       f"it is not a number of seconds above zero, so {_seconds_text(default)}")
+    if asked < floor:
+        floored = (f"{key} {_seconds_text(asked)} is raised to {_seconds_text(floor)}, "
+                   f"the floor: {inputs}")
+        return FrozenSeconds(key, floor, asked, floor, True, floored, ignored)
+    return FrozenSeconds(key, asked, asked, floor, ignored=ignored)
+
+
+def _frozen_rules(data: Mapping[str, object]) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    """`frozen_rules` in DATA: (the rules that run, the reasons). A list of
+    names; an unknown name, or an entry that is not a string, is ignored
+    with a reason. Not a list, or a list naming no known rule, is the
+    default with a reason. The rules come back in FROZEN_RULE_NAMES order."""
+    default = ", ".join(FROZEN_RULES_DEFAULT)
+    if FROZEN_RULES not in data:
+        return FROZEN_RULES_DEFAULT, ()
+    value = data[FROZEN_RULES]
+    if not isinstance(value, list):
+        return FROZEN_RULES_DEFAULT, (
+            f'"{FROZEN_RULES}": {_frozen_shown(value)} in {SHOWN} is ignored: '
+            f"it is not a list of rule names, so {default}",)
+    why: list[str] = []
+    named: set[str] = set()
+    known = " or ".join(f'"{n}"' for n in FROZEN_RULE_NAMES)
+    for item in value:
+        if isinstance(item, str) and item in FROZEN_RULE_NAMES:
+            named.add(item)
+        else:
+            why.append(f'"{FROZEN_RULES}" entry {_frozen_shown(item)} in {SHOWN} is ignored: '
+                       f"the rules are {known}")
+    if not named:
+        why.append(f'"{FROZEN_RULES}" in {SHOWN} names no rule, so {default}')
+        return FROZEN_RULES_DEFAULT, tuple(why)
+    return tuple(n for n in FROZEN_RULE_NAMES if n in named), tuple(why)
+
+
+def _host_object(env: Mapping[str, str] | None) -> tuple[dict | None, str]:
+    """The host file as a JSON object: (data, why). DATA is None and WHY
+    empty when there is no file; DATA is None and WHY says what is wrong
+    when it cannot be read, is not JSON, or is not an object."""
+    p = path(env)
+    try:
+        raw = p.read_bytes()
+    except FileNotFoundError:
+        if os.path.lexists(p):   # a dangling symlink: something IS there
+            return None, f"{SHOWN} is a symlink to nothing"
+        return None, ""
+    except OSError as err:
+        return None, f"{SHOWN} could not be read ({_os_why(err)})"
+    try:
+        data = json.loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, ValueError):
+        return None, f"{SHOWN} is not JSON"
+    if not isinstance(data, dict):
+        kind = _JSON_KIND.get(type(data), type(data).__name__)
+        return None, f"{SHOWN}'s top level is a {kind}, not an object"
+    return data, ""
+
+
+def frozen(env: Mapping[str, str] | None = None) -> FrozenWatch:
+    """The frozen-turn watch's four keys, resolved, read now.
+
+    The keys come from the host file alone, raw (HOME from ENV, default
+    `os.environ`); the floors' inputs, `API_TIMEOUT_MS` and
+    `CLAUDE_STREAM_FIRST_BYTE_TIMEOUT_MS`, from ENV. Never writes, never
+    raises for the file's or the environment's sake:
+
+    - N's floor is max(600, API_TIMEOUT_MS/1000 + 120);
+    - R's floor is max(600, first-byte s + API_TIMEOUT_MS/1000 + 120);
+    - a timer unset or unreadable is its default, 600 s and 180 s, so the
+      floors are 720 s and 900 s.
+
+    A file that is missing gives the watch OFF with the defaults; one that
+    cannot be read, is not JSON or is not an object gives it OFF with the
+    defaults and a `why`."""
+    env = os.environ if env is None else env
+    api = _env_seconds(env, API_TIMEOUT_VAR, API_TIMEOUT_DEFAULT)
+    first = _env_seconds(env, FIRST_BYTE_VAR, FIRST_BYTE_DEFAULT)
+    after_floor = max(FROZEN_FLOOR_MIN, api.seconds + FROZEN_FLOOR_MARGIN)
+    chain_floor = max(FROZEN_FLOOR_MIN, first.seconds + api.seconds + FROZEN_FLOOR_MARGIN)
+    after_inputs = (f"max({FROZEN_FLOOR_MIN} s, {api.source} + {FROZEN_FLOOR_MARGIN} s)")
+    chain_inputs = (f"max({FROZEN_FLOOR_MIN} s, {first.source} + {api.source} "
+                    f"+ {FROZEN_FLOOR_MARGIN} s)")
+
+    data, why = _host_object(env)
+    if data is None:
+        data = {}
+    ignored: list[str] = []
+
+    on = False
+    if FROZEN_WATCH in data:
+        value = data[FROZEN_WATCH]
+        if value is True:
+            on = True
+        elif value is not False:   # "true" and 1 are OFF, never truthy-on
+            ignored.append(f'"{FROZEN_WATCH}": {_frozen_shown(value)} in {SHOWN} is ignored: '
+                           "only the boolean true turns it on, so it is off")
+
+    rules, rules_why = _frozen_rules(data)
+    ignored.extend(rules_why)
+    after = _frozen_number(data, FROZEN_AFTER, FROZEN_AFTER_DEFAULT, after_floor, after_inputs)
+    chain = _frozen_number(data, FROZEN_CHAIN, FROZEN_CHAIN_DEFAULT, chain_floor, chain_inputs)
+    ignored.extend(n.ignored for n in (after, chain) if n.ignored)
+    return FrozenWatch(on, rules, after, chain, api, first, tuple(ignored), why)
 
 
 # ── the keys, and the ONE reader every key is read by ──────────────────────
@@ -441,14 +1066,11 @@ class Key:
     """One key: its dotted NAME, the variable that wins over the file, and
     the DEFAULT `setting` gives when neither sets it. A default of None
     means the consumer works its default out at use (`hostname -s`, ask
-    tailscale, the generator's lookup, `postconf`). `parent` is True for
-    `root` alone: its variable names the AGENTS root, so the key's value is
-    that path's parent."""
+    tailscale, the generator's lookup, `postconf`)."""
 
     name: str
     var: str
     default: object = None
-    parent: bool = False
 
     @property
     def path(self) -> tuple[str, ...]:
@@ -457,12 +1079,16 @@ class Key:
 
 #: Every key, by its dotted name: the ONE table.
 KEYS: dict[str, Key] = {k.name: k for k in (
-    Key("root", "SESSIONMAIL_ROOT", "~/.mail", parent=True),
+    # The mail root. ONE name: the variable names the same thing as the key
+    # (it once named the boxes folder). `_maildir.DEFAULT_MAIL_ROOT` is this
+    # default's other spelling; a test pins them equal.
+    Key("root", "SESSIONMAIL_ROOT", "~/.sessionkit/mail"),
     Key("host", "SESSIONMAIL_HOST"),
     Key(CARRIER_KEY, CARRIER_VAR, CARRIER_DROP),
     Key("magicdns_suffix", "MAGICDNS_SUFFIX"),
     Key("notmuch.command", "SESSIONMAIL_NOTMUCH", "notmuch"),
     Key("notmuch.timeout", "SESSIONMAIL_NOTMUCH_TIMEOUT", 10),
+    Key("notmuch.refresh", "SESSIONMAIL_NOTMUCH_REFRESH", 2),
     Key(".".join(NOTMUCH_PROFILE_KEY), "SESSIONMAIL_NOTMUCH_PROFILE", "sessionkit"),
     Key("postfix.generator", "SESSIONMAIL_VMAILBOX_GEN"),
     Key("postfix.relay_domain", "SESSIONMAIL_RELAY_DOMAIN", "relay.home"),
@@ -478,7 +1104,7 @@ KEYS: dict[str, Key] = {k.name: k for k in (
     Key("pull.listener", "SESSIONMAIL_PULL_LISTENER"),
     Key("pull.vmailbox", "SESSIONMAIL_PULL_VMAILBOX"),
     Key("pull.boxes_file", "SESSIONMAIL_PULL_BOXES_FILE", "~/.sessionkit/mail/settings/pull.boxes"),
-    Key("pull.state_dir", "SESSIONMAIL_PULL_STATE_DIR", "~/.sessionmail/puller"),
+    Key("pull.state_dir", "SESSIONMAIL_PULL_STATE_DIR", "~/.sessionkit/mail/state/puller"),
     Key("pull.local_domain", "SESSIONMAIL_PULL_LOCAL_DOMAIN"),
     Key("pull.own_ips", "SESSIONMAIL_PULL_OWN_IPS"),
     Key("pull.unsorted_box", "SESSIONMAIL_PULL_UNSORTED_BOX"),
@@ -529,14 +1155,15 @@ def setting(key: str, env: Mapping[str, str] | None = None) -> Setting:
     for the file's sake (an unknown KEY is a KeyError: a bug, not a host).
 
     The value is never judged here: `carrier_why` judges the carrier, and
-    each consumer judges its own key. The older spellings of a variable
-    (`SESSION_MAIL_ROOT`, `MAIL_ROOT`, `SESSION_MAIL_HOST`) are the
-    consumer's to read, in today's order, before it falls back to this."""
+    each consumer judges its own key. The older spelling of the host
+    variable (`SESSION_MAIL_HOST`) is the consumer's to read before it
+    falls back to this; the older root spellings (`SESSION_MAIL_ROOT`,
+    `MAIL_ROOT`) are retired and read by nothing (`_maildir`)."""
     k = KEYS[key]
     env = os.environ if env is None else env
     raw = (env.get(k.var) or "").strip()
     if raw:
-        return Setting(str(Path(raw).parent) if k.parent else raw, VARIABLE)
+        return Setting(raw, VARIABLE)
     from . import _operator          # here, not at import: _operator imports this module
     try:
         from sessiontools import settings as st
@@ -1031,6 +1658,10 @@ REFUSED_READBACK = "readback"    # written, and the read-back disagrees: a race 
 #: How user text shows OLD_RELATIVE.
 SHOWN_OLD = f"~/{OLD_RELATIVE.as_posix()}"
 
+#: The legacy key `set_hooks` writes; `set_switch` writes it or one of
+#: SWITCH_KEYS.
+HOOKS_KEY = "hooks"
+
 #: `HooksResult.was` when there was no `hooks` member to report.
 class _NoKey:
     def __repr__(self) -> str:
@@ -1053,7 +1684,11 @@ class HooksResult:
     parse). `made` says this call found no file and left one (`converted`:
     from the old file); `wrote` that this call replaced the file's bytes;
     `already` that it said what was asked, so nothing was touched.
-    `refused` is a `REFUSED_*` or ""; `why` names it."""
+    `refused` is a `REFUSED_*` or ""; `why` names it. `key` is the member
+    written: `hooks`, or one of SWITCH_KEYS (`set_switch`). For a switch,
+    `state` and `before` say what the file says about THAT key alone (ON,
+    or OFF for the boolean false; MISSING for no file), and `was` is that
+    key's value."""
 
     want: bool
     path: Path
@@ -1066,6 +1701,7 @@ class HooksResult:
     already: bool = False
     refused: str = ""
     why: str = ""
+    key: str = HOOKS_KEY
 
     @property
     def flipped(self) -> bool:
@@ -1117,11 +1753,54 @@ def _judge(p: Path) -> tuple[bytes | None, State, object, str]:
     return raw, said.state, was, ""
 
 
+def _judge_key(p: Path, key: str) -> tuple[bytes | None, State, object, str]:
+    """`_judge` for KEY: `hooks` as `_judge` reads it; a switch as
+    `switches` reads it, alone. A switch's STATE is OFF for the boolean
+    false and ON otherwise (absent or ignored included); MALFORMED when the
+    file is not a JSON object, so nothing about the switch can be said. WAS
+    is the switch's value, `NO_KEY` without one."""
+    raw, state, was, why = _judge(p)
+    if key == HOOKS_KEY or raw is None:
+        return raw, state, was, why
+    try:
+        data = json.loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, ValueError, RecursionError):
+        return raw, MALFORMED, None, ""
+    if not isinstance(data, dict):
+        return raw, MALFORMED, None, ""
+    value = data.get(key, NO_KEY)
+    return raw, (OFF if value is False else ON), value, ""
+
+
+def _key_state(key: str, env: Mapping[str, str] | None) -> tuple[State, str]:
+    """What the file says NOW about KEY, and why when it is a fault:
+    `read` for `hooks`; for a switch, ON or OFF through `switches` (MISSING
+    for no file, MALFORMED with the reader's reason for a file that decided
+    nothing, and ON with the ignored reason for a value that is not a
+    boolean)."""
+    if key == HOOKS_KEY:
+        said = read(env)
+        return said.state, said.why
+    if not os.path.lexists(path(env)):
+        return MISSING, ""
+    sw = switches(env)
+    if sw.why:
+        return MALFORMED, sw.why
+    one = sw[key]
+    return (ON if one.on else OFF), one.ignored
+
+
 def set_hooks(on: bool, env: Mapping[str, str] | None = None) -> HooksResult:
-    """`"hooks": ON` in the host file, through `ensure`, `with_value` and
-    one atomic replace. Never raises for the file's
-    sake; every refusal is a `HooksResult` with `refused` set, and the
-    verb's own write never happened unless `wrote` is True.
+    """`"hooks": ON` in the host file: `set_switch("hooks", ON, env)`."""
+    return set_switch(HOOKS_KEY, on, env)
+
+
+def set_switch(key: str, on: bool, env: Mapping[str, str] | None = None) -> HooksResult:
+    """`"KEY": ON` in the host file, through `ensure`, `with_value` and
+    one atomic replace. KEY is `hooks` or one of SWITCH_KEYS (ValueError
+    for any other). Only that one member changes. Never raises for the
+    file's sake; every refusal is a `HooksResult` with `refused` set, and
+    the verb's own write never happened unless `wrote` is True.
 
     0. Root, or sudo: refused (Q8), nothing written.
     1. Stranded, or copied, or either folder could not be checked:
@@ -1140,67 +1819,76 @@ def set_hooks(on: bool, env: Mapping[str, str] | None = None) -> HooksResult:
        after the write.
 
     `SESSIONMAIL_PAGER` is never read here: the file is the host's switch."""
+    if key != HOOKS_KEY and key not in SWITCH_KEYS:
+        raise ValueError(f"not a switch: {key!r}")
     env = dict(os.environ if env is None else env)
     p = path(env)
+    # Who may write at all. A further refusal of this kind (say, of
+    # `mail_guard` off from inside an agent session) is one more check
+    # here, beside the root one, with its own REFUSED_* constant.
     root = _as_root(env)
     if root:
-        return HooksResult(on, p, refused=REFUSED_ROOT, why=root)
+        return HooksResult(on, p, refused=REFUSED_ROOT, why=root, key=key)
     try:
         is_stranded = stranded(env)
     except OSError as err:
-        return HooksResult(on, p, refused=REFUSED_UNCHECKED, why=unchecked_why(err))
+        return HooksResult(on, p, refused=REFUSED_UNCHECKED, why=unchecked_why(err), key=key)
     if is_stranded:
         try:
             is_copied = copied(env)
         except OSError as err:
-            return HooksResult(on, p, refused=REFUSED_UNCHECKED, why=unchecked_why(err, SHOWN_DIR))
+            return HooksResult(on, p, refused=REFUSED_UNCHECKED, why=unchecked_why(err, SHOWN_DIR),
+                               key=key)
         kind = REFUSED_COPIED if is_copied else REFUSED_STRANDED
-        return HooksResult(on, p, refused=kind, why=STRANDED_WHY)
+        return HooksResult(on, p, refused=kind, why=STRANDED_WHY, key=key)
 
     there = os.path.lexists(p)
     converting = False
     if there:
-        raw, before, was, why = _judge(p)
+        raw, before, was, why = _judge_key(p, key)
         if raw is None:
-            return HooksResult(on, p, before=before, refused=REFUSED_FAULT, why=why)
+            return HooksResult(on, p, before=before, refused=REFUSED_FAULT, why=why, key=key)
         try:
-            body = with_value(raw, "hooks", on)
+            body = with_value(raw, key, on)
         except ValueError as err:
-            return HooksResult(on, p, before=before, was=was, refused=REFUSED_FAULT, why=str(err))
+            return HooksResult(on, p, before=before, was=was, refused=REFUSED_FAULT, why=str(err),
+                               key=key)
         if body is None:
-            return HooksResult(on, p, state=before, before=before, was=was, already=True)
+            return HooksResult(on, p, state=before, before=before, was=was, already=True, key=key)
     else:
         before, was = MISSING, None
         old = _old_body(env)
         if old is not None:
             converting = True
             try:
-                with_value(old, "hooks", on)
+                with_value(old, key, on)
             except ValueError as err:
-                return HooksResult(on, old_path(env), refused=REFUSED_FAULT, why=str(err))
+                return HooksResult(on, old_path(env), refused=REFUSED_FAULT, why=str(err), key=key)
 
     made_now = False
     if not there:
         settings, _created = ensure(env)
         if not os.path.lexists(p):
             return HooksResult(on, p, refused=REFUSED_FAULT,
-                               why=settings.why or "the file could not be made")
+                               why=settings.why or "the file could not be made", key=key)
         made_now = True
     else:
         ensure(env)          # the old-path link and the schema; never touches the file
 
     # From here a refusal comes after `ensure` (only a race, an I/O error or
     # a bug reaches one): it says what the file reads as now.
-    done = {"before": before, "was": was, "made": made_now, "converted": converting and made_now}
+    done = {"before": before, "was": was, "made": made_now, "converted": converting and made_now,
+            "key": key}
 
     def refuse(why: str) -> HooksResult:
-        return HooksResult(on, p, state=read(env).state, refused=REFUSED_FAULT, why=why, **done)
+        return HooksResult(on, p, state=_key_state(key, env)[0], refused=REFUSED_FAULT, why=why,
+                           **done)
 
     raw, _state, _was, why = _judge(p)
     if raw is None:
         return refuse(why)
     try:
-        body = with_value(raw, "hooks", on)
+        body = with_value(raw, key, on)
     except ValueError as err:
         return refuse(str(err))
     wrote = False
@@ -1210,8 +1898,8 @@ def set_hooks(on: bool, env: Mapping[str, str] | None = None) -> HooksResult:
         except OSError as err:
             return refuse(f"could not be written ({_os_why(err)})")
         wrote = True
-    after = read(env)
-    result = HooksResult(on, p, state=after.state, wrote=wrote, **done)
-    if after.state != (ON if on else OFF):
-        return dataclasses.replace(result, refused=REFUSED_READBACK, why=after.why)
+    state, state_why = _key_state(key, env)
+    result = HooksResult(on, p, state=state, wrote=wrote, **done)
+    if state != (ON if on else OFF):
+        return dataclasses.replace(result, refused=REFUSED_READBACK, why=state_why)
     return result

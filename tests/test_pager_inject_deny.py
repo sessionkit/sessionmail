@@ -26,6 +26,7 @@ from pathlib import Path
 import pytest
 
 from sessionmail import _injectlog, _tokens
+import _leaves
 
 ROOT = Path(__file__).resolve().parents[1]
 HOOK = ROOT / "hooks" / "mail-guard" / "hook.py"
@@ -128,7 +129,8 @@ def test_the_deny_writes_where_sessionmail_writes():
     run()
     assert (log_dir() / _injectlog.FILE).exists()
     assert guard.log_dir(SESSION) == str(log_dir())
-    assert guard.log_dir(SESSION).endswith(f"/.session/sessions/{SESSION}/log/mail")
+    # the session dir sessiontools names for this HOME (pinned, `_leaves`)
+    assert guard.log_dir(SESSION) == str(_leaves.session_dir(SESSION) / "log" / "mail")
 
 
 def test_the_modes_are_sessionmails():

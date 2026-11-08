@@ -42,13 +42,13 @@ _n = 0
 
 @pytest.fixture
 def rig(tmp_path, monkeypatch):
-    root = tmp_path / "mail"
-    root.mkdir()
+    root = tmp_path / "mail" / "stores"
+    root.mkdir(parents=True)
     home = tmp_path / "sessionmail"
     fake = write_fake(tmp_path / "fake-notmuch")
     payload = tmp_path / "answer.json"
     payload.write_text(json.dumps(forest()))
-    monkeypatch.setenv("SESSION_MAIL_ROOT", str(root))
+    monkeypatch.setenv("SESSIONMAIL_ROOT", str(root.parent))
     monkeypatch.setenv("SESSIONMAIL_HOME", str(home))
     monkeypatch.setenv("TM_AGENT_ADDRESS", "alpha")
     monkeypatch.delenv("CLAUDE_CODE_AGENT", raising=False)

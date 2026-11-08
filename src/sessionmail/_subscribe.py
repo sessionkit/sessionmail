@@ -197,7 +197,6 @@ def target(who: Caller, *, seat: bool, for_: str | None,
            verb: str | None = None) -> Target:
     """The folder a write goes to, after D5's gates on WHOSE it is. BOX and
     VERB, when the caller knows them, make the refusal's repair exact."""
-    home = _seat.home(env)
     if for_ is not None and not who.privileged:
         raise Denied(f"--for is for {who.may} (you are {who.who}): "
                       f"to change another's subscriptions, {who.route()}; "
@@ -217,7 +216,7 @@ def target(who: Caller, *, seat: bool, for_: str | None,
                 return Target("seat", owner, _layer.settings_dir(owner, env), map=True)
             except _layer.LayerError as exc:
                 raise Denied(f"{exc}; nothing written") from None
-        return Target("seat", owner, home / _subscription.SEATS_DIR / owner / _subscription.FOLDER)
+        return Target("seat", owner, _seat.seats_root(env) / owner / _subscription.FOLDER)
     if for_ is not None:
         owner = for_.strip()
         try:
@@ -235,7 +234,8 @@ def target(who: Caller, *, seat: bool, for_: str | None,
         if not owner:
             raise Denied("no session id in the environment (looked for "
                           + ", ".join(_seat.SESSION_VARS)
-                          + "): add and remove change THIS session's subscriptions")
+                          + "): add and remove change THIS session's subscriptions"
+                          + _seat.inherited_note())
     _check_owner(owner, "session")
     # session-settings 3.3b: a SESSION's subscriptions are its layer's map.
     try:
@@ -306,7 +306,7 @@ def _seat_owned(box: str, found: Path, env: dict[str, str] | None) -> str:
     a store, or a tag nobody sits at (D5)."""
     if "+" in box and "/" not in box:
         declared = _seat.fold_address(box)
-        if (_seat.home(env) / _subscription.SEATS_DIR / declared).is_dir():
+        if (_seat.seats_root(env) / declared).is_dir():
             return declared                 # a plus seat: sessionmail+web-12.foreman
     root = _maildir.root(env)
     try:
@@ -509,6 +509,18 @@ def _add_to_map(tgt: Target, box: str, who: Caller, *, argv: str,
     return Added(tgt, path, True)
 
 
+def held(tgt: Target, box: str) -> bool:
+    """Whether TGT's subscriptions name BOX exactly as given: a key of its
+    map, or a file under its folder. Reads only."""
+    if tgt.map:
+        return box in _layer.boxes(_map_read(tgt)[0])
+    try:
+        path = tgt.folder / _subscription.file_name(box)
+    except _subscription.BadBox:
+        return False
+    return path.exists() or path.is_symlink()
+
+
 def remove_from_map(tgt: Target, box: str, who: Caller, *, argv: str) -> bool:
     """Take BOX out of a seat's or a session's map. True if a file changed;
     False if the map does not subscribe to it. Denied when a file that wins
@@ -566,5 +578,5 @@ def rebuild(env: dict[str, str] | None = None) -> tuple[bool, str]:
 
 
 __all__ = ["Added", "Caller", "ROUTE_TOPIC", "Denied", "Target", "add", "address_key",
-           "caller", "check_box", "existing", "note", "rebuild", "removable", "repair", "row",
+           "caller", "check_box", "existing", "held", "note", "rebuild", "removable", "repair", "row",
            "target", "write"]

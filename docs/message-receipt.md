@@ -47,9 +47,12 @@ somewhere else, and the answer names where it looked.
 - A session that predates per-session marks may hold marks only in its seat's file (`seats/*/marks`), which this verb does not read.
 - A retired sessions root (`~/.taskmaster/sessions`) is never consulted.
 
-`--session` is required and takes the full id. It has no default: your own
-session is the wrong answer to "did the addressee see it", and a forgotten
-flag must fail, not answer that.
+`--session` is required. It takes the full id, or a short one: its first 8
+or more characters, when they start exactly one session on this host. The
+short form is said on stderr and the answer names the full id; one that
+starts none, or several, is usage (exit 2), naming the candidates. It has
+no default: your own session is the wrong answer to "did the addressee see
+it", and a forgotten flag must fail, not answer that.
 
 ## Exits
 

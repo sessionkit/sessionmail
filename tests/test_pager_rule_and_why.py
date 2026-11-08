@@ -29,6 +29,7 @@ from click.testing import CliRunner
 
 from sessionmail import _seat, pager, rules
 from sessionmail.pager import cli
+import _leaves
 from test_pager_listen_judges import (  # noqa: F401  (the rig is a fixture)
     EX_PAGE,
     EX_TIMEOUT,
@@ -44,9 +45,11 @@ EX_OK, EX_REFUSED, EX_NOTHING = 0, 2, 3
 
 def _mail(sid: str) -> Path:
     """A session's mail state since session-settings 3.3a: under the session
-    dir sessiontools keeps, `$HOME/.session/sessions/<sid>/mail/` (spelt out,
-    not asked of the code, so the test can see it move)."""
-    return Path(os.environ["HOME"]) / ".session" / "sessions" / sid / "mail"
+    dir sessiontools keeps, `<sessions leaf>/<sid>/mail/`. The leaf is
+    sessiontools' own answer for the sandbox HOME, pinned before the test
+    ran (`_leaves`), not asked of sessionmail, so the test can see the
+    code write anywhere else."""
+    return _leaves.session_mail(sid)
 
 
 def pager_cmd(*argv: str):

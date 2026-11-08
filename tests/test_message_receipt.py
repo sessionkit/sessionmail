@@ -9,8 +9,9 @@ never 1 ("no row"); M2, four spec'd branches with no case of their own.
 Hermetic, as conftest makes it: `SESSIONMAIL_HOME` and `HOME` are under the
 sandbox, `SESSIONS_DIR` and every session-id variable are cleared, so the
 verb runs with NO seat and NO session id of its own. A session's state is
-written by hand under `$HOME/.session/sessions/<sid>/mail/` (the one root
-the verb reads) and `$SESSIONMAIL_HOME/sessions/<sid>` (the old root it only
+written by hand under `<sessions leaf>/<sid>/mail/` (the one root the verb
+reads; the leaf is sessiontools' answer for the HOME, pinned before the
+call, `_leaves`) and `$SESSIONMAIL_HOME/sessions/<sid>` (the old root it only
 looks at).
 
 EVERY call goes through `receipt()`, which snapshots both trees (path, size,
@@ -33,6 +34,7 @@ from pathlib import Path
 import pytest
 from click.testing import CliRunner
 
+import _leaves
 from sessionmail import _mcp, _seat
 from sessionmail import message as message_mod
 from sessionmail.message import cli as message_cli
@@ -47,7 +49,9 @@ STAMP = "2030-06-09T12:00:00Z"
 # ── the rig ──────────────────────────────────────────────────────────────
 
 def sessions_root() -> Path:
-    return Path(os.environ["HOME"]) / ".session" / "sessions"
+    """sessiontools' sessions leaf for this HOME, pinned at its first answer
+    (`_leaves`), never spelled: a fresh HOME's leaf is the resolver's call."""
+    return _leaves.sessions_root()
 
 
 def session_dir(sid: str = S) -> Path:
@@ -324,7 +328,7 @@ def test_11b_a_stored_bracketed_id_matches_too():
     ["a b@c", "--session", S],                    # whitespace in the id
     ["42", "--session", S],                       # an index: no @
     [S, "--session", S],                          # a sid where the ID goes: no @
-    [ID, "--session", S[:8]],                     # a short id
+    [ID, "--session", T[:8]],                     # a short id that starts no session
     [ID, "--session", "not-a-session"],
     [ID, "--session", "../x"],
     [ID, "--session", S + "\n"],                  # fullmatch, never match
@@ -402,19 +406,21 @@ def test_14_the_trap_can_fail():
 
 def test_15_the_environment_relocates_both_paths(monkeypatch, tmp_path):
     """Both paths come from the CALLER's environment, through the functions
-    every writer uses (D6, D10): the session dir from sessiontools
-    (`$HOME/.session/sessions` here), the old root from
-    `$SESSIONMAIL_HOME`."""
+    every writer uses (D6, D10): the session dir from sessiontools (its
+    sessions leaf for this HOME, pinned before the call), the old root
+    from `$SESSIONMAIL_HOME`."""
     monkeypatch.setenv("HOME", str(tmp_path / "elsewhere"))
     monkeypatch.setenv("SESSIONMAIL_HOME", str(tmp_path / "sm-elsewhere"))
     (tmp_path / "elsewhere").mkdir()
     (tmp_path / "sm-elsewhere").mkdir()
+    _leaves.pin(tmp_path / "elsewhere")
     write_marks(make_mail(), six())
     got = as_json(receipt(ID, "--session", S, "--json"))
     assert got["answer"] == "yes"
     assert got["looked_at"] == {
         "new": str(_seat.session_root(S)),
         "old": str(tmp_path / "sm-elsewhere" / "sessions" / S)}
+    assert got["looked_at"]["new"] == str(mail())       # the pinned leaf, not a re-ask
     assert got["looked_at"]["new"].startswith(str(tmp_path / "elsewhere"))
 
 
@@ -667,3 +673,62 @@ def test_spec_not_moved_prints_no_object():
     old_root().mkdir(parents=True)
     err = unmeasured(receipt(ID, "--session", S, "--json"))
     assert "not moved; at" in err and str(old_root()) in err
+
+
+# ── a short --session id (the SM-885 design, 5.3 and R7) ─────────────────
+#
+# R7 reverses this change's rejected option "A unique short id": a short id
+# that starts exactly one session dir here is that session; the answer, the
+# text and --json alike, names the FULL id. One that starts none, or
+# several, is usage (2), with nothing on stdout.
+
+S_TWIN = S[:8] + "-0000-4000-8000-000000000000"
+
+
+def test_short_U_a_unique_short_id_answers_for_the_full_session():
+    write_marks(make_mail(), six())
+    result = receipt(ID, "--session", S[:8])
+    assert result.exit_code == 0, result.output
+    assert f"message receipt: '{S[:8]}' is session {S}" in result.stderr
+    assert S in result.stdout
+
+
+def test_short_U_json_names_the_full_id():
+    write_marks(make_mail(), six())
+    got = as_json(receipt(ID, "--session", S[:8].upper(), "--json"))
+    assert got["answer"] == "yes" and got["session"] == S
+
+
+def test_short_U_no_row_still_names_the_full_session():
+    make_mail()
+    result = receipt(ID, "--session", S[:13])          # `3d9d583c-44b9`
+    assert result.exit_code == 1, result.output
+    assert f"session {S}'s mail/" in result.stdout
+
+
+def test_short_A_an_ambiguous_short_id_is_usage_naming_both():
+    write_marks(make_mail(), six())
+    session_dir(S_TWIN).mkdir(parents=True)
+    for extra in ([], ["--json"]):
+        result = receipt(ID, "--session", S[:8], *extra)
+        assert result.exit_code == 2, result.output
+        assert result.stdout == ""
+        assert "ambiguous" in result.stderr and S in result.stderr and S_TWIN in result.stderr
+
+
+def test_short_N_a_short_id_that_starts_no_session_is_usage():
+    write_marks(make_mail(), six())
+    result = receipt(ID, "--session", T[:8])
+    assert result.exit_code == 2 and result.stdout == ""
+    assert "no session on this host starts with it" in result.stderr
+
+
+def test_short_a_box_alone_is_not_a_session(tmp_path, monkeypatch):
+    """The candidates are session dirs, not mail boxes: a box can exist
+    with no session dir, and a receipt reads the session dir."""
+    box = tmp_path / "mail" / "stores" / T
+    for leaf in ("new", "cur", "tmp"):
+        (box / leaf).mkdir(parents=True)
+    monkeypatch.setenv("SESSIONMAIL_ROOT", str(box.parent.parent))
+    result = receipt(ID, "--session", T[:8])
+    assert result.exit_code == 2 and "no session on this host" in result.stderr

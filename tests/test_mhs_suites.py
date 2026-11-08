@@ -37,6 +37,8 @@ SUITES = {
     "test_session_mail_member_walk.sh": (r"── (\d+) passed, 0 failed", 113),
     "test_session_mail_label_path.sh": (r"passed: (\d+)\s+failed: 0", 47),
     "test_session_mail_empty_root.sh": (r"── (\d+) passed, 0 failed", 14),
+    # SM-1023, this package's own: no root yet is a plain line, exit 2, not shipwreck.
+    "test_session_mail_no_root.sh": (r"── (\d+) passed, 0 failed", 63),
     "test_mhs_converged_chain.sh": (r"(PASS) test_mhs_converged_chain", "PASS"),
     # SM-694, this package's own (not session 2fcd1d1's): run refuses a FORK.
     "test_session_mail_run_fork.sh": (r"── (\d+) passed, 0 failed", 123),

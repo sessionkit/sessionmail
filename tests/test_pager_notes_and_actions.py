@@ -259,7 +259,7 @@ def test_the_headers_reach_the_wire_through_the_real_sender(tmp_path, monkeypatc
     write_fake(bin_dir / "sendmail", FAKE_SENDMAIL)
     wire = tmp_path / "wire"
     env = {"HOME": str(tmp_path), "PATH": str(bin_dir), "TMPDIR": str(tmp_path),
-           "FAKE_WIRE": str(wire), "SESSION_MAIL_ROOT": str(tmp_path / "mail"),
+           "FAKE_WIRE": str(wire), "SESSIONMAIL_ROOT": str(tmp_path / "mail"),
            "SESSIONMAIL_HOST": HOST, "SESSIONMAIL_SENDMAIL": str(bin_dir / "sendmail")}
     monkeypatch.setattr(pager, "_mta_send", pager._deliver_by_mta)
     mid = pager.confirm_listening(SESSION, SESSION, from_="alpha", env=env)

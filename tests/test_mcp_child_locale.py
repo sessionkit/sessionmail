@@ -72,14 +72,14 @@ def lc_all(request, monkeypatch):
 
 @pytest.fixture
 def box(tmp_path, monkeypatch):
-    root = tmp_path / "mail"
+    root = tmp_path / "mail" / "stores"
     for sub in ("new", "cur", "tmp"):
         (root / SID / sub).mkdir(parents=True)
     (root / SID / "new" / "1907238896.M1P926Q0.testhost").write_bytes(
         (f"From: alpha@testhost\nTo: {SID}@testhost\nSubject: {SUBJECT}\n"
          "Date: Sun, 09 Jun 2030 12:34:50 +0000\nMessage-ID: <1.0926@testhost.session-mail>\n\n"
          "body\n").encode())
-    monkeypatch.setenv("SESSION_MAIL_ROOT", str(root))
+    monkeypatch.setenv("SESSIONMAIL_ROOT", str(root.parent))
     monkeypatch.setenv("CLAUDE_CODE_SESSION_ID", SID)
     return root
 

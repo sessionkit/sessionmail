@@ -382,9 +382,9 @@ FQDN = f"{HOST}.{SUFFIX}"
 
 @pytest.fixture
 def rig(tmp_path, monkeypatch, harness):
-    root = tmp_path / "mail"
-    root.mkdir()
-    monkeypatch.setenv("SESSION_MAIL_ROOT", str(root))
+    root = tmp_path / "mail" / "stores"
+    root.mkdir(parents=True)
+    monkeypatch.setenv("SESSIONMAIL_ROOT", str(root.parent))
     monkeypatch.setenv("SESSIONMAIL_HOME", str(tmp_path / "sessionmail"))
     monkeypatch.setenv("SESSIONMAIL_HOST", HOST)
     monkeypatch.setenv("MAGICDNS_SUFFIX", SUFFIX)

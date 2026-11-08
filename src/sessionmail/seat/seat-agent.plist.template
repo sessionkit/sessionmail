@@ -13,9 +13,15 @@
     @MESSAGE@           absolute path of `message`, as `command -v message`
                         prints it (not resolved): launchd runs
                         `message seat agent`, which execs the packaged wrapper
-    @SESSIONMAIL_HOME@  absolute; the key is @SESSIONMAIL_HOME@/seat-keys/@ADDRESS@/
+    @SEAT_PUB@          absolute: the seat's seat.pub, in its key folder,
+                        <seat-keys>/@ADDRESS@/ (a real ~/.sessionmail/seat-keys,
+                        else ~/.sessionkit/mail/state/seat-keys)
     @SOCKET@            absolute, 103 bytes at most (macOS: 104 with its NUL)
     @LOG_DIR@           absolute, an existing directory for the job's stderr
+  and, ONLY when the installer's own SESSIONMAIL_HOME is set, the
+  EnvironmentVariables entry for it (absolute; the keys are then under its
+  seat-keys/). Unset, the entry is left out, and the wrapper finds the keys
+  under the job's HOME by the same rule the installer used.
 
   THE ADAPTER'S ENV (a documented example, NOT this job's): the process that
   sends AS the seat (an adapter with its own LaunchAgent) carries these, in
@@ -23,7 +29,7 @@
 
     <key>TM_AGENT_ADDRESS</key>               <string>@ADDRESS@</string>
     <key>DESK_SIGNER_SOCK</key>               <string>@SOCKET@</string>
-    <key>DESK_SIGNER_PUB</key>                <string>@SESSIONMAIL_HOME@/seat-keys/@ADDRESS@/seat.pub</string>
+    <key>DESK_SIGNER_PUB</key>                <string>@SEAT_PUB@</string>
     <key>SESSIONMAIL_REQUIRE_SIGNATURE</key>  <string>1</string>
     <key>SESSION_REGISTRY</key>               <string>(the registry dir seat-init registered into)</string>
 

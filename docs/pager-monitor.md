@@ -65,6 +65,12 @@ session, and each line it prints is a notification. Nothing has to arm it.
 
 What the listener under it does: [how `pager listen` works][internals].
 
+- **The frozen-turn watch, off by default.** With `"frozen_watch": true`
+  in the host `mail.json`, the monitor also watches its own seat for a turn
+  frozen mid-request, and says so once per turn: one line, a `frozen:`
+  line in `pager status`, and a stamp file. It sends no keys and no mail:
+  [the frozen-turn watch][frozen-watch].
+
 ## How `--monitor` behaves
 
 The flag is hidden from `pager listen --help`, because its one caller is
@@ -72,8 +78,10 @@ The flag is hidden from `pager listen --help`, because its one caller is
 exits, so `--monitor` never exits on a page:
 
 - ONE line per page on stdout, flushed, and nothing else there: the count,
-  the address each mail was sent to, what woke it - no sender, no subject,
-  no re-arm. At most 480 characters (Claude Code cuts at 500).
+  who wrote the newest waiting mail and what about, who it was for when
+  that is not this session, and what woke it - never a body, no re-arm. At
+  most 480 characters (Claude Code cuts at 500). See
+  [What the line says][line-says].
 - Lines at least `SESSIONMAIL_MONITOR_SPACING_SECONDS` apart (2.5): Claude
   Code drops output past a bucket of 10 refilled 1 per 2 s, and a dropped
   page is a wake that never happens.
@@ -89,6 +97,46 @@ exits, so `--monitor` never exits on a page:
   over when that one ends.
 - It refuses `--timeout`, `BOX` and `--quiet`.
 
+## What the line says
+
+The count comes first, as it always did, so anything that reads
+`pager: N message(s) waiting` keeps working. After it the line names the
+newest waiting mail, on every seat, whether or not its hooks are on:
+
+```text
+pager: 1 message waiting, from ann: "Wake notices: ready for review" (to proj+lead; woke: wake by `to:$me` (seat)). Nothing is scooping for this session: message list --unread
+pager: 3 messages waiting, newest from eve: "Re: the notice budget" (2 more, from ann, dot; to proj+lead 2, you 1; woke: ...). They ride along on your next tool call; if not: message list --unread
+pager: reminder - 1 message read, not done, from ann: "Wake notices: ready for review" (to proj+lead). `pager status` lists it; `message mark <ID> done` quiets it
+```
+
+- **Who** is the local part of the sender's address, never the display
+  name: the name sits outside the signature, so a forged one would print
+  as readily as a true one. A missing `From:` prints `?`.
+- **What** is the subject, in quotes, so where the sender's words stop and
+  the pager's resume is plain. A missing subject prints `(no subject)`.
+- **Newest** is the mail that arrived last. On a page that mixes new mail
+  with reminders, the newest new one is named, since new mail is what woke
+  the seat; a page of reminders alone names the newest reminder. A mail
+  that cannot be read gives way to the next newest that can, and when none
+  can, the line is the count-only line it was before.
+- **Who it was for:** nothing, for one mail to this session's own box. A
+  mail delivered to an address (a project box, a subscription) says
+  `to <address>`. Several say how many went where (`to proj+lead 2, you 1`),
+  and the other senders are named, up to three, oldest first, then
+  `+k more`.
+- **A voice turn** is named by what its heard header names, and never by a
+  subject (a turn's subject is the first words spoken): `heard from <speaker>
+  on <device>` when the turn is trusted, `heard (UNVERIFIED) on <device>`
+  when it is not. Several say `newest heard from ...`.
+- **When it is over the limit,** the middle goes first (the other senders,
+  the addresses, what woke it), then the subject, cut at a word with `...`.
+  The count and the tail that says where the mail is are never cut.
+
+The hand `pager listen` page stays quiet: see [What a page
+carries][page-carries]. The monitor's item in the inject
+log is a `header` view, not a `count`: see
+[pager-inject-log][inject-log].
+
 ## The old plugin
 
 `plugins/pager-monitor`, the old separate plugin, is retired: it now
@@ -96,5 +144,9 @@ arms nothing. Drop its `--plugin-dir` from your launch when convenient.
 Why it stays one release, and what it still holds: [its
 README][old-plugin].
 
+[frozen-watch]: frozen-watch.md
 [internals]: pager-listen-internals.md
+[line-says]: #what-the-line-says
+[page-carries]: pager.md#what-a-page-carries
+[inject-log]: pager-inject-log.md
 [old-plugin]: ../plugins/pager-monitor/README.md

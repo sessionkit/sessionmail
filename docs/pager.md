@@ -33,6 +33,12 @@ no claim race between pager and ride-along, nothing given twice.
 - The wait is a **kqueue** on `new/`, capped at **one second**. It ends on a
   change to the directory or when the cap expires, whichever comes first: the
   event only decides how soon the next look happens.
+- The watch needs `select.kqueue`, which BSD and macOS have. On a platform
+  without it, `pager listen` makes no wait at all: it says one line naming the
+  platform and what is missing, writes no stamp, and exits **5**. The pager
+  monitor says that line once, on its stdout; the PostToolBatch hook says it
+  in place of "not listening", once; the Stop hook says nothing, because the
+  re-arm it asks for cannot work there.
 - Every look **re-reads the directory**. There is no remembered list, so a file
   that has gone is simply absent and pages nothing.
 - Age is the **inode's mtime**, which for a hardlink is when the mail was
@@ -50,6 +56,11 @@ at all (specs/pager, "The pager is a nudge, and the re-arm carries"). The
 re-arm IS the delivery - the
 next tool call's ride-along carries the entries - so the page only says there
 is something to look at.
+
+That is the **hand** page, from `pager listen`. The **monitor's** one line is
+not quiet in this way: it names who wrote the newest mail and what about, on
+every seat, and says what it says in [what the line
+says][monitor-line].
 
 Four things, in this order:
 
@@ -76,7 +87,9 @@ reminder window.
 
 ## Where things are written
 
-Under `~/.sessionmail/sessions/<session-id>/` - **everything a page reads keys
+Under `sessions/<session-id>/` in `~/.sessionkit/mail/state/` (in
+`~/.sessionmail/` on an existing host whose `sessions/` is still real there;
+in `$SESSIONMAIL_HOME` when that is set) - **everything a page reads keys
 on the session id, never the seat**: the seat was never the thing. A seat
 is a NAME, and it may be absent: a seatless
 session reads the same three paths, and gets the same page.
@@ -92,7 +105,9 @@ session reads the same three paths, and gets the same page.
 A run with no session id **at all** is a case of its own: it keeps the
 seat's own `ride/-/`, `stamps/-/` and `marks`, and the banner says so.
 
-Under `~/.sessionmail/seats/<seat>/`:
+Under the seat's folder, `seats/<seat>/`, in `~/.sessionkit/mail/state/` (in
+`~/.sessionmail/` on an existing host whose `seats/` is still real there; in
+`$SESSIONMAIL_HOME` when that is set):
 
 - `subscriptions/` - one file per box the seat is subscribed to, written by
   `message subscription add --seat` and compiled into the alias map by the
@@ -120,6 +135,41 @@ Outside the seat:
 - `SESSIONMAIL_PAGE_LIST`, default **off**, and `--list/--no-list` are the same
   switch - one line per message instead of a bare count. Given both, the flag
   wins.
+
+## Rule globs: `*` and `?`, and `[` is literal
+
+A rule's conditions are globs (`pager rule --help` has the grammar). Only `*`
+(any run of characters) and `?` (any one character) are wildcards.
+
+- **`[` is literal.** There are no `[...]` classes, so a bracketed tag matches
+  itself: `subject:[draft]*` catches `[draft] notes`.
+- **Case never counts.** Every glob and every value compare case-insensitively,
+  so `subject:*alice*` catches `Alice, can you...` and `ALICE`.
+- **So a class never does what it looks like.** `subject:*[Aa]lice*` looks for
+  the text `[Aa]lice`, brackets and all, and never matches `Alice, can you...`.
+  The mail falls through to the next line, and a catch-all `ride` below it
+  makes the seat deaf to it. Write `subject:*alice*`.
+- **The pager names it.** A glob with a class-shaped `[...]` (a case pair such
+  as `[Aa]`, or a range such as `[a-z]` or `[0-9]`) is kept as written and named
+  as a warning: in the arm banner, once in the ride-along, by `pager rule list`,
+  and by `pager rule add`. A tag such as `[draft]`, `[RFC-822]` or
+  `[non-urgent]`, or one holding a number such as a date, is not warned about.
+- **A rewrite is offered only when it is exact.** For a case pair the warning
+  names the glob that was meant (`*[Aa]lice*` is `*alice*`). For any other
+  class it says what the glob literally matches and offers nothing: a glob
+  cannot name a set, and `?` (any one character) is broader. `subject:[a-z]*`
+  rewritten as `subject:?*` would catch every subject.
+
+## How `pager listen` exits
+
+| Code | Meaning |
+| --- | --- |
+| 0 | paged; the pager monitor already hears for this session; the monitor is switched off; or the caller went |
+| 1 | usage |
+| 2 | could not look at the box |
+| 3 | already listening (a hand-armed listener holds this session) |
+| 5 | this platform has no `select.kqueue`, so the pager cannot listen here |
+| 124 | `--timeout` ran out with nothing paged |
 
 ## Identity, and the seatless case
 
@@ -157,3 +207,5 @@ seat shares one queue.
   which is what the pager is watching. Private: not in this tree.
 - The slipbox note `project-conventions` - the thin spine for building here.
   Private: not in this tree.
+
+[monitor-line]: pager-monitor.md#what-the-line-says

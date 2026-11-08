@@ -24,8 +24,12 @@ seat --help` answers when typed.
 
 ## The wrapper
 
-- **The key** is `$SESSIONMAIL_HOME/seat-keys/ADDRESS/id_ed25519`, which is
-  `message seat init`'s layout. The pub the adapter names is `seat.pub` in the same dir.
+- **The key** is `KEYS/ADDRESS/id_ed25519`, which is `message seat init`'s layout.
+  The pub the adapter names is `seat.pub` in the same dir. KEYS is
+  `$SESSIONMAIL_HOME/seat-keys` when that is set; else `~/.sessionmail/seat-keys`
+  while that is a real folder (an existing host's keys never move); else
+  `~/.sessionkit/mail/state/seat-keys`, where a fresh host mints. See "Where the
+  keys are" in [`docs/message-seat.md`](../../docs/message-seat.md).
 - **It refuses before starting anything (exit 2)** when:
   - the sessionmail install is broken: the packaged wrapper is missing or not
     executable (said by `message` itself);
@@ -43,7 +47,9 @@ seat --help` answers when typed.
 - **A TERM** (launchd stopping the job) stops the agent and removes the socket, exit 0.
 - **The socket cap is 103 bytes.** macOS's `sun_path` is 104 bytes including the NUL.
   Measured: ssh-agent binds a 103-byte path and refuses a 104-byte one. The default,
-  `~/.sessionmail/seat-keys/<address>/agent.sock`, is well under the cap.
+  `KEYS/<address>/agent.sock`, is under the cap for a usual home and address
+  (`/Users/<name>/.sessionkit/mail/state/seat-keys/` is 45 bytes for a 4-letter
+  name); a longer one is refused before anything starts.
 - **An orphan agent.** If the wrapper is SIGKILLed outside launchd, its agent can outlive it,
   and the next start then refuses ("a live agent already answers"). Kill the orphan by
   hand. Under launchd this does not arise: a job's process group goes with the job.
@@ -57,14 +63,21 @@ answers. `--uninstall ADDRESS` boots it out and removes the plist. Their contrac
 [`docs/message-seat.md`](../../docs/message-seat.md).
 
 `message seat agent --template` prints it, and nothing else: it never renders it, loads
-it or runs launchctl. To render it by hand, replace each `@PLACEHOLDER@`, then lint it:
+it or runs launchctl. To render it by hand, set KEYS to the seat-keys folder (above),
+replace each `@PLACEHOLDER@`, then lint it. With no `SESSIONMAIL_HOME` of your own,
+drop its entry, as `--install` does; the wrapper then finds KEYS under the job's HOME:
 
+    KEYS=$HOME/.sessionkit/mail/state/seat-keys   # or $HOME/.sessionmail/seat-keys where the keys are
     message seat agent --template |
       sed -e 's|@ADDRESS@|bot.alice|g' -e "s|@MESSAGE@|$(command -v message)|g" \
-        -e "s|@SESSIONMAIL_HOME@|$HOME/.sessionmail|g" \
-        -e "s|@SOCKET@|$HOME/.sessionmail/seat-keys/bot.alice/agent.sock|g" \
+        -e '/<key>SESSIONMAIL_HOME<\/key>/{N;d;}' \
+        -e "s|@SEAT_PUB@|$KEYS/bot.alice/seat.pub|g" \
+        -e "s|@SOCKET@|$KEYS/bot.alice/agent.sock|g" \
         -e "s|@LOG_DIR@|$HOME/.sessionkit/mail/log|g" > /some/scratch/dir/dev.sessionkit.mail.seat-agent.bot.alice.plist
     plutil -lint /some/scratch/dir/dev.sessionkit.mail.seat-agent.bot.alice.plist
+
+With a `SESSIONMAIL_HOME` of your own, keep the entry and fill it instead
+(`-e "s|@SESSIONMAIL_HOME@|$SESSIONMAIL_HOME|g"`, absolute), with KEYS its `seat-keys`.
 
 `@LOG_DIR@` must be a folder that exists before launchd loads the job; `--install` makes
 `~/.sessionkit/mail/log` mode 0700 when it is missing. An agent installed before 0.3.2
@@ -94,7 +107,7 @@ them as a plist dict.
 |---|---|
 | `TM_AGENT_ADDRESS` | the seat, `bot.alice` |
 | `DESK_SIGNER_SOCK` | this job's `SOCKET` |
-| `DESK_SIGNER_PUB` | `$SESSIONMAIL_HOME/seat-keys/<address>/seat.pub`, apart from the private key |
+| `DESK_SIGNER_PUB` | `KEYS/<address>/seat.pub`, apart from the private key |
 | `SESSIONMAIL_REQUIRE_SIGNATURE` | `1`: a send that cannot sign is refused |
 | `SESSION_REGISTRY` | the registry that `message seat init` registered into, for `message verify --trust` |
 

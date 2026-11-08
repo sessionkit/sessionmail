@@ -225,6 +225,48 @@ def test_a_package_in_the_current_directory_is_never_the_one_that_sends(tmp_path
     assert result.is_error is False and wire.read_bytes().endswith(b"\n\nwords\n"), texts(result)
 
 
+@pytest.mark.parametrize("boxes, ok", [
+    (("c0ffee01-1111-4111-8111-111111111111",), True),
+    (("c0ffee01-1111-4111-8111-111111111111", "c0ffee01-2222-4222-8222-222222222222"), False),
+    ((), False),
+], ids=["unique", "ambiguous", "none"])
+def test_a_short_session_id_resolves_or_refuses_through_the_real_child(tmp_path, monkeypatch,
+                                                                       boxes, ok):
+    """SM-885 at the agents' door: the REAL child, no tool code of its own.
+    A unique 8-hex prefix lands on the full id and the notices say so; an
+    ambiguous one or none is an error naming why, and nothing is sent. The
+    child's PATH holds no postconf, so no host map is read."""
+    from test_sender import FAKE_SENDMAIL, HOST
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    write_fake(bin_dir / "sendmail", FAKE_SENDMAIL.format(python=sys.executable))
+    wire = tmp_path / "wire"
+    for name in boxes:
+        for leaf in ("new", "cur", "tmp"):
+            (tmp_path / "mail" / "stores" / name / leaf).mkdir(parents=True)
+    for var in ("SESSIONMAIL_SEND_ORACLE", "CLAUDE_CODE_AGENT", "CLAUDE_SESSION_AGENT_SOCK",
+                "CLAUDE_SESSION_PUB", "FAKE_SENDMAIL_RC", "PYTHONPATH"):
+        monkeypatch.delenv(var, raising=False)
+    monkeypatch.setenv("FAKE_SENDMAIL_ARGV", str(tmp_path / "argv"))
+    monkeypatch.setenv("FAKE_SENDMAIL_WIRE", str(wire))
+    monkeypatch.setenv("SESSIONMAIL_SENDMAIL", str(bin_dir / "sendmail"))
+    monkeypatch.setenv("SESSIONMAIL_ROOT", str(tmp_path / "mail"))
+    monkeypatch.setenv("SESSIONMAIL_HOST", HOST)
+    monkeypatch.setenv("PATH", str(bin_dir))
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("TM_AGENT_ADDRESS", "alpha")
+    result, _ = call({"to": ["c0ffee01"], "subject": "the point", "body": "words\n"})
+    text = "\n".join(texts(result))
+    if ok:
+        assert result.is_error is False, text
+        assert f"To: {boxes[0]}\n".encode() in wire.read_bytes()
+        assert f"'c0ffee01' is session {boxes[0]}" in text
+    else:
+        assert result.is_error is True and not wire.exists(), text
+        assert "undeliverable" in text and "'c0ffee01'" in text
+        assert "unconfirmed" not in text.lower()
+
+
 def test_every_call_is_a_new_process(child):
     call(SEND)
     first = child.seen["pid"]

@@ -632,7 +632,7 @@ def test_the_pager_off_beats_required(s):
 # ── `pager status`: the required: line and the no-monitor sentence ──────
 
 def status_lines(prefix: str) -> list[str]:
-    box = Path(os.environ["SESSION_MAIL_ROOT"]) / SESSION
+    box = Path(os.environ["SESSIONMAIL_ROOT"], "stores") / SESSION
     for d in ("tmp", "new", "cur"):
         (box / d).mkdir(parents=True, exist_ok=True)
     r = CliRunner().invoke(cli, ["status"], prog_name="pager")
@@ -681,7 +681,7 @@ def test_status_says_no_no_monitor_sentence_while_something_listens(s):
 
 def test_status_quiet_says_none_of_it(s):
     s.required()
-    box = Path(os.environ["SESSION_MAIL_ROOT"]) / SESSION
+    box = Path(os.environ["SESSIONMAIL_ROOT"], "stores") / SESSION
     for d in ("tmp", "new", "cur"):
         (box / d).mkdir(parents=True, exist_ok=True)
     r = CliRunner().invoke(cli, ["status", "--quiet"], prog_name="pager")

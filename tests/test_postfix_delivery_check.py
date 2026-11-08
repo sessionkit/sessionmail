@@ -9,6 +9,10 @@ The shapes: a virtual host (postfix's default, what the docs prescribed
 before SM-791); an insert host switched by virtual_transport (the documented
 opt-in); an insert host switched by transport_maps rows, one per domain; a
 host with the two mixed; and the gaps an insert host can carry.
+
+An insert host's service runs a wrapper the Host writes under tmp_path as
+`message setup` would install it (`_setup.render_nm_deliver`, SM-1025), with
+a scratch kit profile baked in: the check reads notmuch with THAT config.
 """
 
 from __future__ import annotations
@@ -23,8 +27,11 @@ from pathlib import Path
 
 import pytest
 
+from sessionmail import _setup
+
 ROOT = Path(__file__).resolve().parents[1]
 CHECK = ROOT / "src" / "sessionmail" / "postfix" / "delivery-check"
+PACKAGE_WRAPPER = ROOT / "src" / "sessionmail" / "postfix" / "nm-deliver"
 DOCS = ROOT / "docs" / "postfix-configuration.md"
 
 DOMAINS = "host-a, host-a.example.ts.net"
@@ -111,6 +118,14 @@ class Host:
             "notmuch": {"new.tags": ["unread", "inbox"], "database.hook_dir": [str(hooks)],
                         "database.mail_root": [str(self.base)]},
         }
+        # The wrapper as `message setup` installs it, its kit profile baked in.
+        self.kit_config = tmp / "kit" / "notmuch" / "sessionkit" / "config"
+        self.kit_config.parent.mkdir(parents=True)
+        self.kit_config.write_text(f"[database]\npath={self.base}\n")
+        self.wrapper = tmp / "postfix-agents" / "nm-deliver"
+        self.wrapper.parent.mkdir()
+        self.wrapper.write_bytes(_setup.render_nm_deliver(self.kit_config))
+        self.wrapper.chmod(0o755)
         bin_dir = tmp / "bin"
         c = str(self.cfg_path)
         self.env = {"PATH": "/usr/bin:/bin",
@@ -123,18 +138,22 @@ class Host:
         self.hook.write_text("#!/bin/sh\n")
         self.hook.chmod(0o755)
 
-    def insert_by_transport(self, svc: str = WRAPPER_SVC) -> None:
+    def installed(self, svc: str) -> str:
+        """SVC with its nm-deliver argv pointed at the wrapper under tmp_path."""
+        return re.sub(r"argv=\S*/nm-deliver(?=\s)", lambda _m: f"argv={self.wrapper}", svc)
+
+    def insert_by_transport(self, svc: str = WRAPPER_SVC, *, install: bool = True) -> None:
         """The documented opt-in: virtual_transport names the pipe service."""
         self.cfg["params"]["virtual_transport"] = "nminsert"
         self.cfg["params"]["nminsert_destination_recipient_limit"] = "1"
-        self.cfg["services"]["nminsert/unix"] = svc
+        self.cfg["services"]["nminsert/unix"] = self.installed(svc) if install else svc
         self.link_hook()
 
     def insert_by_rows(self, *domains: str) -> None:
         """The per-domain alternative: transport_maps rows, virtual_transport left alone."""
         self.cfg["params"]["transport_maps"] = "hash:/etc/postfix/transport"
         self.cfg["params"]["nminsert_destination_recipient_limit"] = "1"
-        self.cfg["services"]["nminsert/unix"] = ROWS_SVC
+        self.cfg["services"]["nminsert/unix"] = self.installed(ROWS_SVC)
         self.cfg["maps"]["hash:/etc/postfix/transport"] = {d: "nminsert:" for d in domains}
         self.link_hook()
 
@@ -287,12 +306,19 @@ def test_a_table_domain_list_beside_transport_maps_is_a_gap(tmp_path):
     assert any("names a lookup table (hash:/maps/vmailbox)" in g for g in gaps(run)), gaps(run)
 
 
+def notmuch_envs(host: "Host") -> list[dict]:
+    envs = [json.loads(line) for line in host.env_log.read_text().splitlines()]
+    assert envs, "notmuch was never asked"
+    return envs
+
+
 def test_notmuch_is_read_in_the_pipes_environment(tmp_path):
     """pipe(8) passes nm-deliver no NOTMUCH_CONFIG, no XDG_* and no HOME (the
-    wrapper takes HOME from passwd), so notmuch finds its config at a default
-    path. The check must read that config, not the caller's: a caller with
-    NOTMUCH_CONFIG set would otherwise be told `unread` is there when the
-    config insert reads lacks it (SM-791 fix-001, second review)."""
+    wrapper takes HOME from passwd). The check must read the config the
+    wrapper's insert reads, never the caller's: a caller with NOTMUCH_CONFIG
+    set would otherwise be told `unread` is there when the config insert
+    reads lacks it (SM-791 fix-001, second review). The installed wrapper
+    exports the config baked into it, so that is the one (SM-1025)."""
     host = Host(tmp_path)
     host.insert_by_transport()
     host.env.update({"NOTMUCH_CONFIG": str(tmp_path / "callers-config"),
@@ -300,14 +326,63 @@ def test_notmuch_is_read_in_the_pipes_environment(tmp_path):
                      "HOME": str(tmp_path), "TZ": "UTC"})
     run = host.run()
     assert gaps(run) == []
-    assert f"notmuch read as the pipe reads it: user {ME}, HOME={MY_HOME}" in run.stdout
-    envs = [json.loads(line) for line in host.env_log.read_text().splitlines()]
-    assert envs, "notmuch was never asked"
-    for env in envs:
-        assert not {"NOTMUCH_CONFIG", "NOTMUCH_PROFILE", "XDG_CONFIG_HOME"} & env.keys(), env
+    assert (f"notmuch read as the pipe reads it: user {ME}, HOME={MY_HOME}, "
+            f"NOTMUCH_CONFIG={host.kit_config}") in run.stdout
+    for env in notmuch_envs(host):
+        assert not {"NOTMUCH_PROFILE", "XDG_CONFIG_HOME"} & env.keys(), env
+        assert env["NOTMUCH_CONFIG"] == str(host.kit_config)
         assert env["HOME"] == MY_HOME
         assert env["PATH"] == "/usr/bin:/bin"
         assert env["TZ"] == "UTC"
+
+
+def test_it_names_the_config_the_installed_wrapper_bakes_in(tmp_path):
+    """SM-1025: the check reads notmuch with the profile delivery uses,
+    and says which file and where it came from."""
+    host = Host(tmp_path)
+    host.insert_by_transport()
+    run = host.run()
+    assert f"  notmuch read with config {host.kit_config} (from {host.wrapper})" \
+        in run.stdout, run.stdout
+    assert gaps(run) == []
+
+
+def test_the_package_wrapper_reads_notmuchs_default_and_that_is_a_gap(tmp_path):
+    """The package copy bakes no config: insert finds notmuch's default under
+    HOME, while `message` reads the kit profile. Said, as a gap, with the
+    file, and notmuch is read with no NOTMUCH_CONFIG, as insert reads it."""
+    host = Host(tmp_path)
+    host.insert_by_transport(WRAPPER_SVC.replace("/opt/sessionmail/postfix/nm-deliver",
+                                                 str(PACKAGE_WRAPPER)), install=False)
+    run = host.run()
+    xdg = os.path.join(MY_HOME, ".config", "notmuch", "default", "config")
+    default = xdg if os.path.isfile(xdg) else os.path.join(MY_HOME, ".notmuch-config")
+    assert (f"  notmuch read with config {default} (notmuch's default: no NOTMUCH_CONFIG "
+            "reaches insert)") in run.stdout, run.stdout
+    assert "no NOTMUCH_CONFIG" in run.stdout
+    (gap,) = gaps(run)
+    assert f"{PACKAGE_WRAPPER} bakes no notmuch config" in gap and "message setup" in gap
+    for env in notmuch_envs(host):
+        assert "NOTMUCH_CONFIG" not in env, env
+
+
+def test_a_wrapper_it_cannot_read_is_a_gap(tmp_path):
+    host = Host(tmp_path)
+    host.insert_by_transport(install=False)       # argv names /opt/..., not there
+    (gap,) = gaps(host.run())
+    assert "cannot read /opt/sessionmail/postfix/nm-deliver" in gap, gap
+
+
+def test_a_profile_that_is_not_deliverys_config_is_a_gap(tmp_path):
+    """--profile names what `message` reads (setup can pass it)."""
+    host = Host(tmp_path)
+    host.insert_by_transport()
+    assert gaps(host.run("--profile", str(host.kit_config))) == []
+    other = tmp_path / "other-config"
+    other.write_text("")
+    (gap,) = gaps(host.run("--profile", str(other)))
+    assert f"delivery's notmuch config is {host.kit_config}" in gap
+    assert f"`message` reads {other} (--profile)" in gap
 
 
 @pytest.mark.skipif(ME == "alice", reason="the runner is the service's user")
@@ -404,9 +479,11 @@ def documented_block() -> str:
     return m.group(1)
 
 
-def test_the_documented_lines_name_nm_deliver_by_its_package_path():
+def test_the_documented_lines_name_the_wrapper_setup_installs():
+    """The service runs the copy `message setup` installs, with the kit
+    profile baked in (SM-1025), at the path setup writes by default."""
     block = documented_block()
-    assert re.search(r"argv=\S*/sessionmail/postfix/nm-deliver \$\{recipient\}", block), block
+    assert f"argv={_setup.NM_DELIVER_DIR}/nm-deliver ${{recipient}}" in block, block
     assert "virtual_transport = nminsert" in block
     assert "nminsert_destination_recipient_limit = 1" in block
 

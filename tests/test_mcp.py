@@ -161,7 +161,7 @@ def test_a_noun_verbs_schema_is_its_pages_flags_with_its_pages_help():
 
 def test_a_noun_verb_tool_runs_that_verb(tmp_path, monkeypatch):
     """The argv carries the noun: the tool runs `box list`, not `list`."""
-    monkeypatch.setenv("SESSION_MAIL_ROOT", str(tmp_path))
+    monkeypatch.setenv("SESSIONMAIL_ROOT", str(tmp_path))
     # The seam, so the listing never reads this host's live sessions. The
     # verb runs in a CHILD (SM-926); the conftest carries this into it.
     monkeypatch.setattr(message, "_live_sessions", lambda: set())

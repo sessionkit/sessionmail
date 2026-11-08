@@ -38,6 +38,7 @@ import tool_call
 from sessionmail import _seat, pager, rules
 from sessionmail import _settings
 from sessionmail.pager import cli
+import _leaves
 
 EX_PAGE, EX_TIMEOUT = 0, 124
 RUNNING_T = 0.4
@@ -52,9 +53,11 @@ _n = 0
 
 def _mail(sid: str) -> Path:
     """A session's mail state since session-settings 3.3a: under the session
-    dir sessiontools keeps, `$HOME/.session/sessions/<sid>/mail/` (spelt out,
-    not asked of the code, so the test can see it move)."""
-    return Path(os.environ["HOME"]) / ".session" / "sessions" / sid / "mail"
+    dir sessiontools keeps, `<sessions leaf>/<sid>/mail/`. The leaf is
+    sessiontools' own answer for the sandbox HOME, pinned before the test
+    ran (`_leaves`), not asked of sessionmail, so the test can see the
+    code write anywhere else."""
+    return _leaves.session_mail(sid)
 
 
 def counted(result) -> int | None:
@@ -85,10 +88,10 @@ tool_call.CARRIED_FNS[_not_idle] = ("returns", None, None)
 
 @pytest.fixture
 def rig(tmp_path, monkeypatch):
-    root = tmp_path / "mail"
-    root.mkdir()
+    root = tmp_path / "mail" / "stores"
+    root.mkdir(parents=True)
     home = tmp_path / "sessionmail"
-    monkeypatch.setenv("SESSION_MAIL_ROOT", str(root))
+    monkeypatch.setenv("SESSIONMAIL_ROOT", str(root.parent))
     monkeypatch.setenv("SESSIONMAIL_HOME", str(home))
     monkeypatch.setenv("SESSIONMAIL_HOST", HOST)
     monkeypatch.setenv("MAGICDNS_SUFFIX", SUFFIX)

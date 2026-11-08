@@ -138,7 +138,7 @@ def test_the_sessionstart_birth_installs_under_sessionkit(home, tmp_path, monkey
     monkeypatch.setattr(_seat, "doorbell", lambda address, session, env=None: LIVE)
     monkeypatch.setattr(_seat, "regen_maps", lambda root, env=None: "generator ran")
     env = {"HOME": str(home),
-           "SESSION_MAIL_ROOT": str(tmp_path / "mail" / "agents"),
+           "SESSIONMAIL_ROOT": str(tmp_path / "mail"),
            "SESSIONMAIL_HOME": str(tmp_path / "state"),
            "MAGICDNS_SUFFIX": os.environ["MAGICDNS_SUFFIX"]}
     birth = _birth.ensure_session_box(SID, SimpleNamespace(address=PLUS), env=env)
@@ -344,7 +344,7 @@ def test_branch_1_the_birth_installs_nothing(stranded, tmp_path, monkeypatch):
     monkeypatch.setattr(_seat, "doorbell", lambda address, session, env=None: LIVE)
     monkeypatch.setattr(_seat, "regen_maps", lambda root, env=None: "generator ran")
     env = {"HOME": str(stranded),
-           "SESSION_MAIL_ROOT": str(tmp_path / "mail" / "agents"),
+           "SESSIONMAIL_ROOT": str(tmp_path / "mail"),
            "SESSIONMAIL_HOME": str(tmp_path / "state"),
            "MAGICDNS_SUFFIX": os.environ["MAGICDNS_SUFFIX"]}
     before = tree(stranded)
@@ -620,7 +620,7 @@ def test_the_birth_installs_nothing_when_the_old_folder_cannot_be_searched(stran
     monkeypatch.setattr(_seat, "doorbell", lambda address, session, env=None: LIVE)
     monkeypatch.setattr(_seat, "regen_maps", lambda root, env=None: "generator ran")
     env = {"HOME": str(stranded),
-           "SESSION_MAIL_ROOT": str(tmp_path / "mail" / "agents"),
+           "SESSIONMAIL_ROOT": str(tmp_path / "mail"),
            "SESSIONMAIL_HOME": str(tmp_path / "state"),
            "MAGICDNS_SUFFIX": os.environ["MAGICDNS_SUFFIX"]}
     before = tree(stranded)

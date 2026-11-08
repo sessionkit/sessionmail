@@ -3,7 +3,8 @@
 `pager listen --help` says when it pages, what it prints and how to stop.
 This is how, for whoever has to reason about it. Paths below are under
 `<home>/sessions/<session>/`, written `<session>/`; `<home>` is
-`SESSIONMAIL_HOME`, default `~/.sessionmail`.
+`SESSIONMAIL_HOME` when that is set, else `~/.sessionkit/mail/state` (or
+`~/.sessionmail` on an existing host whose `sessions/` is still real there).
 
 - **One box.** It watches this session's box (the session id is a box);
   with no session id, the maildir `$MAIL` names, which must hold `new/`. It

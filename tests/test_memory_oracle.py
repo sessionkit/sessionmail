@@ -145,10 +145,10 @@ def test_the_wake_ends_on_live_verbs_that_read_the_box_it_counted(tmp_path):
     read` would look up in the caller's own box, not the one just counted.
     Run through the door against a sandbox box; conftest keeps the index
     and the runner's seat out of it."""
-    root = tmp_path / "mail"
+    root = tmp_path / "mail" / "stores"
     for sub in ("new", "cur", "tmp"):
         (root / "alpha" / sub).mkdir(parents=True)
-    env = {**os.environ, "SESSION_MAIL_ROOT": str(root), "HOME": str(tmp_path / "home"),
+    env = {**os.environ, "SESSIONMAIL_ROOT": str(root.parent), "HOME": str(tmp_path / "home"),
            "XDG_CACHE_HOME": str(tmp_path / "cache")}
     p = subprocess.run([sys.executable, "-m", "sessionmail.memory", "wake", "alpha"],
                        capture_output=True, text=True, env=env)

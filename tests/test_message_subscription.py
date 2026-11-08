@@ -174,7 +174,7 @@ def fleet(tmp_path, monkeypatch) -> Fleet:
     monkeypatch.setenv("SESSION_SIDECAR_DIR", str(tmp_path / "claude-sessions"))
     monkeypatch.setenv("HOME", str(tmp_path / "userhome"))
     monkeypatch.setenv("TMPDIR", str(tmp_path))
-    monkeypatch.setenv("SESSION_MAIL_ROOT", str(f.agents))
+    monkeypatch.setenv("SESSIONMAIL_ROOT", str(f.agents.parent))
     monkeypatch.setenv("SESSIONMAIL_HOME", str(f.home))
     as_seat(monkeypatch, "worker", SID)
     # Both maps once, WHOLE, so a bare project name resolves by the map as it
@@ -798,3 +798,129 @@ def test_a_seat_box_file_left_in_the_old_folder_routes_nothing(fleet, monkeypatc
     f.write_text("# added by hand\n")
     assert _seat.regen_maps(fleet.agents).startswith("generator ran")
     assert f"atomnote@{HOST}" not in rows(fleet.valias)
+
+
+# ── a short session id as BOX (design 5.2: the door resolves it first) ────
+
+OTHER_SHORT = OTHER[:8]
+OTHER_TWIN = OTHER[:8] + "-9999-4999-8999-999999999999"
+
+
+def test_add_a_short_session_id_stores_the_FULL_id(fleet, monkeypatch):
+    """The map routes full names only: a stored short form would route
+    nothing. The door rewrites BOX before the gates and the write."""
+    as_seat(monkeypatch, "ivan", IVAN_SID)
+    done = sub("add", OTHER_SHORT)
+    assert done.exit_code == 0, done.output
+    assert f"'{OTHER_SHORT}' is session {OTHER}" in done.stderr
+    assert fleet.subscribed(IVAN_SID) == [OTHER]
+    assert fleet.files() == [f"sessions/{IVAN_SID}#{OTHER}"]
+    assert rows(fleet.valias)[f"{OTHER}@{HOST}"].endswith(f", {IVAN_SID}@{HOST}")
+
+
+def test_add_an_ambiguous_or_unknown_short_id_refuses_and_writes_nothing(fleet, monkeypatch):
+    as_seat(monkeypatch, "ivan", IVAN_SID)
+    done = sub("add", "0be70be8")
+    assert done.exit_code == EX_REFUSED
+    assert "no session box on this host starts with it" in done.stderr
+    _maildir(fleet.agents / OTHER_TWIN)
+    done = sub("add", OTHER_SHORT)
+    assert done.exit_code == EX_REFUSED
+    assert "ambiguous" in done.stderr and OTHER in done.stderr and OTHER_TWIN in done.stderr
+    assert fleet.files() == []
+    assert fleet.runs() == 0
+
+
+def test_a_worker_still_cannot_copy_another_session_by_its_short_id(fleet):
+    """The door only spells the name; the gate on whose box it is still
+    judges the full id."""
+    done = sub("add", OTHER_SHORT)
+    assert done.exit_code == EX_REFUSED
+    assert "that seat's to grant" in done.stderr
+    assert fleet.files() == []
+
+
+def test_remove_a_short_session_id_removes_the_full_id(fleet, monkeypatch):
+    as_seat(monkeypatch, "ivan", IVAN_SID)
+    assert sub("add", OTHER).exit_code == 0
+    done = sub("remove", OTHER_SHORT)
+    assert done.exit_code == 0, done.output
+    assert f"'{OTHER_SHORT}' is session {OTHER}" in done.stderr
+    assert fleet.subscribed(IVAN_SID) == []
+
+
+def test_remove_takes_a_short_name_held_exactly_as_itself_first(fleet, monkeypatch):
+    """A key stored short (before short ids resolved) is removed as itself,
+    not expanded; the next remove then finds only the full id."""
+    from sessionmail import _layer
+    as_seat(monkeypatch, "ivan", IVAN_SID)
+    assert sub("add", OTHER).exit_code == 0
+    tgt = _subscribe.target(_subscribe.caller(), seat=False, for_=None)
+    _layer.set_entry(tgt.folder, _layer.SUBSCRIPTIONS, OTHER_SHORT, True, file=tgt.file)
+    assert sorted(fleet.subscribed(IVAN_SID)) == sorted([OTHER, OTHER_SHORT])
+    done = sub("remove", OTHER_SHORT)
+    assert done.exit_code == 0, done.output
+    assert "is session" not in done.stderr
+    assert fleet.subscribed(IVAN_SID) == [OTHER]
+    done = sub("remove", OTHER_SHORT)
+    assert done.exit_code == 0, done.output
+    assert fleet.subscribed(IVAN_SID) == []
+
+
+# ── a short session id as --for WHO (design 5.3: the session dirs) ────────
+
+OTHER_SESSION_TWIN = OTHER[:8] + "-8888-4888-8888-888888888888"
+
+
+def test_add_for_a_short_session_id_writes_the_FULL_sessions_map(fleet, monkeypatch):
+    as_seat(monkeypatch, "ivan", IVAN_SID)
+    done = sub("add", "voicemode", "--for", OTHER_SHORT)
+    assert done.exit_code == 0, done.output
+    assert f"message subscription add: '{OTHER_SHORT}' is session {OTHER}" in done.stderr
+    assert fleet.subscribed(OTHER) == ["voicemode"]
+    assert fleet.files() == [f"sessions/{OTHER}#voicemode"]
+
+
+def test_remove_for_a_short_session_id_removes_from_the_full_sessions_map(fleet, monkeypatch):
+    as_seat(monkeypatch, "ivan", IVAN_SID)
+    assert sub("add", "voicemode", "--for", OTHER).exit_code == 0
+    done = sub("remove", "voicemode", "--for", OTHER_SHORT)
+    assert done.exit_code == 0, done.output
+    assert f"'{OTHER_SHORT}' is session {OTHER}" in done.stderr
+    assert fleet.subscribed(OTHER) == []
+
+
+@pytest.mark.parametrize("verb", ["add", "remove"])
+def test_for_an_ambiguous_or_unknown_short_session_id_refuses_and_writes_nothing(
+        fleet, monkeypatch, verb):
+    as_seat(monkeypatch, "ivan", IVAN_SID)
+    done = sub(verb, "voicemode", "--for", "0be70be8")
+    assert done.exit_code == EX_REFUSED
+    assert "no session on this host starts with it" in done.stderr, done.stderr
+    session_dir(OTHER_SESSION_TWIN, fleet.userhome).mkdir(parents=True)
+    done = sub(verb, "voicemode", "--for", OTHER_SHORT)
+    assert done.exit_code == EX_REFUSED
+    assert "ambiguous" in done.stderr
+    assert OTHER in done.stderr and OTHER_SESSION_TWIN in done.stderr
+    assert fleet.files() == []
+    assert fleet.runs() == 0
+
+
+def test_for_with_seat_names_a_seat_and_is_never_expanded(fleet, monkeypatch):
+    """--seat names a seat: a hex-looking one is not read as a session."""
+    as_seat(monkeypatch, "ivan", IVAN_SID)
+    done = sub("add", "atomnote", "--for", OTHER_SHORT, "--seat")
+    assert done.exit_code == 0, done.output
+    assert "is session" not in done.stderr and "short session id" not in done.stderr
+    assert fleet.seat_file(OTHER_SHORT, "atomnote").is_file()
+    assert fleet.subscribed(OTHER) == []
+
+
+def test_a_worker_for_a_short_session_id_is_refused_as_before(fleet):
+    """--for is a privileged seat's: the door expands nothing for anyone
+    else, and the refusal is the one it always was."""
+    done = sub("add", "voicemode", "--for", OTHER_SHORT)
+    assert done.exit_code == EX_REFUSED
+    assert "--for is for" in done.stderr
+    assert "is session" not in done.stderr
+    assert fleet.files() == []

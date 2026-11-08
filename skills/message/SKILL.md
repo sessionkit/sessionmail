@@ -16,10 +16,10 @@ line; `message <verb> --help` holds the flags.
 Several agents in one seat? See the sessionkit skill's card, "Several agents in one seat".
 
 - `send` - To/Cc/Bcc, `--in-reply-to`, `--supersedes`; body from a file
-  or the MCP argument, never a shell string; refuses a subject over 69
-  ASCII characters (unless the host shortens it) or one that could
-  execute. `--header 'Name: v'` carries any header; a name we
-  mint has no `X-` (the `mail-headers` note).
+  or the MCP argument, never a shell string; by default shortens a
+  subject over 69 characters and folds a non-ASCII one (refused if off or
+  over the cap); refuses one that could execute. `--header 'Name: v'`
+  carries any header; a name we mint has no `X-` (the `mail-headers` note).
 - `list` - subjects for a box; says what it filtered.
 - `tree` - a thread as a tree.
 - `read` - 40 lines / 400 tokens of body by default; claims.

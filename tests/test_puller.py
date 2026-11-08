@@ -8,6 +8,7 @@ stubs or scratch scripts; the settings home is the suite's sandbox.
 
 from __future__ import annotations
 
+import dataclasses
 import fcntl
 import imaplib
 import json
@@ -56,7 +57,7 @@ def env(tmp_path) -> dict[str, str]:
         "HOME": str(home),
         "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
         "SESSIONMAIL_NOTMUCH": os.environ["SESSIONMAIL_NOTMUCH"],
-        "SESSIONMAIL_ROOT": str(tmp_path / "mail" / "agents"),
+        "SESSIONMAIL_ROOT": str(tmp_path / "mail"),
         "SESSIONMAIL_PULL_IMAP_HOST": "imap.example.org",
         "SESSIONMAIL_PULL_LOGIN": "{box}*master",
         "SESSIONMAIL_PULL_SECRET_COMMAND": "printf s3cret",
@@ -179,7 +180,7 @@ def test_the_state_dir_default_reads_no_variable(env):
     plain = _puller.config(env)
     moved = _puller.config({**env, "SESSIONMAIL_HOME": "/elsewhere/home", "HOME": "/elsewhere"})
     assert plain.state_dir == moved.state_dir == \
-        _operator.settings_home() / ".sessionmail" / "puller"
+        _operator.settings_home() / ".sessionkit" / "mail" / "state" / "puller"
     assert "SESSIONMAIL_HOME" in os.environ                 # the conftest sets it; still unread
 
 
@@ -188,24 +189,22 @@ def test_differences_compare_resolved_values(env, tmp_path):
     same value, so they are no difference."""
     host_file({"root": "~/.mail"})
     job = {k: v for k, v in env.items() if k != "SESSIONMAIL_ROOT"}
-    shell = {**job, "SESSIONMAIL_ROOT": str(_operator.settings_home() / ".mail" / "agents")}
+    shell = {**job, "SESSIONMAIL_ROOT": str(_operator.settings_home() / ".mail")}
     a, b = _puller.config(job), _puller.config(shell)
     assert a.mail_root == _operator.settings_home() / ".mail"
     assert a.differences(b) == []
 
 
-def test_a_legacy_root_set_only_in_the_shell_is_a_difference(env):
-    """N1: the older root spelling is READ (as the kit's other readers read
-    it), so a shell that sets it and a job that does not are told apart,
-    and the difference names the variable. Never silently ignored."""
+def test_a_retired_root_set_only_in_the_shell_is_no_difference(env):
+    """The retired spelling (SESSION_MAIL_ROOT) is read by NOTHING since the
+    move, the puller included: a shell that sets it and a job that does not
+    resolve the same root, so there is no difference to report. (`message
+    setup` names a set one as ignored; that is where it is heard.)"""
     job = {k: v for k, v in env.items() if k != "SESSIONMAIL_ROOT"}
     shell = {**job, "SESSION_MAIL_ROOT": "/srv/legacy/agents"}
     a, b = _puller.config(shell), _puller.config(job)
-    assert a.mail_root == Path("/srv/legacy")
-    diffs = a.differences(b)
-    assert [d.field for d in diffs] == ["mail_root"]
-    assert diffs[0].key == "root" and "SESSION_MAIL_ROOT" in diffs[0].variables
-    assert diffs[0].mine == Path("/srv/legacy")
+    assert a.mail_root == b.mail_root != Path("/srv/legacy")
+    assert a.differences(b) == []
 
 
 def test_differences_name_a_pull_variable(env):
@@ -275,9 +274,13 @@ def mail(*headers: str, body: str = "hello\n") -> bytes:
     return ("\r\n".join(headers) + "\r\n\r\n" + body).encode()
 
 
-def received(ip: str, rcpt: str) -> str:
-    return (f"Received: from host-a (host-a [{ip}])\r\n\tby imap.example.org with ESMTP\r\n"
-            f"\tfor <{rcpt}>; {WHEN}")
+def received(ip: str, rcpt: str | None, helo: str = "host-a") -> str:
+    """The mail host's smtpd's own Received, `from HELO (NAME [ADDR])`. RCPT None
+    leaves out the `for <...>` clause, as postfix does for more than one
+    recipient (measured: no multi-recipient copy carries one)."""
+    clause = f"\r\n\tfor <{rcpt}>" if rcpt else ""
+    return (f"Received: from {helo} (host-a [{ip}])\r\n\tby imap.example.org with ESMTP"
+            f"{clause}; {WHEN}")
 
 
 def test_head_of_and_top_received():
@@ -299,6 +302,74 @@ def test_is_own_leg_uses_the_configured_relay_domain():
     assert not _puller.is_own_leg(direct, {OWN_IP}, "relay.example")  # sent straight there
 
 
+# -- own leg: the recipient by X-Original-To too, the IP by the peer only ----------
+
+def own(*headers: str, ips: set[str] | None = None) -> bool:
+    return _puller.is_own_leg(_puller.head_of(mail(*headers)),
+                              {OWN_IP} if ips is None else ips, "relay.example")
+
+
+def test_own_leg_without_a_for_clause_is_known_by_x_original_to():
+    """The mail host writes `for <...>` for ONE recipient only. A copy of a
+    multi-recipient mail names its recipient in the X-Original-To above."""
+    assert own("X-Original-To: alpha@relay.example", received(OWN_IP, None))
+    # the +ext stays in (4,043 of 4,405 copies): match the domain, not the box
+    assert own("X-Original-To: alpha+notes@relay.example",
+               "Delivered-To: alpha+notes@home", received(OWN_IP, None))
+    assert own("X-Original-To: <beta@relay.example>", received(OWN_IP, None))
+    assert own("x-original-to: alpha@RELAY.example", received(OWN_IP, None))
+
+
+def test_own_leg_by_the_for_clause_still_counts():
+    assert own(received(OWN_IP, "alpha@relay.example"))
+    assert own("X-Original-To: alpha@relay.example", received(OWN_IP, "alpha@relay.example"))
+
+
+def test_a_copy_for_another_domain_is_not_an_own_leg():
+    assert not own("X-Original-To: alpha@imap.example.org", received(OWN_IP, None))
+    assert not own("X-Original-To: alpha@relay.example.org", received(OWN_IP, None))
+    assert not own("X-Original-To: alpha@sub.relay.example", received(OWN_IP, None))
+    assert not own(received(OWN_IP, None))                       # no recipient at all
+    # another host's leg, by either form
+    assert not own("X-Original-To: alpha@relay.example", received(OTHER_IP, None))
+
+
+def test_only_the_x_original_to_above_the_top_received_counts():
+    """The mail host writes it above its own Received; a sender can write one
+    lower down. Topmost wins: only the first in the block above is read."""
+    assert not own(received(OWN_IP, None), "X-Original-To: alpha@relay.example")
+    assert not own("X-Original-To: alpha@imap.example.org",
+                   "X-Original-To: alpha@relay.example", received(OWN_IP, None))
+    assert own("X-Original-To: alpha@relay.example",
+               "X-Original-To: alpha@imap.example.org", received(OWN_IP, None))
+
+
+def test_an_own_ip_in_the_helo_is_not_an_own_leg():
+    """The IP is smtpd's TCP peer, the bracket in `(NAME [ADDR])`, never one
+    the sender wrote in its HELO (ported from mail 5f3b63f)."""
+    v6 = "fd7a:115c::5"
+    for helo in (f"[{OWN_IP}]", f"x[{OWN_IP}]", f"[IPv6:{v6}]"):
+        for rcpt, xot in (("alpha@relay.example", ()), (None, ("X-Original-To: alpha@relay.example",))):
+            assert not own(*xot, received(OTHER_IP, rcpt, helo=helo), ips={OWN_IP, v6}), helo
+    # the peer's own IPv6 bracket is read (the old substring test missed it)
+    assert own("X-Original-To: alpha@relay.example", received(f"IPv6:{v6}", None), ips={v6})
+
+
+def test_a_forged_lower_received_is_not_an_own_leg():
+    assert not own("X-Original-To: alpha@relay.example", received(OTHER_IP, None),
+                   received(OWN_IP, "alpha@relay.example"))
+
+
+def test_the_peer_pattern_is_the_mail_hosts():
+    """One rule on both sides: the mail repo's puller and the mail host's
+    registration check (mail 5f3b63f). If either changes, both must."""
+    assert _puller._CLIENT.pattern == (
+        rb"from [^\s()]+ \([^\s()\[\]]+ \[(?:IPv6:)?([0-9A-Fa-f:.]+)\]\)")
+    top = _puller.top_received(_puller.head_of(mail(received(OWN_IP, None, helo="[203.0.113.9]"))))
+    assert _puller.client_ip(top) == OWN_IP
+    assert _puller.client_ip(b"from somewhere; no peer") == ""
+
+
 def test_orig_to_and_local_rcpt():
     head = _puller.head_of(mail("X-Original-To: alpha+notes@relay.example",
                                 "X-Original-To: older@relay.example"))
@@ -309,6 +380,79 @@ def test_orig_to_and_local_rcpt():
     odd = _puller.head_of(mail("X-Original-To: <a;b@relay.example>"))
     assert _puller.orig_to(odd) == ""
     assert _puller.base_box("alpha+notes") == "alpha"
+
+
+# -- own IPs: only addresses count (SM-1013) ---------------------------------------
+
+# What a Mac's Tailscale app binary printed at boot, in place of an IP (SM-1013).
+CLI_ERROR = ("The Tailscale GUI failed to start: the app is not running. "
+             "(Tailscale.CLIError error 3.)")
+
+
+def fake_tailscale(path: Path, stdout: str, code: int = 0) -> str:
+    return str(script(path, f"import sys\nsys.stdout.write({stdout!r})\nsys.exit({code})\n"))
+
+
+def test_tailscale_prose_is_not_an_ip(tmp_path, monkeypatch):
+    """The app binary prints a sentence: no IP, so no own leg."""
+    for code in (0, 1):
+        ts = fake_tailscale(tmp_path / f"ts{code}", CLI_ERROR + "\n", code)
+        monkeypatch.setattr(_puller, "TAILSCALE", (ts,))
+        assert _puller.ask_tailscale() == set()
+
+
+def test_tailscale_must_exit_0(tmp_path, monkeypatch):
+    """IPs from a CLI that says it failed are not believed."""
+    ts = fake_tailscale(tmp_path / "ts", f"{OWN_IP}\n", 1)
+    monkeypatch.setattr(_puller, "TAILSCALE", (ts,))
+    assert _puller.ask_tailscale() == set()
+
+
+def test_tailscale_keeps_only_the_address_lines(tmp_path, monkeypatch):
+    ts = fake_tailscale(tmp_path / "ts",
+                        f"  {OWN_IP}  \nwarning: client version differs\n\n2001:db8::10\n"
+                        f"{CLI_ERROR}\n300.1.2.3\n")
+    monkeypatch.setattr(_puller, "TAILSCALE", (ts,))
+    assert _puller.ask_tailscale() == {OWN_IP, "2001:db8::10"}
+
+
+def test_tailscale_with_nothing_to_say_is_empty(tmp_path, monkeypatch):
+    ts = fake_tailscale(tmp_path / "ts", "")
+    monkeypatch.setattr(_puller, "TAILSCALE", (ts, str(tmp_path / "no-such-binary")))
+    assert _puller.ask_tailscale() == set()
+
+
+def test_tailscale_tries_the_next_binary_after_prose(tmp_path, monkeypatch):
+    """The CLI on PATH failing is no answer: the app's binary is still asked."""
+    junk = fake_tailscale(tmp_path / "junk", CLI_ERROR + "\n")
+    good = fake_tailscale(tmp_path / "good", f"{OWN_IP}\n")
+    monkeypatch.setattr(_puller, "TAILSCALE", (junk, good))
+    assert _puller.ask_tailscale() == {OWN_IP}
+
+
+def test_own_ips_keeps_only_configured_addresses(cfg, monkeypatch):
+    """A configured value that is not an IP is dropped; all junk is NONE (and
+    the puller refuses), never a silent fall back to tailscale."""
+    monkeypatch.setattr(_puller, "ask_tailscale", lambda: {OTHER_IP})
+    got = dataclasses.replace(cfg, own_ips=(OWN_IP, "host-a", "2001:db8::10"))
+    assert _puller.own_ips(got) == {OWN_IP, "2001:db8::10"}
+    assert _puller.own_ips(dataclasses.replace(cfg, own_ips=("host-a",))) == set()
+    assert _puller.own_ips(dataclasses.replace(cfg, own_ips=None)) == {OTHER_IP}
+
+
+def test_tailscale_prose_refuses_with_2(env, tmp_path, monkeypatch, capsys):
+    """End to end: the sentence is no IP, so the empty-set refusal fires (and
+    launchd retries), as it does where tailscale prints nothing."""
+    env = {k: v for k, v in env.items() if k != "SESSIONMAIL_PULL_OWN_IPS"}
+    ts = fake_tailscale(tmp_path / "ts", CLI_ERROR + "\n")
+    monkeypatch.setattr(_puller, "TAILSCALE", (ts,))
+    connects = []
+    monkeypatch.setattr(_puller.di, "connect", lambda *a, **k: connects.append(a))
+    assert _puller.main(["--once"], env=env) == 2
+    assert connects == []
+    said = capsys.readouterr()
+    said = said.out + said.err
+    assert "own legs: NONE" in said and "CLIError" not in said
 
 
 def test_read_boxes(tmp_path):
@@ -405,6 +549,36 @@ def test_handle_own_leg(cfg, stubs, tmp_path):
     # an own leg for a box with no local maildir is skipped
     stubs["dirs"].pop("alpha")
     assert puller(cfg).handle(5, raw, None) == "own leg, no local maildir to check, skipped"
+
+
+def test_handle_own_leg_of_a_multi_recipient_mail(cfg, stubs, tmp_path):
+    """The copy of a mail this host sent to two boxes has no `for`;
+    its local copy is here, so it is skipped, not pulled a second time."""
+    raw = mail("X-Original-To: alpha+notes@relay.example", received(OWN_IP, None),
+               "Message-ID: <m@example.org>")
+    stubs["held"].add((tmp_path / "alpha", "m@example.org"))
+    assert puller(cfg).handle(3, raw, None) == "own leg, here, skipped"
+    assert stubs["injected"] == []
+    stubs["held"].clear()
+    assert "(own leg NOT here)" in puller(cfg).handle(4, raw, None)
+    assert [r for r, _t in stubs["injected"]] == ["alpha+notes"]
+
+
+def test_handle_own_leg_known_only_by_x_original_to_with_no_maildir_is_pulled(cfg, stubs):
+    """The box_dir None branch skips WITHOUT checking. It keeps its old width:
+    only the `for` form takes it. A no-`for` own leg with no local maildir
+    may be mail this host sent to another host's addresses: its only copy is
+    the pulled one, so it is pulled, never skipped and lost. The cost, a twin
+    for an alias box, is what happened before the X-Original-To form."""
+    stubs["dirs"].pop("alpha")
+    raw = mail("X-Original-To: alpha@relay.example", received(OWN_IP, None),
+               "Message-ID: <x@example.org>")
+    v = puller(cfg).handle(3, raw, None)
+    assert v.startswith("PULLED (own leg, no local maildir to check)"), v
+    assert [r for r, _t in stubs["injected"]] == ["alpha"]
+    dry = dataclasses.replace(cfg, dry_run=True)
+    v = puller(dry).handle(4, raw, None)
+    assert v.startswith("WOULD PULL (own leg, no local maildir to check)"), v
 
 
 def test_handle_dry_run_injects_nothing(cfg, stubs):

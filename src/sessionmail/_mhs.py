@@ -40,6 +40,11 @@ child gets `NOTMUCH_CONFIG=<the resolved profile>`, with NOTMUCH_DATABASE
 and NOTMUCH_PROFILE dropped (E14), in host mode (the host's own profile) and
 store mode alike. `verify` reads no index, so it is never injected and
 never refused, in either mode.
+
+In host mode `run` refreshes the index before the oracle starts, for the
+verbs in REFRESHES (`_fresh`): a bounded `notmuch new --no-hooks`,
+because nothing else keeps the index current after setup and these readers
+cannot tell a stale answer from a true empty one.
 """
 
 from __future__ import annotations
@@ -50,7 +55,7 @@ import subprocess
 import sys
 
 # A module reference, never `from ._index import ...`.
-from . import _index
+from . import _fresh, _index
 
 ORACLE_VAR = "SESSIONMAIL_MHS_ORACLE"
 
@@ -97,6 +102,12 @@ EX_REFUSED = 2
 #: mhs-thread's traceback. `wake` degrades by design (DEGRADES); `run` is
 #: not here, because its exit table on a failed item is not yet ruled.
 NEEDS_NOTMUCH = frozenset({"ls", "tree", "cat"})
+
+#: The verbs that refresh the host index (`_fresh.refresh`) before their
+#: oracle starts: every memory verb that reads the index. Not `verify`
+#: (NO_INDEX), and not a `wake --dry-run`, which runs no index call at all.
+REFRESHES = frozenset({"wake", "ls", "tree", "cat", "run"})
+DRY_RUN = "--dry-run"
 
 
 def notmuch_missing(verb: str) -> str:
@@ -234,6 +245,8 @@ def run(argv: list[str], env: dict[str, str] | None = None) -> int:
     either mode. With no profile, the refusal line
     goes to stderr first, once; then `wake` runs under REFUSED_CONFIG and
     every other index-reading verb returns EX_REFUSED without running.
+    In host mode a verb in REFRESHES refreshes the index first (`_fresh`),
+    and a refresh that did not finish clean says so on stderr, once.
     With a profile but no `notmuch` on PATH, a bundled ls, tree or cat
     (NEEDS_NOTMUCH) returns EX_REFUSED the same way, one line saying so."""
     verb = verb_of(argv, env)
@@ -245,6 +258,11 @@ def run(argv: list[str], env: dict[str, str] | None = None) -> int:
                 return EX_REFUSED
             env = _store_env(env, REFUSED_CONFIG)
         else:
+            if (verb in REFRESHES and resolved.host
+                    and not (verb == "wake" and DRY_RUN in argv[1:])):
+                note = _fresh.refresh(os.environ if env is None else env)
+                if note:
+                    _emit(sys.stderr, f"memory {verb}: {note}\n".encode())
             env = _store_env(env, str(resolved.config))
     if verb in NEEDS_NOTMUCH and _bundled(argv) and not _on_path("notmuch", env):
         _emit(sys.stderr, (notmuch_missing(verb) + "\n").encode())

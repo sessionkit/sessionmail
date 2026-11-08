@@ -16,7 +16,7 @@ for the id in the seat's OWN two boxes - its session box and its base box - and 
 
 The seat is `test_message_mark`'s (`alpha`, session `7ed6b16b-31bd`, a fake
 engine answering from a JSON file). The boxes are real maildirs under the
-conftest's sandboxed SESSION_MAIL_ROOT. The env the resolver reads is the
+conftest's sandboxed SESSIONMAIL_ROOT. The env the resolver reads is the
 conftest's, which drops every SESSIONMAIL_* and NOTMUCH_DATABASE and
 NOTMUCH_PROFILE; NOTMUCH_CONFIG is dropped here too (design §13 hygiene).
 """
@@ -46,7 +46,7 @@ def store(seat, tmp_path, monkeypatch):  # noqa: F811
     """`seat`, in store mode with a resolvable profile, an index that holds
     nothing, and empty session and base boxes."""
     monkeypatch.delenv("NOTMUCH_CONFIG", raising=False)
-    root = Path(os.environ["SESSION_MAIL_ROOT"])
+    root = Path(os.environ["SESSIONMAIL_ROOT"], "stores")
     for box in (SESSION, "alpha", "gamma"):
         for sub in ("new", "cur", "tmp"):
             (root / box / sub).mkdir(parents=True, exist_ok=True)

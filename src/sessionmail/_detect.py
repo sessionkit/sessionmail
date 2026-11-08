@@ -33,10 +33,13 @@ Two doors, one function (`detect()` is the wake; the loop is a wrapper):
     python -m sessionmail._detect BOX [--poll S] [--timeout S] [--settle S]
     python -m sessionmail._detect BOX --follow [--exec CMD]
 
-BOX is a maildir path, or a box name under the agents root
-($SESSIONMAIL_ROOT, else $SESSION_MAIL_ROOT, else ~/.mail/agents).
+BOX is a maildir path, or a box name under the boxes root (`_maildir.root`:
+$SESSIONMAIL_ROOT, else mail.json's `root`, else ~/.sessionkit/mail; then
+stores/, or agents/ on a tree born before the move).
 One-shot: print each Message-ID in new/ as `<id>` on its own line, exit
-0; exit 124 on --timeout; exit 2 when the box cannot be watched.
+0; exit 124 on --timeout; exit 2 when the box cannot be watched; exit 5
+on a platform with no kqueue (`can_watch()` is False): one line naming
+the platform, before anything is opened.
 --follow never exits: each wake reports each file ONCE for the life of
 the run (the loop remembers what it has reported, not the
 disk), then waits for the next; with --exec CMD the ids go to CMD as
@@ -98,6 +101,25 @@ DEFAULT_POLL = 1.0
 POLL_VAR = "SESSIONMAIL_DETECT_POLL"
 SETTLE_VAR = "SESSIONMAIL_DETECT_SETTLE"
 EX_ARRIVED, EX_COULD_NOT_WATCH, EX_TIMEOUT = 0, 2, 124
+#: No kqueue on this platform: the watch cannot be made at all. The same
+#: code `pager listen` exits with for the same refusal.
+EX_UNSUPPORTED = 5
+
+
+def can_watch() -> bool:
+    """Can this platform make the watch? The ONE capability check: true iff
+    `select` has `kqueue` (BSD and macOS). Everything that must not reach
+    the watch where it cannot be made asks this, and nothing else spells
+    the test out."""
+    return hasattr(select, "kqueue")
+
+
+class Unsupported(Exception):
+    """This platform has no kqueue, so new/ cannot be watched here."""
+
+    def __init__(self, platform: str | None = None) -> None:
+        self.platform = sys.platform if platform is None else platform
+        super().__init__(f"cannot watch on {self.platform}: select.kqueue is missing")
 
 
 class NoSuchBox(Exception):
@@ -166,7 +188,10 @@ def detect(box: Path | str, *, poll: float = DEFAULT_POLL,
     SETTLE seconds, then return everything in it, oldest first. With
     OLDER_THAN, block instead until an entry is at least that many
     seconds old (the age watchdog); the wake lands at the crossing.
-    Raises Timeout, NoSuchBox, CallerGone."""
+    Raises Timeout, NoSuchBox, CallerGone, and Unsupported (before
+    anything is opened) where `can_watch()` is False."""
+    if not can_watch():
+        raise Unsupported()
     new = _new_dir(Path(box))
 
     # O_EVTONLY (macOS): a watch-only descriptor that does not pin the
@@ -322,6 +347,9 @@ def main(argv: list[str] | None = None) -> int:
         print("detect: --exec needs --follow", file=sys.stderr)
         return EX_COULD_NOT_WATCH
 
+    if not can_watch():
+        print(f"detect: {Unsupported()}", file=sys.stderr)
+        return EX_UNSUPPORTED
     box = _resolve_box(args.box)
     parent = os.getppid()
 

@@ -131,6 +131,41 @@ backtick or `$(` somewhere). One false positive was found and fixed before
 this landed — arithmetic `$(( … ))` in a subject. ~18µs per command; the hook
 process through its shim, ~27ms.
 
+## Turning it off — `"mail_guard": false`
+
+The guard has one switch, in the host settings file
+`~/.sessionkit/mail/settings/mail.json`: `"mail_guard": false` turns off its
+subject and body checks for every seat on the host. It is the lever for a
+guard that is broken. A person turns it off with `pager settings hooks
+mail_guard off`, and back on with `pager settings hooks mail_guard on`;
+`pager settings hooks mail_guard` says which.
+
+- **Missing means on.** Only the boolean `false` turns the checks off. Any
+  other value (`"no"`, `0`), and a file that is missing, cannot be read, is
+  not JSON or is not a JSON object, leaves them on. An odd or broken
+  settings file never turns the guard off.
+- **The subagent rules stay on.** Inside a subagent, the guard still denies
+  what would take or mark the seat's mail, write its settings or switch its
+  hooks, through both doors, whatever the switch says. The switch is read
+  only when the subject and body checks would run, so an MCP call and a
+  call those rules deny never read the file.
+- **`"hooks"` does not touch it.** `"hooks": false` silences the hooks that
+  speak; the guard still judges.
+- **Off, nothing stands before the shell.** The CLI refuses a subject that
+  *arrives* carrying a backtick or `$(`, but the shell has already expanded
+  and run a double-quoted one by then. With the guard off, that command runs.
+- **It is a person's switch, by convention.** Every seat runs as the user
+  who owns the file, so nothing refuses a main-thread agent that writes it.
+  Each change the verb makes is logged, with who made it
+  ([the settings doc][settings-hooks]); turn it off only when a person
+  asked for it.
+
+The guard reads the file itself, stdlib only (`guard_switched_off` in
+`hook.py`): it cannot import sessionmail. A test keeps its reading in step
+with sessionmail's own reader.
+
+[settings-hooks]: ../../docs/settings.md#the-per-hook-switches
+
 ## Wiring it — the plugin registers it
 
 This hook lived in the `session` repo until that project was retired
@@ -166,11 +201,12 @@ routed, so they cost nothing.
 **Inside a subagent, through either door**, the table also denies
 `memory init` (the whole verb), `memory run` without `--list`, `message
 subscription add|remove`, `pager rule add|remove`, `pager focus` and
-`pager settings hooks on|off`: each writes the seat's memory, runs its
-script-mail, or changes its state, as the seat (the last, the HOST's hooks
-switch, for every seat on it). Their reads stay allowed (`memory ls|tree|cat|wake`, `memory run
---list`, `message subscription list`, `pager rule list`, `pager status
---stopped`, a bare `pager settings hooks`). A word that would allow (`--peek`, `--list`, `--help`) counts
+`pager settings hooks on|off` or `pager settings hooks KEY on|off`: each
+writes the seat's memory, runs its script-mail, or changes its state, as the
+seat (the last two, the HOST's switches, for every seat on it). Their reads
+stay allowed (`memory ls|tree|cat|wake`, `memory run --list`, `message
+subscription list`, `pager rule list`, `pager status --stopped`, a bare
+`pager settings hooks`, and `pager settings hooks KEY` alone). A word that would allow (`--peek`, `--list`, `--help`) counts
 only before a `--`, where click still reads options: `message read 1 --
 --peek` reads, and is denied. Hook configuration is read at **session start**: loading the plugin
 does not guard agents that are already running.
@@ -200,7 +236,9 @@ is missing, `hook.py` is missing, or it crashes. Both run under `make test`.
 — the subagent rule through the Bash door and the MCP door;
 `tests/test_mail_guard_subagent_sm837.py` — the seat-state rows and the `--` cut,
 both doors, with the main thread pinned byte for byte to the master it was
-built on.
+built on. `tests/test_hook_switches_mail_guard.py` — the off switch, both
+doors, and the guard's reader in step with sessionmail's over every file
+shape and value kind.
 
 Written in python3, stdlib only, on purpose: a quoting-aware guard written in
 the language whose quoting is the hazard is how you get a guard with its own

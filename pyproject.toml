@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "sessionmail"
-version = "0.3.2"
+version = "0.3.3"
 description = "sessionmail - mail for coding agents: message, pager and memory over one maildir."
 readme = "README.md"
 requires-python = ">=3.11,<3.15"
@@ -20,7 +20,7 @@ dependencies = [
     "markdown>=3.6",
     "mcp>=2.2.0",
     "pymdown-extensions>=10.0",
-    "sessiontools>=0.3.2",
+    "sessiontools>=0.3.3",
 ]
 
 # One package, three commands (openspec/specs/package/spec.md):
@@ -31,7 +31,7 @@ dependencies = [
 #
 # `pager listen` regenerates the LIVE postfix maps on a seat birth
 # (pager.py:486-489), and it resolves which generator to run via
-# shutil.which("vmailbox-gen") BEFORE ~/.mail/.postfix/vmailbox-gen
+# shutil.which("vmailbox-gen") BEFORE <mail root>/.postfix/vmailbox-gen
 # (_seat.py:994), with no --no-postmap. So an entry point here does not merely
 # put a command on the PATH: at the next seat birth it COMPILES AND SERVES the
 # packaged generator's map to postfix, for every agent address on this host.

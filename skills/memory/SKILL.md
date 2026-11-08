@@ -34,6 +34,11 @@ Several agents in one seat? See the sessionkit skill's card, "Several agents in 
   nothing. Was `session mail wake`.
 
 The root comes from the environment (`<AGENT>_ROOT`), never a note.
+A seat with no root yet (the first run) gets one line, `no memory yet`,
+exit 2 from `ls`, `tree` and `cat`; "shipwreck" means a root exists but
+`<AGENT>_ROOT` does not name it (an old launcher).
+memory has no automated first step yet (`memory init` refuses on every box
+today): the by-hand recipe is `docs/memory-first-root.md` in this plugin.
 Nothing is ever edited: an item changes by a reply that supersedes it.
 
 References (flat, 40 lines / 400 tokens each): `references/`.

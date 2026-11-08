@@ -35,6 +35,7 @@ from click.testing import CliRunner
 
 from sessionmail import _index, _notmuch
 from sessionmail.message import cli
+import _leaves
 from test_message_list import deliver
 
 NOTMUCH = shutil.which("notmuch")
@@ -51,7 +52,7 @@ def lagging(tmp_path, monkeypatch):
     """A session box under the sandboxed mail root, a REAL notmuch database
     over that root holding OLD (indexed), and FRESH delivered after the last
     `notmuch new`: in `list`, not yet in the index. Host mode."""
-    root = Path(os.environ["SESSION_MAIL_ROOT"])
+    root = Path(os.environ["SESSIONMAIL_ROOT"], "stores")
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
     config = _index.profile_config()                     # host mode's profile
     config.parent.mkdir(parents=True)
@@ -82,8 +83,7 @@ def lagging(tmp_path, monkeypatch):
 
     fx = Fixture()
     fx.root, fx.index, fx.count = root, index, count
-    fx.marks = (Path(os.environ["HOME"]) / ".session" / "sessions" / SESSION
-                / "mail" / "marks")
+    fx.marks = _leaves.session_mail(SESSION) / "marks"   # the pinned leaf
     yield fx
     _index.clear_cache()
 
@@ -186,11 +186,15 @@ def foreign(lagging):
 
 @pytest.mark.parametrize("form", [(OTHER, "1"), (THEIRS,), (f"<{THEIRS}>",)],
                          ids=["box-named-index", "bare-id", "bracketed-id"])
-def test_a_listed_mail_in_another_box_is_still_no_such_message(foreign, form):
+def test_a_listed_mail_in_another_box_is_still_no_such_message(foreign, form, monkeypatch):
     """Conditions 1 and 2: the disk fallback has the scope of the
     seat's own two boxes. A mail in another seat's box that the index has
     not reached gets "no such message", and the refusal names where it
-    looked; an index resolved there carries no file."""
+    looked; an index resolved there carries no file.
+
+    SM-996: the refresh is off here, because it is not this test's subject
+    (it would index THEIRS and mark it: `test_a_miss_in_another_box_refreshes_and_marks`)."""
+    monkeypatch.setenv("SESSIONMAIL_NOTMUCH_REFRESH", "0")
     shown = message("list", OTHER)
     assert "theirs, not indexed" in shown.output
     r = message("mark", *form, "done")
@@ -210,3 +214,96 @@ def test_another_box_marks_once_the_index_holds_it(foreign):
     r = message("mark", OTHER, "1", "done")
     assert r.exit_code == EX_OK, r.output + r.stderr
     assert f"{THEIRS} done" in foreign.marks.read_text()
+
+
+# ── SM-996: mark refreshes the host index on a miss, once per call ──────────
+
+#: The real notmuch behind a wrapper that logs each call's verb first, so a
+#: test counts the `new` runs. WRAP_SLOW_NEW makes `new` hang (until SIGINT)
+#: so the bound is what ends it.
+WRAPPER = r"""#!/bin/bash
+for a in "$@"; do case "$a" in --config=*) ;; *) echo "$a" >> "$WRAP_LOG"; break ;; esac; done
+if [ -n "$WRAP_SLOW_NEW" ] && [[ " $* " == *" new "* ]]; then
+  trap 'kill "$kid" 2>/dev/null; exit 1' INT
+  while :; do sleep 30 </dev/null >/dev/null 2>&1 & kid=$!; wait "$kid"; done
+fi
+exec "$WRAP_REAL" "$@"
+"""
+
+
+@pytest.fixture
+def wrapped(foreign, tmp_path, monkeypatch):
+    """`foreign`, with the engine behind the logging wrapper. `.news()` is
+    how many `notmuch new` runs the code under test made."""
+    wrapper = tmp_path / "notmuch-wrapper"
+    wrapper.write_text(WRAPPER)
+    wrapper.chmod(0o755)
+    log = tmp_path / "wrap.log"
+    monkeypatch.setenv("WRAP_LOG", str(log))
+    monkeypatch.setenv("WRAP_REAL", NOTMUCH)
+    monkeypatch.setenv(_notmuch.BINARY_VAR, str(wrapper))
+    monkeypatch.delenv("SESSIONMAIL_NOTMUCH_REFRESH", raising=False)
+    foreign.news = lambda: (log.read_text().splitlines() if log.exists() else []).count("new")
+    return foreign
+
+
+def test_a_hit_costs_no_refresh(wrapped):
+    r = message("mark", OLD, "done")
+    assert r.exit_code == EX_OK, r.output + r.stderr
+    assert wrapped.news() == 0
+
+
+def test_an_own_box_miss_is_answered_from_disk_with_no_refresh(wrapped):
+    """design-001's review amendment: the own-box fallback answers first, so
+    a seat marking fresh mail in its own box never pays for a refresh."""
+    r = message("mark", FRESH, "done")
+    assert r.exit_code == EX_OK, r.output + r.stderr
+    assert f"{FRESH} done" in wrapped.marks.read_text()
+    assert wrapped.news() == 0
+    assert wrapped.count(FRESH) == "0"
+
+
+@pytest.mark.parametrize("form", [(OTHER, "1"), (THEIRS,), (f"<{THEIRS}>",)],
+                         ids=["box-named-index", "bare-id", "bracketed-id"])
+def test_a_miss_in_another_box_refreshes_and_marks(wrapped, form):
+    """The SM-996 case: mail in a box that is not the seat's own, delivered
+    after the last `notmuch new`. One refresh, and it is marked."""
+    r = message("mark", *form, "done")
+    assert r.exit_code == EX_OK, r.output + r.stderr
+    assert f"{THEIRS} done" in wrapped.marks.read_text()
+    assert wrapped.news() == 1
+    assert wrapped.count(THEIRS) == "1"
+    assert "index refresh" not in r.stderr
+
+
+def test_two_missing_ids_cost_one_refresh(wrapped):
+    """The refresh is once per call: the second id's search already reads the
+    refreshed index, and a true miss is refused without another `new`."""
+    gone = "never-delivered@example.invalid"
+    r = message("mark", gone, THEIRS, "also-gone@example.invalid", "done")
+    assert r.exit_code == EX_REFUSED
+    assert f"no such message: {gone}" in r.stderr
+    assert f"{THEIRS} done" in wrapped.marks.read_text()
+    assert wrapped.news() == 1
+
+
+def test_a_refresh_bounded_out_says_so_before_the_refusal(wrapped, monkeypatch):
+    """design tension 6: "no such message" is never said without the reason
+    beside it. The refresh's note comes first; the exit is still 2."""
+    monkeypatch.setenv("WRAP_SLOW_NEW", "1")
+    monkeypatch.setenv("SESSIONMAIL_NOTMUCH_REFRESH", "0.5")
+    r = message("mark", THEIRS, "done")
+    assert r.exit_code == EX_REFUSED
+    errs = r.stderr.splitlines()
+    note = next(i for i, ln in enumerate(errs) if "index refresh" in ln)
+    refusal = next(i for i, ln in enumerate(errs) if f"no such message: {THEIRS}" in ln)
+    assert note < refusal, r.stderr
+    assert "did not finish within 0.5s" in errs[note]
+    assert wrapped.news() == 1
+
+
+def test_refresh_off_leaves_another_box_unmarked(wrapped, monkeypatch):
+    monkeypatch.setenv("SESSIONMAIL_NOTMUCH_REFRESH", "0")
+    r = message("mark", THEIRS, "done")
+    assert r.exit_code == EX_REFUSED
+    assert wrapped.news() == 0

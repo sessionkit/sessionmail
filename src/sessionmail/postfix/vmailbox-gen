@@ -8,7 +8,8 @@
 # version — so the original `agents/$1/` regexp catch-all was skipped at load and
 # killed all agent delivery (measured). The mapping must instead
 # be an ENUMERATED map. Rather than hand-maintain it, we DERIVE it from the tree:
-# the maildir tree (`~/.mail/agents/*/`) stays the single source of truth, and this
+# the maildir tree (`<mail root>/stores/*/`; `agents/` on a tree born before the
+# move) stays the single source of truth, and this
 # script rebuilds the map from it. Drift is one regeneration away from gone.
 #
 # WHERE THE MAP LIVES (system space): the maps
@@ -28,11 +29,12 @@
 # a static uid), and names are sanitized (rejects `..`/`/`), so it is safe under
 # the family-trust model.
 #
-# For each `~/.mail/agents/<name>/` box it emits TWO keys (both domain forms) so a
-# short `<name>@<host>` and a fully-qualified `<name>@<fqdn>` both resolve:
+# For each `<mail root>/<boxes>/<name>/` box it emits TWO keys (both domain forms)
+# so a short `<name>@<host>` and a fully-qualified `<name>@<fqdn>` both resolve
+# (`<boxes>` is `stores`, or `agents` on a tree born before the move):
 #
-#     <name>@<host>   agents/<name>/
-#     <name>@<fqdn>   agents/<name>/
+#     <name>@<host>   stores/<name>/
+#     <name>@<fqdn>   stores/<name>/
 #
 # <name> is folded to lowercase and sanitized to [a-z0-9_.-] so it
 # matches postfix's own lowercase key folding. Trailing "/" = Maildir. Output is
@@ -65,7 +67,8 @@
 #                [--no-fqdn] [--capabilities] [-h]
 #
 #     --host NAME    short hostname for the keys (default: `hostname -s`).
-#     --root DIR     the ~/.mail root, the SOURCE tree (default: $MAIL_ROOT or ~/.mail).
+#     --root DIR     the mail root, the SOURCE tree (default: $SESSIONMAIL_ROOT, else
+#                    `message path --root`, else ~/.sessionkit/mail; $MAIL_ROOT is retired).
 #     --out FILE     TARGET map path — decoupled from --root so the generator is
 #                    path-agnostic (default: the PINNED system path
 #                    /usr/local/etc/postfix-agents/vmailbox). Tests/proofs pass
@@ -102,6 +105,17 @@
 #                    reads back as (`--` -> `/`), no newline, and exit 0; exit 3
 #                    and print nothing on stdout when the name is not a stored
 #                    box. Touches NOTHING - the codec, runnable on its own.
+#     --state-leaf LEAF  print the folder this script reads the state leaf
+#                    LEAF (`seats` or `sessions`) from, no newline, and exit 0:
+#                    state_leaf's answer. Touches NOTHING; it only
+#                    looks. The parity test holds it equal to the package's
+#                    `_settings.state_path`.
+#     --tools-leaf LEAF  print the folder this script reads sessiontools'
+#                    leaf LEAF (`seats` or `sessions`: the seat and session
+#                    layers) from, no newline, and exit 0: tools_settings'
+#                    answer, `session path --json` when it answers, else
+#                    sessiontools' leaf rule as this script restates it.
+#                    Touches NOTHING; it only looks.
 #     --plus-rows ADDRESS SID  print the alias pairs plus_rows emits for ONE
 #                    declared address, one `key<TAB>destination` per line, and
 #                    exit; exit 3 and print NOTHING when it refuses. Touches
@@ -129,7 +143,7 @@
 # --no-fqdn (print modes only, above) and --subscription-box go without it.
 #
 # THE LIVE-TREE GUARD. A WRITING run (not --print, --print-valias,
-# --plus-rows, --subscription-box or --capabilities) whose --root is not the tree
+# --plus-rows, --subscription-box, --state-leaf, --tools-leaf or --capabilities) whose --root is not the tree
 # postfix serves (`postconf -xh virtual_mailbox_base`) is REFUSED when it would write
 # the pinned default target (by default, or by an --out naming its dir) or an --out
 # dir postfix reads maps from: it writes NOTHING, prints one line naming the root and
@@ -194,7 +208,7 @@
 #     live session WITH A BOX whose layer, `~/.session/sessions/<sid>/settings/
 #     mail.json` (+ `mail.d/`), has an `address` key naming `<base>+<ext>`
 #     (written by `pager listen` from EMAIL; task 3.3b moved it from the old
-#     `$SESSIONMAIL_HOME/sessions/<sid>/address`, now counted, never read):
+#     `sessions/<sid>/address` of sessionmail's state, now counted, never read):
 #
 #         <base>+<ext>@<host>   <base>@<host>, <sid>@<host>
 #         <base>+<ext>@<fqdn>   <base>@<fqdn>, <sid>@<fqdn>
@@ -209,8 +223,8 @@
 #   * A SUBSCRIPTION'S ROW (changes/message-subscriptions D1/D2). Each `true`
 #     key of the `subscriptions` map of a seat's or a live session's layer
 #     (`~/.session/{seats/<seat>,sessions/<sid>}/settings/mail.json`, tasks 3.2
-#     and 3.3b), and each file in an AGENT's `$SESSIONMAIL_HOME/seats/<agent>/
-#     subscriptions/`, is named for a box, `/` stored as `--` in a file name:
+#     and 3.3b), and each file in an AGENT's `seats/<agent>/subscriptions/`
+#     in sessionmail's state (state_leaf), is named for a box, `/` stored as `--` in a file name:
 #
 #         <box>@<host>   <box>@<host>, <seat-or-sid>@<host>     (both host forms)
 #
@@ -266,10 +280,109 @@ GEN_DIR="$(cd "$(dirname "$_self")" && pwd -P)"
 GEN_PATH="$GEN_DIR/${_self##*/}"   # this file, links followed: one input of the regen request key
 SUFFIX_HELPER="$GEN_DIR/magicdns-suffix"
 unset _self _link
-MAIL_ROOT="${MAIL_ROOT:-$HOME/.mail}"
+MAIL_ROOT=""   # the mail root: resolved below, once --root has been read
 # A session's OLD files (`sessions/<sid>/address`, `subscriptions/`): counted as
 # never converted (3.3b), never read. Seats' old folders and agents' folders too.
-SESSIONMAIL_HOME="${SESSIONMAIL_HOME:-$HOME/.sessionmail}"
+# They sit in two LEAVES of sessionmail's state, `seats` and `sessions`, each
+# found by state_leaf below: the shell mirror of `_settings.state_leaf`, so
+# this script reads the folder the package reads and writes.
+#
+# state_leaf LEAF -> STATE_LEAF, the folder LEAF is read from:
+#   1. $SESSIONMAIL_HOME/LEAF when SESSIONMAIL_HOME is set and not empty
+#      (decided on the value this script was given, STATE_OVERRIDE);
+#   2. else the OLD $HOME/.sessionmail/LEAF while it is a real folder that is
+#      not the new one (`-ef`: a symlink to it is the new one);
+#   3. else the NEW $HOME/.sessionkit/mail/state/LEAF when it is a folder;
+#   4. else the new path too, the fresh default (`fresh-new`): a host with
+#      neither is a fresh install, whose package writes the leaf there.
+# It only looks: nothing is made, moved or merged. Old and new both real is
+# STRANDED, and old is read (the package reports it; this script does not).
+# The old path is a fallback, dropped one release after every peer reads
+# the new one on every host.
+STATE_OVERRIDE="${SESSIONMAIL_HOME:-}"
+STATE_OLD="$HOME/.sessionmail"
+STATE_NEW="$HOME/.sessionkit/mail/state"
+STATE_LEAF=""
+state_leaf() {   # LEAF
+  if [ -n "$STATE_OVERRIDE" ]; then
+    STATE_LEAF="$STATE_OVERRIDE/$1"
+  elif [ -d "$STATE_OLD/$1" ] && ! [ "$STATE_OLD/$1" -ef "$STATE_NEW/$1" ]; then
+    STATE_LEAF="$STATE_OLD/$1"
+  else
+    STATE_LEAF="$STATE_NEW/$1"     # rule 3, or rule 4: the fresh default
+  fi
+}
+# SESSIONTOOLS' leaves, `seats` and `sessions`, where the seat and
+# session layers live (SEAT MAPS, below). This script asks sessiontools
+# first: `session path --json`, the verb sessiontools gives a peer in
+# another language, and it reads each leaf's `path` only when its `source` is
+# one of the verb's own words (override, old, new, fresh-old, fresh-new).
+# Only when the verb cannot answer does this script spell tools' paths: no
+# `session` on PATH, no jq, a sessiontools without the verb (before the
+# 0.3.2 cut: `unknown verb`, exit 2), or any other answer. Then each leaf is
+# sessiontools' own leaf rule, RESTATED here in bash (tools_rule_leaf and
+# tools_rule_fresh, below), so a run without `session` reads the same folder
+# as a run with it, and both put the same leaves in the request key:
+#   1. SESSIONS_DIR set and not empty (the sessions leaf only; `seats` has
+#      no override): that path, a leading `~/` as $HOME's.
+#   2. $HOME/.session/<leaf> a directory that is not -ef the new one: OLD.
+#   3. $HOME/.sessionkit/tools/state/<leaf> a directory: NEW.
+#   4. neither: OLD only when $HOME/.session is a directory of its own (not
+#      -ef $HOME/.sessionkit/tools/state), so a live host keeps its tree;
+#      otherwise NEW, so a fresh host never gets a $HOME/.session.
+#
+# tools_settings -> SEATS_SETTINGS, SESSIONS_SETTINGS (one `session` run).
+SEATS_SETTINGS=""
+SESSIONS_SETTINGS=""
+# COPIED, not re-derived: leaf() and fresh() in hooks/busy-sound at
+# sessiontools e7f1118, the one bash copy of sessiontools'
+# settings.leaf_path and settings.old_root_real. Renamed (tools_rule_*) and
+# otherwise kept as written, builtins only. A change to the rule there is a
+# change here: tests/test_vmailbox_gen_tools_leaf_rule.py pins this copy
+# against that rule.
+tools_rule_leaf() {   # tools_rule_leaf OLD NEW old|new: sets $at to the rule's answer, no override; no fork
+  if [ -d "$1" ] && ! [ "$1" -ef "$2" ]; then at=$1
+  elif [ -d "$2" ]; then at=$2
+  elif [ "$3" = new ]; then at=$2
+  else at=$1
+  fi
+}
+tools_rule_fresh() {  # tools_rule_fresh ROOT STATE: sets $fw to old when ROOT is a dir that is not STATE, else new; no fork
+  if [ -d "$1" ] && ! [ "$1" -ef "$2" ]; then fw=old; else fw=new; fi
+}
+tools_leaf_of() {   # LEAF JSON -> LEAF's path, or nothing
+  printf '%s' "$2" | jq -r --arg leaf "$1" '
+    .[$leaf] | select(type == "object")
+    | select(.source as $s | ["override", "old", "new", "fresh-old", "fresh-new"] | index($s))
+    | .path | select(type == "string" and startswith("/"))' 2>/dev/null || true
+}
+tools_settings() {
+  local out="" seats="" sessions="" at="" fw=""
+  if command -v session >/dev/null 2>&1 && command -v jq >/dev/null 2>&1 \
+     && out="$(session path --json 2>/dev/null </dev/null)"; then
+    seats="$(tools_leaf_of seats "$out")"
+    sessions="$(tools_leaf_of sessions "$out")"
+  fi
+  # The verb did not answer for a leaf: sessiontools' rule, by the copy above.
+  tools_rule_fresh "$HOME/.session" "$HOME/.sessionkit/tools/state"
+  if [ -z "$seats" ]; then
+    tools_rule_leaf "$HOME/.session/seats" "$HOME/.sessionkit/tools/state/seats" "$fw"
+    seats=$at
+  fi
+  if [ -z "$sessions" ]; then
+    if [ -n "${SESSIONS_DIR:-}" ]; then
+      sessions=$SESSIONS_DIR
+      case "$sessions" in \~/*) sessions=$HOME/${sessions#\~/} ;; esac   # a literal ~/, as python expanduser()s it
+    else
+      tools_rule_leaf "$HOME/.session/sessions" "$HOME/.sessionkit/tools/state/sessions" "$fw"
+      sessions=$at
+    fi
+  fi
+  SEATS_SETTINGS="$seats"
+  SESSIONS_SETTINGS="$sessions"
+}
+state_leaf seats;    SEATS_LEAF="$STATE_LEAF"      # seats/<seat>/subscriptions/
+state_leaf sessions; SESSIONS_LEAF="$STATE_LEAF"   # sessions/<sid>/{address,subscriptions/}
 # Claude Code's per-session sidecars (<pid>.json) - where LIVE comes from. The
 # same override name `session list` and sessiontools read.
 SIDECAR_DIR="${SESSION_SIDECAR_DIR:-$HOME/.claude/sessions}"
@@ -321,6 +434,17 @@ while [ $# -gt 0 ]; do
     --no-fqdn)    NO_FQDN=1; shift ;;
     --plus-rows)  [ $# -ge 3 ] || die "--plus-rows needs ADDRESS SID"; PLUS_ROWS_ARGS=("$2" "$3"); shift 3 ;;
     --subscription-box) [ $# -ge 2 ] || die "--subscription-box needs STORED"; SUB_BOX_ARGS=("$2"); shift 2 ;;
+    --state-leaf) [ $# -ge 2 ] || die "--state-leaf needs seats or sessions"
+                  case "$2" in seats|sessions) ;; *) die "--state-leaf reads seats or sessions, not '$2'" ;; esac
+                  state_leaf "$2"; printf '%s' "$STATE_LEAF"; exit 0 ;;
+    --tools-leaf) [ $# -ge 2 ] || die "--tools-leaf needs seats or sessions"
+                  tools_settings
+                  case "$2" in
+                    seats)    printf '%s' "$SEATS_SETTINGS" ;;
+                    sessions) printf '%s' "$SESSIONS_SETTINGS" ;;
+                    *)        die "--tools-leaf reads seats or sessions, not '$2'" ;;
+                  esac
+                  exit 0 ;;
     --capabilities) printf 'nested-v1\nvalias-v1\nstore-box-v1\nplus-v1\nno-fqdn-v1\n'; exit 0 ;;
     -h|--help)    sed -n '2,/^set -euo pipefail/p' "$0" | sed '$d' | sed 's/^#//; s/^ //'; exit 0 ;;
     *)            die "unknown argument: $1 (try --help)" ;;
@@ -337,6 +461,24 @@ if [ "$NO_FQDN" -eq 1 ] && [ "$PRINT" -eq 0 ] && [ "$PRINT_VALIAS" -eq 0 ] \
   die "--no-fqdn is for --print, --print-valias and --plus-rows only - nothing written; a postfix map with no FQDN rows bounces mail addressed to <name>@<host>.<tailnet>"
 fi
 [ -n "$HOST" ] || HOST="$(hostname -s)"
+# THE MAIL ROOT: --root (every package caller passes it), else $SESSIONMAIL_ROOT
+# (the one variable; it names the root), else what `message path --root` says
+# (mail.json's `root`, which this script does not read itself), else the
+# package's default (`_maildir.DEFAULT_MAIL_ROOT`). $MAIL_ROOT, once this
+# script's own variable, is RETIRED and not read: a bare run on a host that
+# still exports it gets the same answer as every other caller.
+if [ -z "$MAIL_ROOT" ]; then
+  MAIL_ROOT="${SESSIONMAIL_ROOT:-}"
+  case "$MAIL_ROOT" in \~) MAIL_ROOT="$HOME" ;; \~/*) MAIL_ROOT="$HOME/${MAIL_ROOT#\~/}" ;; esac
+fi
+if [ -z "$MAIL_ROOT" ] && command -v message >/dev/null 2>&1; then
+  MAIL_ROOT="$(message path --root 2>/dev/null)" || MAIL_ROOT=""
+fi
+[ -n "$MAIL_ROOT" ] || MAIL_ROOT="$HOME/.sessionkit/mail"
+# THE BOXES FOLDER (`_maildir.boxes_name`, inline): stores/, except agents/
+# while only that one is a directory - an old tree keeps its name. The map
+# VALUES carry this name (`<boxes>/<name>/`), and nm-deliver accepts both.
+if [ ! -d "$MAIL_ROOT/stores" ] && [ -d "$MAIL_ROOT/agents" ]; then BOXES_NAME=agents; else BOXES_NAME=stores; fi
 # The suffix, before ANY file is touched: with no answer the generator writes
 # nothing at all (not vmailbox, not valias) and exits 4, the helper's stderr
 # naming the fix. Only the --subscription-box codec, which keys no row, and a
@@ -352,7 +494,7 @@ if [ "${#SUB_BOX_ARGS[@]}" -eq 0 ] && [ "$NO_FQDN" -eq 0 ]; then
   }
   FQDN="$HOST.$MAGICDNS_SUFFIX"
 fi
-AGENTS_DIR="$MAIL_ROOT/agents"
+AGENTS_DIR="$MAIL_ROOT/$BOXES_NAME"   # the boxes dir; the old name, kept for the readers below
 # TARGET is path-agnostic: --out decouples it from the source tree. The default is
 # the PINNED system path; --out is for unprivileged tests/proofs.
 VMAILBOX="${OUT:-$DEFAULT_MAP}"
@@ -401,16 +543,16 @@ generate() {
       continue
     fi
     printf 'flat\t\t%s\n' "$name"
-  done | awk -F '\t' -v host="$HOST" -v fqdn="$FQDN" '
+  done | awk -F '\t' -v host="$HOST" -v fqdn="$FQDN" -v boxes="$BOXES_NAME" '
     function san(s) { s = tolower(s); gsub(/[^a-z0-9_.-]/, "", s); return s }
     {
       kind = $1; store = san($2); name = san($3)
       if (name == "" || name == "." || name == "..") next      # sanitizes to nothing / traversal guard
       if (kind == "nested") {
         if (store == "" || store == "." || store == "..") next
-        path = "agents/" store "/" name "/"
+        path = boxes "/" store "/" name "/"
       } else {
-        path = "agents/" name "/"
+        path = boxes "/" name "/"
       }
       printf "%s@%s\t%s\n", name, host, path
       if (fqdn != "") printf "%s@%s\t%s\n", name, fqdn, path   # --no-fqdn: short rows only
@@ -454,8 +596,12 @@ plus_rows() {
 #
 # A subscription is a FILE whose NAME is a box (D1):
 #
-#     $SESSIONMAIL_HOME/seats/<seat>/subscriptions/<box>     durable
-#     $SESSIONMAIL_HOME/sessions/<sid>/subscriptions/<box>   while <sid> is live
+#     seats/<seat>/subscriptions/<box>     durable
+#     sessions/<sid>/subscriptions/<box>   while <sid> is live
+#
+# in the `seats` and `sessions` leaves of sessionmail's state (state_leaf:
+# $SESSIONMAIL_HOME when set, else ~/.sessionmail while its leaf is real,
+# else the state folder, ~/.sessionkit/mail/state).
 #
 # `/` is stored as `--` (`work/demo` -> `work--demo`). The
 # codec is _subscription.py's `box_name`, restated here because this file is
@@ -509,9 +655,16 @@ SUBS_SKIPPED_LIST=""   # the first few, `path (why)`, for stderr
 SUBS_SHOWN_MAX=10
 
 sub_skip() {   # PATH WHY
+  local shown="$1"
+  # A path in a state leaf is named from its root: `seats/<seat>/...`,
+  # `sessions/<sid>/...`, whichever folder state_leaf chose for it.
+  case "$shown" in
+    "$SEATS_LEAF"/*)    shown="${shown#"${SEATS_LEAF%/*}"/}" ;;
+    "$SESSIONS_LEAF"/*) shown="${shown#"${SESSIONS_LEAF%/*}"/}" ;;
+  esac
   VALIAS_SUBS_SKIPPED=$((VALIAS_SUBS_SKIPPED + 1))
   if [ "$VALIAS_SUBS_SKIPPED" -le "$SUBS_SHOWN_MAX" ]; then
-    SUBS_SKIPPED_LIST="${SUBS_SKIPPED_LIST:+$SUBS_SKIPPED_LIST; }${1#"$SESSIONMAIL_HOME"/} ($2)"
+    SUBS_SKIPPED_LIST="${SUBS_SKIPPED_LIST:+$SUBS_SKIPPED_LIST; }$shown ($2)"
   elif [ "$VALIAS_SUBS_SKIPPED" -eq $((SUBS_SHOWN_MAX + 1)) ]; then
     SUBS_SKIPPED_LIST="$SUBS_SKIPPED_LIST; and more (only the first $SUBS_SHOWN_MAX are named)"
   fi
@@ -653,7 +806,7 @@ sub_resolve() {
 # SEAT MAPS (sessiontools openspec/changes/session-settings, task 3.2): a
 # SEAT's subscriptions are the `subscriptions` map of
 #
-#     $HOME/.session/seats/<seat>/settings/mail.json, then mail.d/*.json
+#     <seats leaf>/<seat>/settings/mail.json, then mail.d/*.json
 #
 # folded in name order as sessiontools folds ONE layer (a map merges key by
 # key, recursively; anything else replaces: jq's `*`), and read PER OWNER:
@@ -662,11 +815,10 @@ sub_resolve() {
 # `true` is a box, through the same gates as a file's name. An AGENT's bare
 # name (no `+`, no `.`) is not a seat: its subscriptions stay
 # in its old folder, read below, until 3.8 reads the agent layer. This half is temporary too: 3.8 moves the records into Python.
-SEATS_SETTINGS="$HOME/.session/seats"
 # A SESSION's layer (task 3.3b): `<session dir>/settings`, in the session dir
-# sessiontools keeps. SESSIONS_DIR as sessiontools reads it; unset (the
-# common case), it is 0.0.4's `$HOME/.session/sessions`, where `_layer` writes.
-SESSIONS_SETTINGS="${SESSIONS_DIR:-$HOME/.session/sessions}"
+# sessiontools keeps. Both leaves are sessiontools' answer (tools_settings,
+# above), so this reads where `_layer` writes.
+tools_settings
 
 # layer_files SETTINGS -> LAYER_FILES: SETTINGS/mail.json, then
 # SETTINGS/mail.d/*.json in name order; empty when the layer has no file.
@@ -762,7 +914,7 @@ layer_address() {
 subscription_records() {
   local out="$1" dir owner sid; shift
   seat_map_records "$out"
-  for dir in "$SESSIONMAIL_HOME/seats"/*/; do
+  for dir in "$SEATS_LEAF"/*/; do
     [ -d "$dir" ] || continue
     owner="${dir%/}"; owner="${owner##*/}"
     case "$owner" in .*) continue ;; esac
@@ -773,7 +925,7 @@ subscription_records() {
     esac
   done
   for sid in "$@"; do
-    dir="$SESSIONMAIL_HOME/sessions/$sid/subscriptions"
+    dir="$SESSIONS_LEAF/$sid/subscriptions"
     # The D path writes san(sid); a sid san() would CHANGE (`s1, bob`) must
     # not reach a row verbatim, where `, ` starts another destination.
     case "$sid" in *[!${SUB_CHARS}-]*)
@@ -923,8 +1075,8 @@ generate_valias() {
            | LC_ALL=C sort -u)
   if [ "$withheld_n" -gt 0 ]; then withheld_list="$withheld_list $withheld_word=$withheld_n"; fi
   if [ "$VALIAS_WITHHELD" -gt 0 ]; then
-    printf 'vmailbox-gen: withheld %d seat record(s) whose seat word is not itself a box (agents/<word>/new) - no <word>@ row written, word=sessions:%s\n' \
-      "$VALIAS_WITHHELD" "$withheld_list" >&2
+    printf 'vmailbox-gen: withheld %d seat record(s) whose seat word is not itself a box (%s/<word>/new) - no <word>@ row written, word=sessions:%s\n' \
+      "$VALIAS_WITHHELD" "$BOXES_NAME" "$withheld_list" >&2
   fi
   # PLUS records: every live session WITH A BOX that declared an address - by
   # session id alone, whatever its agent word. Only listed sessions are read.
@@ -939,7 +1091,7 @@ generate_valias() {
       VALIAS_ADDR_UNREAD=$((VALIAS_ADDR_UNREAD + 1)); unread_list="$unread_list $sid"; continue
     fi
     if [ "$rc" -ne 0 ]; then
-      if [ -e "$SESSIONMAIL_HOME/sessions/$sid/address" ]; then
+      if [ -e "$SESSIONS_LEAF/$sid/address" ]; then
         VALIAS_ADDR_OLD=$((VALIAS_ADDR_OLD + 1)); old_list="$old_list $sid"
       fi
       continue
@@ -1198,8 +1350,9 @@ live_guard
 #     data, so a request appears whole or not at all. <key> is a checksum over
 #     every input that shapes the maps (this generator's path and text, the
 #     root, the host and FQDN, the map path, the static file, postmap or not,
-#     the sidecar dir, the sessionmail home, HOME and the session-settings
-#     dir); <maps> is `ma` for a whole run, `a` for --valias-only and `m`
+#     the sidecar dir, the sessionmail home, HOME, and sessiontools' seats
+#     and sessions leaves, which `session path` may answer for one caller
+#     and not another); <maps> is `ma` for a whole run, `a` for --valias-only and `m`
 #     for --no-valias.
 #   * The run that takes the lock (the HOLDER) lists the requests with its
 #     key BEFORE it reads anything, keeping each one whose maps are a subset
@@ -1234,7 +1387,7 @@ mkdir -p "$REQDIR" "$DONEDIR" 2>/dev/null \
   || die "could not make the regen request dirs $REQDIR and $DONEDIR - no map written"
 if [ "$VALIAS_ONLY" -eq 1 ]; then MAPS=a; elif [ "$DO_VALIAS" -eq 0 ]; then MAPS=m; else MAPS=ma; fi
 REQKEY="$({ printf '%s\n' "$GEN_PATH" "$MAIL_ROOT" "$HOST" "$FQDN" "$VMAILBOX" "$VALIAS_STATIC" \
-              "$DO_POSTMAP" "$SIDECAR_DIR" "$SESSIONMAIL_HOME" "$HOME" "$SESSIONS_SETTINGS"
+              "$DO_POSTMAP" "$SIDECAR_DIR" "$SEATS_LEAF" "$SESSIONS_LEAF" "$HOME" "$SEATS_SETTINGS" "$SESSIONS_SETTINGS"
             cat -- "$GEN_PATH" 2>/dev/null || true; } | cksum | tr ' ' '-')"
 # A session id that cannot be part of a file name makes no request: that run
 # takes the lock itself, as every run did before.

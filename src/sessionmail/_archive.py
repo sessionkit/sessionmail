@@ -197,11 +197,13 @@ def routed_names(text: str) -> set[str]:
     return names
 
 
-def mailbox_keys(text: str, rel: str) -> list[str]:
+def mailbox_keys(text: str, rel: str, boxes: str) -> list[str]:
     """The keys of REL's rows in a mailbox map's text: the rows whose
-    SECOND field is exactly `agents/<rel>/` (BN1), so both host forms are
-    found by one test and never by a substring."""
-    want = f"agents/{rel.lower()}/"
+    SECOND field is exactly `<boxes>/<rel>/` (BN1), so both host forms are
+    found by one test and never by a substring. BOXES is the boxes folder's
+    name on this tree (`Ctx.root.name`: `stores`, or `agents` on an old
+    tree), which the generator writes into every value."""
+    want = f"{boxes}/{rel.lower()}/"
     keys = []
     for line in text.splitlines():
         parts = line.split()
@@ -214,7 +216,7 @@ def mailbox_keys(text: str, rel: str) -> list[str]:
 class Ctx:
     """One run: where things are, and what it may ask."""
 
-    root: Path                          # the agents dir (`_maildir.root()`)
+    root: Path                          # the boxes dir (`_maildir.root()`); its name is the map values' folder
     archive: Path
     days: float = DEFAULT_DAYS
     maps: Path | None = None            # --maps DIR; None: ask postconf
@@ -411,14 +413,17 @@ def release_lock(archive: Path) -> None:
 
 def notmuch_configs(env: dict[str, str]) -> list[Path]:
     """Every notmuch config file this host could use: `$NOTMUCH_CONFIG`
-    (else `~/.notmuch-config`), each `~/.notmuch-config.<profile>`, and
-    each `$XDG_CONFIG_HOME/notmuch/<profile>/config`."""
+    (else `~/.notmuch-config`), each `~/.notmuch-config.<profile>`, each
+    `$XDG_CONFIG_HOME/notmuch/<profile>/config`, and each kit profile,
+    `~/.sessionkit/mail/settings/notmuch/<profile>/config` (`_index`)."""
     home = Path(env.get("HOME") or Path.home())
     found = [Path(env["NOTMUCH_CONFIG"]).expanduser()] if env.get("NOTMUCH_CONFIG") \
         else [home / ".notmuch-config"]
     found += sorted(home.glob(".notmuch-config.*"))
     xdg = Path(env.get("XDG_CONFIG_HOME") or home / ".config")
     found += sorted(xdg.glob("notmuch/*/config"))
+    from . import _index         # here, not at import: _index reaches _notmuch
+    found += sorted(_index.kit_profiles(env).glob("*/config"))
     out: list[Path] = []
     for p in found:
         if p.is_file() and p not in out:
@@ -853,7 +858,7 @@ def verify_gone(ctx: Ctx, text: str | None, m: Moved) -> tuple[str, str]:
     resolves against, so TEXT is the print (`Ctx.mailbox_text`)."""
     if text is None:
         return "UNKNOWN", "map unreadable"
-    if mailbox_keys(text, m.rel):
+    if mailbox_keys(text, m.rel, ctx.root.name):
         return "PRESENT", "regenerate did not take"
     if not m.keys:
         # BN6: a `moving` line with no keys (or a box with no row) cannot ask
@@ -873,7 +878,7 @@ def routed_now(ctx: Ctx, text: str | None, rel: str) -> bool:
     """REL has its row back, in the text and (when postconf answers) the .db."""
     if text is None:
         return False
-    keys = mailbox_keys(text, rel)
+    keys = mailbox_keys(text, rel, ctx.root.name)
     if not keys:
         return False
     if ctx.use_db():
@@ -893,7 +898,7 @@ def alias_db_hit(ctx: Ctx, rel: str) -> str | None:
     maps = _seat._postfix_maps("virtual_alias_maps")
     if not maps:
         raise Unknown("postconf could not say which alias .db postfix reads")
-    for key in mailbox_keys(ctx.mailbox_text() or "", rel):
+    for key in mailbox_keys(ctx.mailbox_text() or "", rel, ctx.root.name):
         if _seat._postmap_lookup(key, maps):
             return key
     return None
@@ -1020,7 +1025,7 @@ def _apply_locked(ctx: Ctx, c: Census, pf: Preflight, candidates: list[Row],
             warn(f"refused {rel}: archive/{rel} already exists; message box unarchive {rel} --merge --apply")
             continue
         text = ctx.mailbox_text()
-        keys = mailbox_keys(text or "", rel)
+        keys = mailbox_keys(text or "", rel, ctx.root.name)
         if not keys:
             warn(f"not moved {rel}: no mailbox row for it before the move (BN2)")
             continue

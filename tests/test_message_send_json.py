@@ -145,13 +145,14 @@ def test_an_unkeyed_seat_still_takes_the_named_bash(world, monkeypatch):
 
 
 @pytest.mark.parametrize("args, kind, code", [
-    (["beta", "-s", "x" * 70], "subject", 2),
+    (["beta", "-s", "x" * 70, "--no-shorten"], "subject", 2),   # pinned OFF (SM-978)
+    (["beta", "-s", "x" * 80], "subject", 2),                   # over the cap, either way
     (["beta", "-s", "a `tick`"], "subject", 2),
     (["beta,gamma", "-s", "s"], "address", 2),
     (["beta", "-s", "s", "-r", "&lt;id@host&gt;"], "thread-id", 2),
     (["beta", "-s", "s", "-r", "not an id"], "thread-id", 2),
     (["beta", "-s", "s", "--header", "From=x"], "header", 2),
-], ids=["too-long", "could-execute", "comma", "escaped-id", "malformed-id", "header-owned"])
+], ids=["too-long", "over-the-cap", "could-execute", "comma", "escaped-id", "malformed-id", "header-owned"])
 def test_an_input_refusal_names_the_input_to_fix(world, args, kind, code):
     r, said = run(*args, "-f", str(world.body), "--json")
     assert r.exit_code == code and said["sent"] == "no" and said["kind"] == kind, r.output
@@ -316,8 +317,10 @@ def test_a_named_oracle_passed_over_names_the_flag_that_did_it(world, monkeypatc
 
 
 # ── SM-538: the subject shortener at the door (design s2, s6; do-005) ────────
-# OFF is the tool's default; only the host's locked file turns it ON
-# (`set subject-shorten on`); the flag and the seat variable only turn it OFF.
+# ON is the tool's default since SM-978 (no locked line); the host's locked
+# file turns it OFF (`set subject-shorten off`), and the flag and the seat
+# variable only turn it OFF. `_host_on()` still writes `on`: it says the
+# default aloud, so these tests read the same under either default.
 # Every test runs through BOTH doors: the command line and --json, which is
 # what the MCP tool's child runs (`_mcp._send_handler`).
 
@@ -381,10 +384,16 @@ def test_host_on_a_72_char_subject_is_shortened_sent_and_reported(world, door):
 
 
 @pytest.mark.parametrize("door", ["cli", "json"])
-def test_no_config_refuses_exactly_as_today(world, door):
+def test_no_config_shortens_the_tools_default_is_on(world, door):
+    """SM-978: with
+    no `set subject-shorten` line, a 72-char subject is shortened and sent.
+    Until SM-978 this test was `test_no_config_refuses_exactly_as_today`."""
+    assert not rules.locked_path().exists(), "no locked file: the tool's default"
     r, said = _send_it(world, door, LONG)
-    _refused_as_today(world, r, said, door, LONG)
-    assert "not shortened" not in r.output and "shorten" not in r.stderr
+    assert r.exit_code == 0, r.output
+    assert _parsed(world)["X-Original-Subject"] == LONG
+    out = " ".join(said["notices"]) if door == "json" else r.stderr
+    assert "message send: shortened 72->" in out
 
 
 @pytest.mark.parametrize("door", ["cli", "json"])
@@ -407,7 +416,9 @@ def test_the_seat_variable_turns_it_off_under_a_host_on(world, door, off, monkey
 @pytest.mark.parametrize("door", ["cli", "json"])
 def test_the_seat_variable_cannot_turn_it_on_and_says_so(world, door, value, monkeypatch):
     """RULED Q2: a seat can only turn it off. Any other value is ignored with
-    a notice, and the host layer (here: no file, so OFF) decides."""
+    a notice, and the host layer (here: `set subject-shorten off`) decides.
+    Pinned OFF through the locked file since SM-978 made no file ON."""
+    _host_on("off")
     monkeypatch.setenv(_send.SHORTEN_VAR, value)
     r, said = _send_it(world, door, LONG)
     _refused_as_today(world, r, said, door, LONG)
@@ -492,7 +503,9 @@ def test_host_on_a_tab_is_white_space_and_is_shortened_not_refused(world, door):
 @pytest.mark.parametrize("door", ["cli", "json"])
 def test_off_a_line_break_is_refused_on_todays_road_in_todays_words(world, door, guard, words,
                                                                     monkeypatch):
-    """Design s2 step 2: the new ON-road refusal must never reach the OFF road."""
+    """Design s2 step 2: the new ON-road refusal must never reach the OFF road.
+    Pinned OFF through the locked file since SM-978 made no file ON."""
+    _host_on("off")
     monkeypatch.setenv("SESSIONMAIL_SUBJECT_GUARD", guard)
     r, said = _send_it(world, door, "a\nb")
     assert r.exit_code == 2 and world.wire() is None
@@ -543,7 +556,12 @@ def test_host_on_a_fitting_ascii_subject_is_never_touched(world, door):
     assert r.exit_code == 0
     assert f"\nSubject: {subject}\n".encode() in world.wire()
     assert b"X-Original-Subject" not in world.wire()
-    assert "shortened" not in r.output and "folded" not in r.output
+    # The report's words, wherever the door puts its notices. Not r.output:
+    # since SM-978 every --json success carries `"subject": {"shortened": false}`.
+    out = " ".join(said["notices"]) if door == "json" else r.output
+    assert "shortened" not in out and "folded" not in out
+    if door == "json":
+        assert said["subject"] == {"shortened": False, "original": subject, "sent": subject}
 
 
 @pytest.mark.parametrize("door", ["cli", "json"])
@@ -651,6 +669,7 @@ def test_an_unchanged_or_refused_send_counts_nothing(world, door, collector):
 
 
 def test_with_the_shortener_off_nothing_is_counted(world, collector):
+    _host_on("off")   # pinned OFF: no file is ON since SM-978
     r, _ = _send_it(world, "json", LONG)
     assert r.exit_code == 2 and not (collector / _metrics.FILE).exists()
 

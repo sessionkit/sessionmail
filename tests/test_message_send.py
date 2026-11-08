@@ -80,6 +80,11 @@ def oracle(tmp_path, monkeypatch):
     monkeypatch.delenv("FAKE_FAIL", raising=False)
     monkeypatch.delenv("FAKE_ECHO_BODY", raising=False)
     monkeypatch.delenv("SESSIONMAIL_SUBJECT_GUARD", raising=False)
+    # SM-978 made the subject shortener the tool's default. Every pin in this
+    # file is the OFF road ("a subject over 69 chars, or non-ASCII ... is
+    # refused"), so the seat switch pins it OFF here, through the seam a seat
+    # uses; no assertion below moved. The ON road is test_message_send_json.py's.
+    monkeypatch.setenv("SESSIONMAIL_SUBJECT_SHORTEN", "off")
     monkeypatch.setenv("TM_AGENT_ADDRESS", "alpha")
     monkeypatch.delenv("CLAUDE_CODE_AGENT", raising=False)
     body = tmp_path / "body.md"
@@ -310,8 +315,8 @@ def _parent(root, box, *, mid, original_to):
 @pytest.fixture
 def replying(oracle, tmp_path, monkeypatch, host):
     """A session with BOTH a seat address and a session id, and a box for each."""
-    root = tmp_path / "mail"
-    monkeypatch.setenv("SESSION_MAIL_ROOT", str(root))
+    root = tmp_path / "mail" / "stores"
+    monkeypatch.setenv("SESSIONMAIL_ROOT", str(root.parent))
     monkeypatch.setenv("CLAUDE_CODE_SESSION_ID", "sess-1")
     monkeypatch.setenv("TM_AGENT_ADDRESS", "alpha+sm-9.foreman")
     monkeypatch.delenv("EMAIL", raising=False)
@@ -483,7 +488,7 @@ def chosen(oracle, tmp_path, monkeypatch):
     write_fake(bin_dir / "sendmail", FAKE_SENDMAIL.format(python=sys.executable))
     argv, wire = tmp_path / "sendmail.argv", tmp_path / "sendmail.wire"
     root = tmp_path / "mail"
-    root.mkdir()
+    root.mkdir(parents=True)
     for var in ("CLAUDE_SESSION_AGENT_SOCK", "CLAUDE_SESSION_PUB",
                 "SESSIONMAIL_REQUIRE_SIGNATURE", "FAKE_SENDMAIL_RC", "SESSIONMAIL_RENDER",
                 "SESSIONMAIL_PARENT_CHECK", "SESSION_MAIL_PARENT_CHECK",
@@ -606,4 +611,61 @@ def test_a_message_id_header_is_still_refused_and_nothing_is_sent(chosen, monkey
     r = run("beta", "-s", "S", "--no-body", "--header", given, *flag, "--json")
     said = json.loads(r.stdout)
     assert r.exit_code == EX_REFUSED and said["sent"] == "no" and said["kind"] == "header", said
+    assert _nothing_sent(chosen)
+
+
+# ── SM-885: a short session id takes the package's sender ───────────────────
+# The bash relays an unmatched 8-hex off-host and cannot resolve one, so a
+# short To/Cc/Bcc never takes it; the package's sender resolves it or
+# refuses. The --json door (and so MCP, which runs it) carries the note in
+# `notices`, and a refusal as `sent: no`, kind `undeliverable`.
+
+SHORT_ONE = "c0ffee01-1111-4111-8111-111111111111"
+SHORT_TWO = "c0ffee01-2222-4222-8222-222222222222"
+
+
+@pytest.fixture
+def short_box(chosen, tmp_path, monkeypatch):
+    from sessionmail import _seat
+    monkeypatch.setattr(_seat, "box_via_map", lambda name: None)
+
+    def make(*names):
+        for n in names:
+            for leaf in ("new", "cur", "tmp"):
+                (tmp_path / "mail" / "stores" / n / leaf).mkdir(parents=True, exist_ok=True)
+    return make
+
+
+@pytest.mark.parametrize("where", [["c0ffee01"], ["beta", "--cc", "c0ffee01"],
+                                   ["beta", "--bcc", "c0ffee01"]], ids=["to", "cc", "bcc"])
+def test_with_the_bash_named_a_short_id_takes_the_package_and_says_why(chosen, short_box,
+                                                                       where):
+    short_box(SHORT_ONE)
+    r = run(*where, "-s", "S", "--no-body")
+    assert r.exit_code == EX_OK, r.output
+    assert chosen.calls() == [], "the bash would relay it off-host"
+    assert SHORT_ONE.encode() in chosen.wire()
+    ours = [l for l in r.stderr.splitlines() if NOT_CONSULTED in l]
+    assert ours == ["message send: a short session id (the bash cannot resolve it) goes by "
+                    "the package's own sender; $SESSIONMAIL_SEND_ORACLE is not consulted"], r.stderr
+    assert f"is session {SHORT_ONE}" in r.stderr
+
+
+def test_json_carries_the_resolution_in_notices(chosen, short_box, monkeypatch):
+    monkeypatch.delenv("SESSIONMAIL_SEND_ORACLE")
+    short_box(SHORT_ONE)
+    r = run("c0ffee01", "-s", "S", "--no-body", "--json")
+    said = json.loads(r.stdout)
+    assert r.exit_code == EX_OK and said["sent"] == "yes", said
+    assert any(f"To 'c0ffee01' is session {SHORT_ONE}" in n for n in said["notices"]), said
+
+
+@pytest.mark.parametrize("names", [(SHORT_ONE, SHORT_TWO), ()], ids=["ambiguous", "none"])
+def test_json_refuses_a_short_id_as_undeliverable_and_sends_nothing(chosen, short_box,
+                                                                    monkeypatch, names):
+    monkeypatch.delenv("SESSIONMAIL_SEND_ORACLE")
+    short_box(*names)
+    r = run("c0ffee01", "-s", "S", "--no-body", "--json")
+    said = json.loads(r.stdout)
+    assert r.exit_code == 3 and said["sent"] == "no" and said["kind"] == "undeliverable", said
     assert _nothing_sent(chosen)

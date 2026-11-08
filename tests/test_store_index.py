@@ -60,14 +60,14 @@ class Home:
     def __init__(self, tmp: Path, store: str = "acme"):
         self.home = tmp / "home"
         self.store = store
-        self.root = self.home / ".mail" / "agents" / store
+        self.root = self.home / ".sessionkit" / "mail" / "stores" / store
         for box in (self.root, self.root / "proj"):
             for sub in ("cur", "new", "tmp"):
                 (box / sub).mkdir(parents=True)
         (self.root / ".tm-store").write_text("")
         self.env = {"HOME": str(self.home), "PATH": "/usr/bin:/bin"}
         self.profile = self.home / f".notmuch-config.{store}"
-        self.stores = self.home / ".mail" / ".notmuch" / "stores"
+        self.stores = self.home / ".sessionkit" / "mail" / ".notmuch" / "stores"
 
     def run(self, *argv: str, python: str = sys.executable) -> subprocess.CompletedProcess:
         return subprocess.run([python, str(TOOL), *argv], capture_output=True, text=True,
@@ -376,7 +376,7 @@ class Stores(Home):
         assert r.returncode == 0, r.stderr
 
     def add_store(self, store: str) -> tuple[Path, Path]:
-        root = self.home / ".mail" / "agents" / store
+        root = self.home / ".sessionkit" / "mail" / "stores" / store
         root.mkdir(parents=True)
         (root / ".tm-store").write_text("")
         rename_shapes(root, tag=store)
@@ -669,7 +669,7 @@ def test_build_and_update_refuse_a_missing_profile_and_write_nothing(home):
     assert home.listing() == before, "no stores/ dir, no lock file"
 
 
-@pytest.mark.parametrize("path", ["{home}/.mail/.notmuch/xapian", "{home}/.mail/.notmuch/stores/other", ""])
+@pytest.mark.parametrize("path", ["{home}/.sessionkit/mail/.notmuch/xapian", "{home}/.sessionkit/mail/.notmuch/stores/other", ""])
 def test_build_refuses_a_profile_whose_database_is_not_its_own(home, path):
     """The tool writes only stores/STORE: a profile edited to name the host
     index (or another store's) is refused before anything is written."""
@@ -719,8 +719,9 @@ def test_generations_match_only_this_stores_stamped_dirs(tmp_path):
     """build removes `.STORE.<stamp>` directories only: never the lock, the
     copies, a link, or another store's generation (`.acme.x.<stamp>`)."""
     tool = load_tool()
-    env = {"HOME": str(tmp_path)}
+    env = {"HOME": str(tmp_path), "PATH": "/usr/bin:/bin"}
     s = tool.stores_dir(env)
+    assert s.is_relative_to(tmp_path), f"{s} is outside tmp_path: never write there (SM-1030)"
     s.mkdir(parents=True)
     keep = [".acme.lock", ".acme.tag.cfg", ".acme.x.20301208T233456.000001", "acme",
             ".acme.20301208T233456", ".acme.old"]
@@ -729,6 +730,28 @@ def test_generations_match_only_this_stores_stamped_dirs(tmp_path):
     (s / ".acme.20301208T233456.000009").symlink_to("acme")
     (s / ".acme.20301208T233456.000002").mkdir()
     assert [p.name for p in tool.generations("acme", env)] == [".acme.20301208T233456.000002"]
+
+
+def test_an_env_with_no_path_never_asks_the_hosts_message(tmp_path, monkeypatch):
+    """SM-1030: an env with no PATH is an empty search path, never the host's.
+    A `message` on the HOST's PATH answering a fake live root is not asked:
+    the root is the env's own default, and nothing lands under the live one.
+    Named PATH, the same `message` is asked (the door is closed, not bricked)."""
+    live = tmp_path / "live"        # stands in for the host's real root; never made
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    (bindir / "message").write_text(f"#!/bin/sh\necho {live}\n")
+    (bindir / "message").chmod(0o755)
+    monkeypatch.setenv("PATH", f"{bindir}{os.pathsep}{os.environ.get('PATH', '')}")
+    monkeypatch.delenv("SESSIONMAIL_ROOT", raising=False)
+    tool = load_tool()
+    home = tmp_path / "home"
+    env = {"HOME": str(home)}
+    assert tool.mail_root(env) == home / ".sessionkit" / "mail"
+    assert tool.stores_dir(env) == home / ".sessionkit" / "mail" / ".notmuch" / "stores"
+    assert tool.mail_root({**env, "PATH": str(bindir)}) == live
+    tool.stores_dir(env).mkdir(parents=True)
+    assert not live.exists(), "the fake live root was written"
 
 
 def test_the_tool_and_the_hook_run_one_notmuch_and_scrub_what_the_resolver_scrubs():
@@ -814,7 +837,7 @@ class Counted(Home):
         put(p / "cur" / ".DS_Store", HDR + "Message-ID: <dsstore@x>\n\nb\n")   # plain ignore entry
         put(r / ".notmuch" / "m", HDR + "Message-ID: <topnotmuch@x>\n\nb\n")  # root's: skipped
         put(p / ".notmuch" / "m", HDR + "Message-ID: <dotnotmuch@x>\n\nb\n")   # nested: indexed
-        outside = self.home / ".mail" / "agents" / "sess1"
+        outside = self.home / ".sessionkit" / "mail" / "stores" / "sess1"
         put(outside / "new" / "m", HDR + "Message-ID: <linked@x>\n\nb\n")
         for sub in ("cur", "tmp"):
             (outside / sub).mkdir()
@@ -1152,11 +1175,11 @@ def test_a_profile_whose_database_is_not_its_own_is_refused(joined, tmp_path):
     """A profile that names the host's (or any other) database is not a
     store index: search refuses it rather than read that database."""
     host = joined.home / ".notmuch-config.hostlike"
-    root = joined.home / ".mail" / "agents" / "hostlike"
+    root = joined.home / ".sessionkit" / "mail" / "stores" / "hostlike"
     root.mkdir(parents=True)
     (root / ".tm-store").write_text("")
     joined.stores.joinpath("hostlike").mkdir()
-    host.write_text(f"[database]\npath={joined.home / '.mail'}\nmail_root={root}\n")
+    host.write_text(f"[database]\npath={joined.home / '.sessionkit' / 'mail'}\nmail_root={root}\n")
     r = joined.run("search", "--store", "hostlike", "*")
     assert r.returncode == 1 and "database.path" in r.stderr and r.stdout == ""
 
@@ -1230,7 +1253,7 @@ def test_the_query_goes_to_each_store_as_given_after_its_profile(home, tmp_path)
     tool.NOTMUCH = str(fake)
     env = dict(home.env)
     for store in ("acme", "zed"):
-        root = home.home / ".mail" / "agents" / store
+        root = home.home / ".sessionkit" / "mail" / "stores" / store
         root.mkdir(parents=True, exist_ok=True)
         (root / ".tm-store").write_text("")
         assert tool.main(["profile", store], env=env) == 0

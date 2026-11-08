@@ -3,12 +3,22 @@
 #
 #     seat-agent ADDRESS [SOCKET]
 #
-# The key is the one scripts/seat-init minted (its layout, never another):
+# The key is the one `message seat init` minted (its layout, never another):
 #
-#     $SESSIONMAIL_HOME/seat-keys/ADDRESS/id_ed25519   the private key, 0600
-#     $SESSIONMAIL_HOME/seat-keys/ADDRESS/seat.pub     the pub DESK_SIGNER_PUB names
+#     KEYS/ADDRESS/id_ed25519   the private key, 0600
+#     KEYS/ADDRESS/seat.pub     the pub DESK_SIGNER_PUB names
 #
-# SOCKET defaults to $SESSIONMAIL_HOME/seat-keys/ADDRESS/agent.sock (0700 dir).
+# KEYS is the seat-keys folder, by `_settings.seat_keys_leaf`'s rule (a test
+# pins the two equal, case by case):
+#   1. $SESSIONMAIL_HOME/seat-keys when SESSIONMAIL_HOME is set and not empty;
+#   2. else $HOME/.sessionmail/seat-keys while it is a real folder that is not
+#      the new one (`-ef`): an existing host's keys never move;
+#   3. else $HOME/.sessionkit/mail/state/seat-keys (there, or the fresh
+#      default, where a fresh host mints).
+#
+# SOCKET defaults to KEYS/ADDRESS/agent.sock (0700 dir).
+#
+# `--keys` prints KEYS, no newline, and exits 0: it only looks.
 #
 # 1. checks, before anything starts: the address, the key and its dir (no group or
 #    world bits), no private key beside seat.pub's stem (a dead
@@ -42,6 +52,22 @@ loose() {  # group or world bits on $1 (ls, so BSD and GNU alike)
   [ "${perms:4:6}" != "------" ]
 }
 
+seat_keys() {   # -> KEYS
+  local old="$HOME/.sessionmail/seat-keys" new="$HOME/.sessionkit/mail/state/seat-keys"
+  if [ -n "${SESSIONMAIL_HOME:-}" ]; then
+    KEYS="$SESSIONMAIL_HOME"
+    # shellcheck disable=SC2088  # a literal ~ from a plist, which launchd never expands
+    case "$KEYS" in "~" | "~/"*) KEYS="$HOME${KEYS#\~}" ;; esac
+    KEYS="$KEYS/seat-keys"
+  elif [ -d "$old" ] && ! [ "$old" -ef "$new" ]; then
+    KEYS="$old"
+  else
+    KEYS="$new"
+  fi
+}
+seat_keys
+if [ "${1:-}" = "--keys" ]; then printf '%s' "$KEYS"; exit 0; fi
+
 address="${1:-}"
 [ -n "$address" ] || refuse "usage: message seat agent ADDRESS [SOCKET]"
 # seat init's grammar (seat_init.ADDRESS, _launchd.ADDRESS_RE): a name, or ONE '+'
@@ -49,10 +75,7 @@ address="${1:-}"
 SEAT_ADDRESS='^[a-z0-9][a-z0-9._-]*([+][a-z0-9][a-z0-9._-]*)?$'
 [[ "$address" =~ $SEAT_ADDRESS ]] || refuse "'$address' is not a seat address"
 
-sm_home="${SESSIONMAIL_HOME:-$HOME/.sessionmail}"
-# shellcheck disable=SC2088  # a literal ~ from a plist, which launchd never expands
-case "$sm_home" in "~" | "~/"*) sm_home="$HOME${sm_home#\~}" ;; esac
-home="$sm_home/seat-keys/$address"
+home="$KEYS/$address"
 key="$home/id_ed25519"
 pub="$home/seat.pub"
 sock="${2:-$home/agent.sock}"

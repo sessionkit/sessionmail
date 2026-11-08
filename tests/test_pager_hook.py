@@ -41,6 +41,7 @@ def person(result) -> str | None:
         return None
     return json.loads(result.stdout).get("systemMessage")
 
+import _leaves
 from _export import export_absent
 from sessionmail import _host, _seat, pager
 from sessionmail.pager import cli
@@ -119,11 +120,15 @@ def test_the_lines_live_in_one_file():
     # SM-873: plus the stranded-host line (the old settings folder not moved yet),
     # and the copied line (both settings folders real)
     # SM-890: plus the creation line for the PERSON (systemMessage)
-    assert set(lines) == {"not_listening", "listening", "off", "settings_created",
+    # Plus the switch_ignored line: a per-hook switch whose value is not a boolean
+    # Plus the switch_overridden tail: `pager settings hooks KEY` on a switch "hooks" holds off
+    assert set(lines) == {"switch_ignored", "switch_overridden", "not_listening", "listening", "off", "settings_created",
                           "settings_created_person", "settings_fault",
                           "settings_stranded", "settings_copied", "settings_drift", "not_yet", "listening_monitor", "no_monitor",
                           "ways_out", "deaf_monitor_missing", "deaf_monitor_ended",
-                          "deaf_not_listening", "monitor_ended", "born"}
+                          "deaf_not_listening", "monitor_ended", "born",
+                          # the line said where no listener can run (no kqueue)
+                          "cannot_listen"}
     assert pager.LINE_NOT_YET == lines["not_yet"].format(arm=pager.ARM_HOW)   # composed: state + arm.txt
     # SM-410: the off line is a state, never an order to arm
     # SM-726 do-003 (design.md (l3)): reworded to MUTED - the stamp mutes
@@ -721,12 +726,16 @@ def test_the_docs_describe_the_file_not_roles(name):
 
 
 def test_the_hooks_json_description_says_what_the_file_governs_and_what_it_does_not():
-    """tasks.md 5.1: mail-guard does not read the file (Q1a, RULED);
-    the state line is given once, then only on change (D11, RULED);
-    the opt-out still wins; a missing file is written OFF, once."""
+    """tasks.md 5.1, as the per-hook switches left it: mail-guard reads only
+    its own key, `"mail_guard": false`, never "hooks" (it was "does not read
+    the settings file" while the guard had no switch); the state line is
+    given once, then only on change (D11, RULED); the opt-out still wins; a
+    missing file is written OFF, once."""
     text = doc_surfaces()["hooks/hooks.json description"]
     guard = text[text.index("mail-guard"):]
-    assert "does not read the settings file" in guard
+    assert '"mail_guard": false' in guard
+    assert 'never reads "hooks"' in guard
+    assert "always on" not in guard
     assert "once, then only on change" in text
     assert "SESSIONMAIL_PAGER=off wins" in text
     assert "OFF" in text and "says so, once" in text
@@ -1131,12 +1140,25 @@ def test_a_stranded_host_is_said_once_and_nothing_is_written(seat, tmp_path):
             else:
                 assert r.stdout == "", "the same stranded host is said once"
         untouched(s, link, mid)
-        assert not (home / _settings.ROOT).exists(), "nothing under the new tree"
+        assert _beside_the_sessions_leaf(home) == [], "nothing under the new tree"
         after = {p: (p.lstat().st_mode, p.lstat().st_mtime_ns) for p in (home / ".settings").rglob("*")}
         assert after == before, "nothing under the old tree"
         assert stop().exit_code == 0
     finally:
         old.chmod(0o600)
+
+
+def _beside_the_sessions_leaf(home: Path) -> list[str]:
+    """Every path under `~/.sessionkit` that is not the sessions leaf, inside
+    it, or a folder on the way to it. The leaf is sessiontools' answer for
+    this HOME, pinned before the hook ran (`_leaves`); where it is under
+    `~/.sessionkit`, the session's own log (the inject row) lives there and
+    is not a settings write. Nothing else may be made: no settings folder,
+    no OFF file."""
+    leaf = _leaves.sessions_root(home)
+    top = home / _settings.ROOT
+    return sorted(str(p.relative_to(home)) for p in [top, *top.rglob("*")]
+                  if p.exists() and not (p == leaf or p.is_relative_to(leaf) or leaf.is_relative_to(p)))
 
 
 def _both_trees(home: Path) -> dict:
@@ -1227,7 +1249,7 @@ def test_an_unsearchable_old_settings_folder_is_a_fault_never_a_crash(seat, tmp_
                 error="~/.settings/mail/ could not be checked (Permission denied), so nothing was written")
             assert said == [want], said                     # once, and nothing else
             assert not os.path.lexists(settings_path()), "a fresh OFF file was written"
-            assert not (home / _settings.ROOT).exists(), "nothing under the new tree"
+            assert _beside_the_sessions_leaf(home) == [], "nothing under the new tree"
         else:
             assert not any(ln.startswith("sessionmail:") for ln in said), said
             assert settings_path().read_text() == HOOKS_ON

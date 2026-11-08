@@ -203,7 +203,7 @@ def test_rule_list_shows_a_line_with_a_byte_that_is_not_utf8(rig, monkeypatch):
 def test_every_rule_list_layer_survives_a_byte_that_is_not_utf8(rig, monkeypatch, flag):
     as_seat(monkeypatch, "ivan")
     locked_with(BAD_BYTE_FILE)
-    for layer in (rules._seat_rules(_seat.resolve(), _seat.home()),
+    for layer in (rules._seat_rules(_seat.resolve(), _seat.seats_root()),
                   _seat.session_root(SESSION) / rules.RULES_FILE):   # 3.3a: <session dir>/mail/
         layer.parent.mkdir(parents=True, exist_ok=True)
         layer.write_bytes(BAD_BYTE_FILE)

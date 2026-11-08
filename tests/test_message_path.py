@@ -26,8 +26,8 @@ def mkbox(d: Path) -> Path:
 
 @pytest.fixture
 def root(tmp_path, monkeypatch):
-    r = tmp_path / "mail"
-    monkeypatch.setenv("SESSION_MAIL_ROOT", str(r))
+    r = tmp_path / "mail" / "stores"
+    monkeypatch.setenv("SESSIONMAIL_ROOT", str(r.parent))
     monkeypatch.setenv("TM_AGENT_ADDRESS", "alpha")
     monkeypatch.delenv("CLAUDE_CODE_AGENT", raising=False)
     monkeypatch.setattr(_seat, "_postfix_maps", lambda p: None)     # no postfix here

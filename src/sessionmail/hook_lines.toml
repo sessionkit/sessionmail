@@ -54,6 +54,15 @@ ways_out = "Two ways out: run `pager listen` in the background (the hand arm), o
 deaf_monitor_missing = "pager: DEAF - this session's pager monitor did not arm (monitor_missing; Claude Code's gate tengu_amber_sentinel={gate} in ~/.claude.json). {ways_out}"
 deaf_monitor_ended = "pager: DEAF - this session's pager monitor was ended, and Claude Code does not restart one. {ways_out}"
 deaf_not_listening = "pager: DEAF - pager is not listening, and no monitor hears for this session: {why}. {ways_out}"
+# A platform with no select.kqueue: the watch under `pager listen` cannot be
+# made there, so no listener can run and arming is certain to fail. This
+# line takes the place of every "not listening" and DEAF line on such a
+# platform: the pager monitor says it once as it refuses, the PostToolBatch
+# hook says it once (then only on change), `pager status` reads it,
+# `pager mute` and `pager unmute` say it in place of the two ways out, and
+# the Stop hook says nothing at all. It names no arm instruction. Formatted
+# where said, with {platform} (sys.platform).
+cannot_listen = "pager cannot listen on {platform}: select.kqueue is missing, and the pager's watch needs it. Nothing pages this session and there is nothing to arm; `message list --unread` shows its mail."
 # `pager status` before claude has started for this session (a
 # `session start` context generator, such as a wake item, runs before claude
 # is exec'd). Nothing CAN be listening yet, so it is not deaf - but nothing
@@ -97,4 +106,18 @@ settings_stranded = "sessionmail: the settings in {old} have not been moved, so 
 # drift line is; `pager settings install` refuses with it too. Formatted
 # with {old} and {new}, the two folders as `~` paths.
 settings_copied = "sessionmail: Remove {old} once its files are in {new}."
+# switch_ignored: a per-hook switch in the host file (ride_along, stop_nag,
+# mail_guard, birth) holds a value that is not a boolean, so it is ignored
+# and its hook stays on: only the boolean false turns one off. Said once per
+# session, on or off, as the drift line is, with its own record. Formatted
+# with {ignored}: the reader's reason for each such key, joined by "; ". A
+# reason quotes the value bounded (`_settings.SHOWN_VALUE_MAX`), never whole.
+switch_ignored = "sessionmail: {ignored}."
+# switch_overridden: `pager settings hooks KEY` names a switch that is on while
+# "hooks" is not, so the hook it gates stays off (the two are ANDed). Said by
+# the verb after a write of KEY on, in its read of KEY, and in the bare
+# form's line for KEY. Formatted with
+# {hooks}, what "hooks" is ("\"hooks\" is false"), and {what}, the gated part
+# ("the ride-along", "the Stop nag", "the birth's box line").
+switch_overridden = "{hooks}, so {what} stays off"
 settings_drift = "sessionmail: {old} differs from {path}, so it is not linked; the hooks read only {path}. Merge them by hand: once the bytes match, the old path becomes a symlink."

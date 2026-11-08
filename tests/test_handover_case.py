@@ -103,8 +103,8 @@ def fleet(tmp_path, monkeypatch):
     held the seat: a copy in the seat box and one in A's box. B's box
     exists, empty (born by B's first listen; the birth is tested in
     tests/test_pager_listen.py)."""
-    root = tmp_path / "mail"
-    monkeypatch.setenv("SESSION_MAIL_ROOT", str(root))
+    root = tmp_path / "mail" / "stores"
+    monkeypatch.setenv("SESSIONMAIL_ROOT", str(root.parent))
     monkeypatch.setenv("SESSIONMAIL_HOME", str(tmp_path / "sessionmail"))
     monkeypatch.setenv("TM_AGENT_ADDRESS", SEAT)
     monkeypatch.setattr(_seat, "_ps_table", lambda: ({}, {}))

@@ -1272,14 +1272,20 @@ def _seat_rows(text: str, seat: str) -> list[str]:
 
 
 @needs_jq
-def test_the_generator_never_calls_session(generator: Path, tmp_path: Path) -> None:
+def test_the_generator_asks_session_nothing_but_where_its_leaves_are(
+        generator: Path, tmp_path: Path) -> None:
     # SM-218 re-key: the seat is the persona `eve`, which owns its box, so a
     # missing row below can only mean "not live", never "withheld".
+    # SM-969 do-005: the ONE call it may make is `session path --json`
+    # (sessiontools ST-266: where tools' seats and sessions leaves are), and
+    # it needs no answer: this fake fails it, and the rows come anyway.
+    # Liveness is never asked of `session` (no `list`).
     done = _valias(generator, tmp_path,
                    [{"session_id": "s1", "agent": "eve"}], {}, ["s1", "eve"])
     assert done.returncode == 0, done.stderr
     assert f"eve@{HOST}\teve@{HOST}, s1@{HOST}\n" in done.stdout
-    assert not (tmp_path / "session-calls").exists(), (tmp_path / "session-calls").read_text()
+    calls = tmp_path / "session-calls"
+    assert not calls.exists() or calls.read_text() == "path --json\n", calls.read_text()
 
 
 @needs_jq
@@ -1773,3 +1779,444 @@ def test_a_seat_map_that_is_not_json_is_skipped_and_the_rest_still_route(
     assert done.returncode == 0, done.stderr
     assert _rows(done.stdout)[f"atomnote@{HOST}"] == f"atomnote@{HOST}, c+d@{HOST}"
     assert "a+b/settings/mail.json" in done.stderr and "cannot be read" in done.stderr
+
+
+# ── SM-969 do-004: the `seats` and `sessions` leaves, new first, old fallback ──
+#
+# The generator reads two leaves of sessionmail's state: `seats/<agent>/
+# subscriptions/` and `sessions/<sid>/{address,subscriptions/}`. ONE shell
+# function, state_leaf, finds each as `_settings.state_leaf` does (design.md
+# §17): $SESSIONMAIL_HOME when set; else old while it is a real folder that
+# is not the new one; else new (when it is a folder, and as the fresh
+# default since SM-969 do-008). `--state-leaf
+# LEAF` prints its answer, so the shell is pinned to the Python, case by case.
+
+OLD_ROOT = ".sessionmail"
+NEW_ROOT = ".sessionkit/mail/state"
+
+
+def _lay(home: Path, leaf: str, case: str) -> None:
+    """Lay out LEAF under HOME for CASE: which of old and new are there."""
+    old, new = home / OLD_ROOT / leaf, home / NEW_ROOT / leaf
+    if case in ("old", "stranded"):
+        old.mkdir(parents=True)
+    if case in ("new", "stranded", "old-links-new"):
+        new.mkdir(parents=True)
+        (new / "kept").mkdir()
+    if case == "old-links-new":
+        old.parent.mkdir(parents=True)
+        old.symlink_to(new)
+    if case == "parent-only":
+        old.parent.mkdir(parents=True)
+        new.parent.mkdir(parents=True)
+    if case == "new-a-file":
+        new.parent.mkdir(parents=True)
+        new.write_text("not a folder\n")
+    if case == "new-dangling":
+        new.parent.mkdir(parents=True)
+        new.symlink_to(home / "nowhere")
+
+
+#: case -> the root its leaf is read from.
+LEAF_CASES = {
+    "neither": NEW_ROOT,          # the fresh default: new (SM-969 do-008)
+    "old": OLD_ROOT,
+    "new": NEW_ROOT,
+    "stranded": OLD_ROOT,         # both real and distinct: old, never merged
+    "old-links-new": NEW_ROOT,    # after the move: old is a link to new
+    "parent-only": NEW_ROOT,      # no old leaf: the fresh default
+    "new-a-file": NEW_ROOT,       # not a folder, so not "new": the fresh default
+    "new-dangling": NEW_ROOT,     # as tools' leaf_path: the fresh default
+}
+
+
+def _state_leaf(generator: Path, home: Path, leaf: str,
+                override: str | None = None) -> subprocess.CompletedProcess:
+    env = {"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "HOME": str(home), "LC_ALL": "C"}
+    if override is not None:
+        env["SESSIONMAIL_HOME"] = override
+    return subprocess.run([str(generator), "--state-leaf", leaf],
+                          capture_output=True, text=True, env=env, check=False)
+
+
+def _tree_names(top: Path) -> list[str]:
+    return sorted(str(p.relative_to(top)) for p in top.rglob("*"))
+
+
+@pytest.mark.parametrize("leaf", ["seats", "sessions"])
+@pytest.mark.parametrize("case", sorted(LEAF_CASES))
+def test_the_shell_finds_each_leaf_where_the_package_reads_and_writes_it(
+    generator: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, case: str, leaf: str
+) -> None:
+    """Shell == `_settings.state_path` == the Python seat/session root the
+    writers use, for every case; and looking makes nothing."""
+    from sessionmail import _seat, _settings
+    home = tmp_path / "home"
+    home.mkdir()
+    _lay(home, leaf, case)
+    monkeypatch.setenv("HOME", str(home))     # `_seat.home` expands `~` from the process
+    env = {"HOME": str(home)}
+    before = _tree_names(home)
+    done = _state_leaf(generator, home, leaf)
+    assert done.returncode == 0, done.stderr
+    assert done.stderr == ""
+    expected = str(home / LEAF_CASES[case] / leaf)
+    writer = _seat.seats_root(env) if leaf == "seats" else _seat.sessions_root(env)
+    assert done.stdout == str(_settings.state_path(leaf, env)) == str(writer) == expected
+    assert _tree_names(home) == before, "state_leaf only looks"
+
+
+@pytest.mark.parametrize("leaf", ["seats", "sessions"])
+@pytest.mark.parametrize("case", ["neither", "old", "new", "stranded"])
+def test_sessionmail_home_still_wins_decided_on_the_value_given(
+    generator: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, case: str, leaf: str
+) -> None:
+    """R7: the override is the value the script was GIVEN, so the default the
+    script used to write into SESSIONMAIL_HOME never reads as "set"."""
+    from sessionmail import _seat, _settings
+    home = tmp_path / "home"
+    home.mkdir()
+    _lay(home, leaf, case)
+    monkeypatch.setenv("HOME", str(home))
+    over = str(tmp_path / "elsewhere")
+    env = {"HOME": str(home), "SESSIONMAIL_HOME": over}
+    done = _state_leaf(generator, home, leaf, override=over)
+    assert done.returncode == 0, done.stderr
+    writer = _seat.seats_root(env) if leaf == "seats" else _seat.sessions_root(env)
+    assert done.stdout == str(_settings.state_path(leaf, env)) == str(writer) == f"{over}/{leaf}"
+
+
+@pytest.mark.parametrize("leaf", ["seats", "sessions"])
+def test_an_empty_sessionmail_home_is_not_set(
+    generator: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, leaf: str
+) -> None:
+    from sessionmail import _settings
+    home = tmp_path / "home"
+    home.mkdir()
+    _lay(home, leaf, "new")
+    monkeypatch.setenv("HOME", str(home))
+    done = _state_leaf(generator, home, leaf, override="")
+    assert done.returncode == 0, done.stderr
+    env = {"HOME": str(home), "SESSIONMAIL_HOME": ""}
+    assert done.stdout == str(_settings.state_path(leaf, env)) == str(home / NEW_ROOT / leaf)
+
+
+@pytest.mark.parametrize("leaf", ["", "imap", "puller", "rules.locked", "../seats", "seats/x"])
+def test_state_leaf_reads_only_the_two_leaves_the_generator_reads(
+    generator: Path, tmp_path: Path, leaf: str
+) -> None:
+    done = _state_leaf(generator, tmp_path, leaf)
+    assert done.returncode == 2
+    assert done.stdout == ""
+    assert "--state-leaf reads seats or sessions" in done.stderr
+
+
+def _old_fleet(base: Path) -> None:
+    """Seats and sessions files in the state root BASE: an agent's good
+    subscription, two it skips, and a session's old address and box file."""
+    seat = base / "seats" / "ivan" / "subscriptions"
+    seat.mkdir(parents=True)
+    (seat / "atomnote").write_text(SEAT_NOTE)
+    (seat / "seat").write_text(OLD_QUERY)
+    (seat / "a---b").write_text("")
+    sess = base / "sessions" / "s1"
+    (sess / "subscriptions").mkdir(parents=True)
+    (sess / "subscriptions" / "voicemode").write_text("")
+    (sess / "address").write_text(PLUS + "\n")
+
+
+FLEET_LIVE = [{"session_id": "s1", "agent": "ivan"}]
+FLEET_BOXES = ["s1", "atomnote", "ivan", "eve", "kith", "voicemode"]
+UNSET = {"SESSIONMAIL_HOME": None}
+
+
+def _fleet_shows(done: subprocess.CompletedProcess) -> tuple[bool, bool]:
+    """(the seat leaf was read, the sessions leaf was read), from what the
+    generator wrote: the agent's row, and the session's old files counted."""
+    rows = _rows(done.stdout)
+    seat_read = rows.get(f"atomnote@{HOST}") == f"atomnote@{HOST}, ivan@{HOST}"
+    sess_read = ("sessions/s1/subscriptions/voicemode (" in done.stderr
+                 and "1 session(s) with an old address file" in done.stderr)
+    return seat_read, sess_read
+
+
+@needs_jq
+@pytest.mark.parametrize("where", [OLD_ROOT, NEW_ROOT])
+def test_the_generator_reads_both_leaves_from_the_folder_state_leaf_chose(
+    generator: Path, tmp_path: Path, where: str
+) -> None:
+    """Old only and new only: the same map and the same counts, and a
+    skipped file is named from its leaf (`sessions/s1/...`) either way."""
+    _old_fleet(tmp_path / "home" / where)
+    done = _valias(generator, tmp_path, FLEET_LIVE, {}, FLEET_BOXES, env_over=UNSET)
+    assert done.returncode == 0, done.stderr
+    assert _fleet_shows(done) == (True, True)
+    assert "seats/ivan/subscriptions/seat (" in done.stderr
+    assert str(tmp_path / "home") not in done.stderr, "named from the leaf, not the full path"
+
+
+@needs_jq
+def test_with_neither_leaf_there_is_nothing_to_read_and_nothing_is_made(
+    generator: Path, tmp_path: Path
+) -> None:
+    done = _valias(generator, tmp_path, FLEET_LIVE, {}, FLEET_BOXES, env_over=UNSET)
+    assert done.returncode == 0, done.stderr
+    assert _fleet_shows(done) == (False, False)
+    assert done.stderr == ""
+    assert not (tmp_path / "home" / OLD_ROOT).exists()
+    assert not (tmp_path / "home" / ".sessionkit").exists()
+
+
+@needs_jq
+def test_a_stranded_leaf_reads_old_and_never_the_new(generator: Path, tmp_path: Path) -> None:
+    """Both real and distinct: old is read whole, new is never read."""
+    home = tmp_path / "home"
+    _old_fleet(home / OLD_ROOT)
+    for leaf in ("seats/eve/subscriptions", "sessions/s1/subscriptions"):
+        (home / NEW_ROOT / leaf).mkdir(parents=True)
+    (home / NEW_ROOT / "seats/eve/subscriptions/kith").write_text(SEAT_NOTE)
+    (home / NEW_ROOT / "sessions/s1/subscriptions/kith").write_text("")
+    done = _valias(generator, tmp_path, FLEET_LIVE, {}, FLEET_BOXES, env_over=UNSET)
+    assert done.returncode == 0, done.stderr
+    assert _fleet_shows(done) == (True, True)
+    assert f"kith@{HOST}" not in _rows(done.stdout)
+    assert "kith" not in done.stderr
+
+
+@needs_jq
+def test_an_old_leaf_linked_to_the_new_reads_the_new(generator: Path, tmp_path: Path) -> None:
+    home = tmp_path / "home"
+    _old_fleet(home / NEW_ROOT)
+    (home / OLD_ROOT).mkdir()
+    for leaf in ("seats", "sessions"):
+        (home / OLD_ROOT / leaf).symlink_to(home / NEW_ROOT / leaf)
+    done = _valias(generator, tmp_path, FLEET_LIVE, {}, FLEET_BOXES, env_over=UNSET)
+    assert done.returncode == 0, done.stderr
+    assert _fleet_shows(done) == (True, True)
+    assert "seats/ivan/subscriptions/seat (" in done.stderr
+
+
+@needs_jq
+def test_sessionmail_home_set_reads_only_there(generator: Path, tmp_path: Path) -> None:
+    """The override wins over both roots, and neither is read."""
+    home = tmp_path / "home"
+    for where in (OLD_ROOT, NEW_ROOT):
+        _old_fleet(home / where)
+    done = _valias(generator, tmp_path, FLEET_LIVE, {}, FLEET_BOXES)   # SESSIONMAIL_HOME set
+    assert done.returncode == 0, done.stderr
+    assert _fleet_shows(done) == (False, False)
+    assert done.stderr == ""
+    _old_fleet(tmp_path / "sessionmail")
+    done = _valias(generator, tmp_path, FLEET_LIVE, {}, [])   # the boxes are made
+    assert _fleet_shows(done) == (True, True)
+
+
+#: sessionmail origin/master when the readers learned the state folder: on a
+#: host with only the old root, the generator's output must not change.
+BASE = "326099a"
+
+
+@pytest.fixture
+def base_generator(tmp_path: Path, generator: Path) -> Path:
+    """The generator as it was at BASE, beside today's magicdns-suffix; skips
+    outside a git checkout (the release archive has no history)."""
+    repo = Path(__file__).resolve().parent.parent
+    show = subprocess.run(["git", "-C", str(repo), "show", f"{BASE}:src/sessionmail/postfix/vmailbox-gen"],
+                          capture_output=True, check=False)
+    if show.returncode != 0:
+        pytest.skip(f"no git history for {BASE} here")
+    gen_dir = tmp_path / "base-gen"
+    gen_dir.mkdir()
+    old = gen_dir / "vmailbox-gen"
+    old.write_bytes(show.stdout)
+    old.chmod(0o755)
+    suffix = gen_dir / "magicdns-suffix"
+    suffix.write_bytes((generator.parent / "magicdns-suffix").read_bytes())
+    suffix.chmod(0o755)
+    return old
+
+
+@needs_jq
+@pytest.mark.parametrize("over", [UNSET, {}], ids=["home-unset", "home-set"])
+def test_output_is_byte_identical_to_base_when_only_the_old_root_exists(
+    generator: Path, base_generator: Path, tmp_path: Path, over: dict
+) -> None:
+    """The map, the counts, every stderr line and the exit code, run for run,
+    against BASE: on an unmigrated host this slice changes nothing."""
+    _old_fleet(tmp_path / "home" / OLD_ROOT)
+    _old_fleet(tmp_path / "sessionmail")          # SESSIONMAIL_HOME's, when set
+    got = [_valias(gen, tmp_path, FLEET_LIVE, {}, boxes, env_over=over)
+           for gen, boxes in ((generator, FLEET_BOXES), (base_generator, []))]
+    assert _fleet_shows(got[0]) == (True, True), "the fixture exercises both leaves"
+    assert (got[0].returncode, got[0].stdout, got[0].stderr) == \
+           (got[1].returncode, got[1].stdout, got[1].stderr)
+    printed = [subprocess.run([str(gen), "--print", "--no-postmap", "--host", HOST,
+                               "--root", str(tmp_path / "root")],
+                              capture_output=True, text=True, check=False,
+                              env={"PATH": os.environ.get("PATH", "/usr/bin:/bin"),
+                                   "HOME": str(tmp_path / "home"), "LC_ALL": "C",
+                                   "MAGICDNS_SUFFIX": SUFFIX})
+               for gen in (generator, base_generator)]
+    assert printed[0].returncode == 0, printed[0].stderr
+    assert (printed[0].stdout, printed[0].stderr) == (printed[1].stdout, printed[1].stderr)
+
+
+def test_the_regen_request_key_carries_the_resolved_leaves(generator: Path) -> None:
+    """R7: two runs that read different folders are different requests, so
+    one never answers the other. The key is built from the leaves state_leaf
+    chose, never from the override alone."""
+    text = generator.read_text()
+    key = text[text.index('REQKEY="$({'):]
+    key = key[:key.index("cksum")]
+    assert '"$SEATS_LEAF" "$SESSIONS_LEAF"' in key
+    assert "SESSIONMAIL_HOME" not in key
+    # SM-969 do-005: sessiontools' leaves come from `session path`, which one
+    # caller may have on PATH and another not, so HOME no longer implies
+    # them: each is in the key.
+    assert '"$SEATS_SETTINGS" "$SESSIONS_SETTINGS"' in key
+
+
+# ── SM-969 do-005: sessiontools' `seats` and `sessions` leaves, by its verb ──
+#
+# The seat and session LAYERS (`<leaf>/<x>/settings/mail.json`) live in
+# sessiontools' leaves. The generator asks `session path --json`
+# (sessiontools ST-266) first and takes a leaf's `path` only when its
+# `source` is one of the verb's words. Anything else - no `session`, a
+# sessiontools without the verb, a stray answer - is sessiontools' leaf rule
+# as the generator restates it (SM-1005 fix-008, copied from busy-sound at
+# sessiontools e7f1118). On the bare tmp HOME these tests use, with no
+# `~/.session` of its own, the rule's answer is the NEW leaf; its every other
+# layout is pinned in tests/test_vmailbox_gen_tools_leaf_rule.py.
+
+#: The rule's answer for a fresh HOME (no ~/.session, no tools/state leaf).
+FRESH_SEATS = ".sessionkit/tools/state/seats"
+FRESH_SESSIONS = ".sessionkit/tools/state/sessions"
+
+#: `session path --json` as sessiontools 6c15df2 prints it, from a file.
+FAKE_SESSION_PATH = """#!/bin/sh
+echo "$*" >> "$FAKE_SESSION_CALLS"
+[ "$1 $2" = "path --json" ] || exit 2
+[ -n "${FAKE_PATH_EXIT:-}" ] && exit "$FAKE_PATH_EXIT"
+cat "$FAKE_PATH_JSON"
+"""
+
+
+def _path_stub(tmp_path: Path, answer: object, exit_code: int | None = None) -> dict[str, str]:
+    """A `session` that answers `path --json` with ANSWER (a dict is JSON,
+    a str is printed as is): the PATH and variables that put it first."""
+    stub = tmp_path / "stub-bin"
+    stub.mkdir(exist_ok=True)
+    fake = stub / "session"
+    fake.write_text(FAKE_SESSION_PATH)
+    fake.chmod(0o755)
+    body = tmp_path / "path.json"
+    body.write_text(answer if isinstance(answer, str) else json.dumps(answer))
+    env = {"PATH": f"{stub}:{tmp_path / 'bin'}:{os.environ.get('PATH', '/usr/bin:/bin')}",
+           "FAKE_PATH_JSON": str(body), "FAKE_SESSION_CALLS": str(tmp_path / "session-calls")}
+    if exit_code is not None:
+        env["FAKE_PATH_EXIT"] = str(exit_code)
+    return env
+
+
+def _tools_leaf(generator: Path, tmp_path: Path, leaf: str,
+                env_over: dict[str, str] | None = None) -> subprocess.CompletedProcess:
+    home = tmp_path / "home"
+    home.mkdir(exist_ok=True)
+    env = {"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "HOME": str(home),
+           "TMPDIR": str(tmp_path), "LC_ALL": "C", **(env_over or {})}
+    return subprocess.run([str(generator), "--tools-leaf", leaf],
+                          capture_output=True, text=True, env=env, check=False)
+
+
+def _answer(seats: str, sessions: str, source: str = "new") -> dict:
+    return {"state": {"path": "/x/state", "source": source},
+            "sessions": {"path": sessions, "source": source},
+            "seats": {"path": seats, "source": source}}
+
+
+@needs_jq
+@pytest.mark.parametrize("source", ["override", "old", "new", "fresh-old", "fresh-new"])
+def test_tools_leaf_is_the_verbs_answer_for_each_source(
+        generator: Path, tmp_path: Path, source: str) -> None:
+    env = _path_stub(tmp_path, _answer("/t/state/seats", "/t/state/sessions", source))
+    for leaf, want in (("seats", "/t/state/seats"), ("sessions", "/t/state/sessions")):
+        done = _tools_leaf(generator, tmp_path, leaf, env)
+        assert (done.returncode, done.stdout, done.stderr) == (0, want, "")
+
+
+@needs_jq
+@pytest.mark.parametrize("answer, exit_code", [
+    pytest.param(_answer("/t/seats", "/t/sessions"), 2, id="no-verb-exit-2"),
+    pytest.param(_answer("/t/seats", "/t/sessions"), 1, id="exit-1"),
+    pytest.param("session: unknown verb 'path'\n", None, id="not-json"),
+    pytest.param(_answer("/t/seats", "/t/sessions", "elsewhere"), None, id="unknown-source"),
+    pytest.param(_answer("t/seats", "t/sessions"), None, id="relative-path"),
+    pytest.param({"seats": "/t/seats", "sessions": "/t/sessions"}, None, id="not-an-entry"),
+    pytest.param({}, None, id="no-leaves"),
+])
+def test_tools_leaf_is_the_leaf_rule_when_the_verb_does_not_answer(
+        generator: Path, tmp_path: Path, answer: object, exit_code: int | None) -> None:
+    home = tmp_path / "home"
+    env = _path_stub(tmp_path, answer, exit_code)
+    assert _tools_leaf(generator, tmp_path, "seats", env).stdout == f"{home}/{FRESH_SEATS}"
+    assert _tools_leaf(generator, tmp_path, "sessions", env).stdout == f"{home}/{FRESH_SESSIONS}"
+    env["SESSIONS_DIR"] = str(tmp_path / "sd")
+    assert _tools_leaf(generator, tmp_path, "sessions", env).stdout == str(tmp_path / "sd")
+
+
+@needs_jq
+def test_tools_leaf_takes_each_leaf_on_its_own(generator: Path, tmp_path: Path) -> None:
+    """One leaf answered, the other not: each falls back alone."""
+    answer = {"seats": {"path": "/t/state/seats", "source": "new"},
+              "sessions": {"path": "/t/s", "source": "bogus"}}
+    env = _path_stub(tmp_path, answer)
+    home = tmp_path / "home"
+    assert _tools_leaf(generator, tmp_path, "seats", env).stdout == "/t/state/seats"
+    assert _tools_leaf(generator, tmp_path, "sessions", env).stdout == f"{home}/{FRESH_SESSIONS}"
+
+
+def test_tools_leaf_with_no_session_on_path_is_the_leaf_rule(generator: Path, tmp_path: Path) -> None:
+    keep = [d for d in os.environ.get("PATH", "/usr/bin:/bin").split(os.pathsep)
+            if d and not os.access(os.path.join(d, "session"), os.X_OK)]
+    home = tmp_path / "home"
+    env = {"PATH": os.pathsep.join(keep)}
+    assert _tools_leaf(generator, tmp_path, "seats", env).stdout == f"{home}/{FRESH_SEATS}"
+    assert _tools_leaf(generator, tmp_path, "sessions", env).stdout == f"{home}/{FRESH_SESSIONS}"
+    assert not (home / ".session").exists()          # a read births no old root
+
+
+def test_tools_leaf_refuses_any_other_leaf(generator: Path, tmp_path: Path) -> None:
+    done = _tools_leaf(generator, tmp_path, "state")
+    assert done.returncode == 2 and done.stdout == ""
+    assert "--tools-leaf reads seats or sessions" in done.stderr
+
+
+@needs_jq
+def test_a_seat_map_in_the_moved_seats_leaf_routes(generator: Path, tmp_path: Path) -> None:
+    """End to end: the verb names a seats leaf outside ~/.session, and the
+    seat's map there routes; a map left in ~/.session/seats is not read."""
+    moved = tmp_path / "home" / ".sessionkit" / "tools" / "state" / "seats"
+    (moved / "c+d" / "settings").mkdir(parents=True)
+    (moved / "c+d" / "settings" / "mail.json").write_text(
+        json.dumps({"subscriptions": {"atomnote": True}}))
+    subs = _seat_json("e+f", {"subscriptions": {"atomnote": True}})   # the OLD leaf
+    env = _path_stub(tmp_path, _answer(str(moved), str(tmp_path / "home" / ".session" / "sessions")))
+    done = _valias(generator, tmp_path, A_LIVE, {}, ["s1", "atomnote"], subs=subs, env_over=env)
+    assert done.returncode == 0, done.stderr
+    assert _rows(done.stdout)[f"atomnote@{HOST}"] == f"atomnote@{HOST}, c+d@{HOST}"
+
+
+@needs_jq
+def test_the_maps_are_byte_identical_when_the_verb_answers_todays_paths(
+        generator: Path, tmp_path: Path) -> None:
+    """On a host where tools has not moved (source `old`), the verb's answer
+    IS today's path: the alias map is the same bytes as with no verb."""
+    before = _valias(generator, tmp_path / "a", A_LIVE, {}, ["s1", *SEAT_MAP_BOXES], subs=SEAT_MAPS)
+    home = tmp_path / "b" / "home"
+    (tmp_path / "b").mkdir()
+    env = _path_stub(tmp_path / "b", _answer(f"{home}/.session/seats", f"{home}/.session/sessions", "old"))
+    after = _valias(generator, tmp_path / "b", A_LIVE, {}, ["s1", *SEAT_MAP_BOXES], subs=SEAT_MAPS,
+                    env_over=env)
+    assert before.returncode == after.returncode == 0, (before.stderr, after.stderr)
+    assert after.stdout == before.stdout
+    assert after.stderr.replace(str(tmp_path / "b"), "T") == before.stderr.replace(str(tmp_path / "a"), "T")

@@ -2,7 +2,7 @@
 
 `vmailbox-gen` takes its SOURCE from `--root` and its TARGET from `--out`, else
 the PINNED live map dir. Before this guard nothing tied the two together, so a
-regenerate from a sandbox root (a scratch `SESSION_MAIL_ROOT`, an operator's
+regenerate from a sandbox root (a scratch `SESSIONMAIL_ROOT`, an operator's
 test tree) published the sandbox's keys over every real route. The guard, in
 the generator's write path, measures postfix (`virtual_mailbox_base`, and the
 dirs of `virtual_mailbox_maps` / `virtual_alias_maps`) and refuses such a run:
@@ -292,7 +292,7 @@ def py_rig(rig: Rig, monkeypatch) -> Rig:
     for key, value in rig.env(base=rig.live, maps=rig.postfix_maps).items():
         monkeypatch.setenv(key, value)
     monkeypatch.setenv(_seat.GEN_VAR, str(rig.gen))
-    monkeypatch.setenv("SESSION_MAIL_ROOT", str(rig.sandbox / "agents"))
+    monkeypatch.setenv("SESSIONMAIL_ROOT", str(rig.sandbox))
     return rig
 
 

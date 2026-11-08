@@ -20,7 +20,7 @@ What it does, in this order:
 The steps, in this order:
 
 - `mail-root`: the agents root, made 0700. When the readers' root
-  (`_maildir.root`) and the drop's (`_drop.mail_root(env) / "agents"`)
+  (`_maildir.root`) and the drop's (`_drop.mail_root(env)`, one resolver now)
   differ, setup REFUSES before applying anything: the drop would deliver into
   a tree the readers never open.
 - `host`: this host's NAME, pinned once in the host settings file
@@ -37,8 +37,10 @@ The steps, in this order:
   runs. Under an MTA, rebuilt once if a box was made, on a host that has
   maps; on a host with none, MANUAL naming `--write-maps`, the opt-in.
 - `notmuch-profile`: the notmuch profile host mode reads (`_index`,
-  `sessionkit` by default). DONE when its file exists. Else it is written
-  from `notmuch/notmuch-config.sessionkit.template`, its database the mail
+  `sessionkit` by default). DONE when its file exists: an old one while it
+  is real (`$XDG_CONFIG_HOME/notmuch/<name>/config`, `~/.notmuch-config.<name>`),
+  else the kit's. Else the kit's, `~/.sessionkit/mail/settings/notmuch/<name>/config`,
+  is written from `notmuch/notmuch-config.sessionkit.template`, its database the mail
   root, only when no notmuch database is in the mail root: setup adopts no
   database (MANUAL), and never writes over a file. A notmuch config that is
   not sessionmail's, `~/.notmuch-config` included, is never read or written.
@@ -58,6 +60,18 @@ The steps, in this order:
   built, ONE `notmuch-hook` step waits on `notmuch-index`: it asks the hook
   dir after the index is built, in the same run. With no profile nothing is
   linked anywhere. A different file there is never replaced.
+- `delivery`: the pipe(8) wrapper `nm-deliver`, installed or refreshed at
+  `/usr/local/etc/postfix-agents/nm-deliver` ($SESSIONMAIL_NM_DELIVER_DIR
+  moves it) with the kit's notmuch profile path (`_index.profile_config`)
+  baked in, so delivery indexes through the same config `message` reads
+  (`delivery_step`). It also REPORTS whether postfix's `nminsert`
+  service runs that path, and never edits postfix. A host with no
+  `nminsert` service is not an insert host: DONE, nothing installed. The
+  install is privileged (printed first, `sudo` only at a tty) unless the
+  folder is writable. It waits on `notmuch-profile`: while the profile's
+  file is not there and that step will not write it, the step is BLOCKED
+  and installs nothing, since a wrapper baking in a missing file defers
+  every delivery.
 - `carrier`: DONE whatever the carrier, naming its value and where it came
   from (the variable, the host file, or the template's default). MANUAL only
   when an MTA is named and is not an executable file.
@@ -77,10 +91,13 @@ The steps, in this order:
 When steps are left, the run ends with ONE next-steps block: every step not
 DONE, numbered, in plan order, with its detail, then the line to re-run.
 
-No privileged step is registered in this build: on a host with no postfix,
-nothing setup does needs root. The engine's privileged path (print first;
-`sudo -- ARGV` only at a tty, else left for the human) is tested with a fake
-step, so the postfix steps can be added later as data.
+One privileged step is registered: `delivery`, on an insert host whose
+install folder this user cannot write. On a host with no postfix nothing
+setup does needs root. The engine's privileged path: print first; run the
+step's apply, which only PREPARES what the line reads (no root); then
+`sudo -- ARGV` only at a tty, else left for the human. Only a TODO
+privileged step prints its line; any other state prints its detail, so
+a BLOCKED install offers no command to copy.
 
 The carrier and the suffix go through ONE seam, `settings(env)` and
 `_record(...)`. The carrier is read by the one resolver,
@@ -98,6 +115,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import pwd
 import re
 import shlex
 import shutil
@@ -258,6 +276,11 @@ def run_plan(steps: list[Step], env: Mapping[str, str], out: TextIO, *, dry_run:
     if not privileged:
         print("  none", file=out)
     for s in privileged:
+        # Only a step that will run offers its line: a BLOCKED one says why
+        # instead, so nobody copies a command setup itself will not run.
+        if s.state != TODO:
+            print(f"  {s.id:<{width}}  {s.state:<7}  {s.detail}", file=out)
+            continue
         print(f"  {s.id:<{width}}  {s.state:<7}  {sudo_line(s.argv)}", file=out)
         print(f"  {'':<{width}}           {s.what}", file=out)
     print("steps:", file=out)
@@ -281,6 +304,20 @@ def run_plan(steps: list[Step], env: Mapping[str, str], out: TextIO, *, dry_run:
         print("applying:", file=out)
     for s in todo:
         if s.privileged:
+            # Its apply, when it has one, PREPARES the line (writes what the
+            # sudo command reads); it never needs root.
+            try:
+                if s.apply:
+                    s.apply()
+            except Left as exc:
+                s.state, s.detail = BLOCKED, str(exc)
+                print(f"  {s.id:<{width}}  BLOCKED: {exc}", file=out)
+                continue
+            except (OSError, Failed) as exc:
+                print(f"  {s.id:<{width}}  FAILED: {exc}", file=out)
+                print(f"{COMMAND}: stopped at {s.id}; what ran before it stays. Re-run "
+                      f"{COMMAND} once the cause is fixed.", file=out)
+                return EX_FAILED
             line = _apply_privileged(s, env, tty)
             if s.state != DONE:
                 s.detail = line
@@ -341,36 +378,30 @@ def _apply_privileged(step: Step, env: Mapping[str, str], tty: bool) -> str:
 # ── the steps ────────────────────────────────────────────────────────────────
 
 def roots(env: Mapping[str, str]) -> Path:
-    """The agents root, asked of the readers and of the drop. Refused when
-    they differ: the drop would deliver into a tree the readers never open."""
-    from . import _drop, _maildir
-    readers = _maildir.root(dict(env))
-    dropped = _drop.mail_root(env) / "agents"
-    if os.path.realpath(readers) != os.path.realpath(dropped):
-        raise PlanRefused(
-            f"the readers' agents root ({readers}, from ${_maildir.ROOT_VAR}, else "
-            f"${_maildir.LEGACY_ROOT_VAR}, else the settings file's root/agents, else "
-            f"{_maildir.DEFAULT_ROOT}) is not the mail drop's ({dropped}, from "
-            f"${_maildir.ROOT_VAR}, else ${_maildir.LEGACY_ROOT_VAR}, else $MAIL_ROOT/agents, else "
-            f"the settings file's root/agents): the drop "
-            f"would deliver into a tree the readers never open. Set them to the same place")
-    return readers
-
-
-def mail_root_step(agents: Path) -> Step:
+    """The boxes root, from the one resolver (`_maildir.root`). Setup once
+    refused here when the readers' root and the drop's differed; they are
+    one function now, so there is nothing to refuse. A retired root
+    variable that is still set is NAMED by the mail-root step, not acted on."""
     from . import _maildir
+    return _maildir.root(dict(env))
+
+
+def mail_root_step(agents: Path, env: Mapping[str, str] | None = None) -> Step:
+    from . import _maildir
+    ignored = _maildir.retired_root_vars(dict(env) if env is not None else None)
+    note = (f"; ignored, retired: {', '.join('$' + v for v in ignored)}" if ignored else "")
 
     def check() -> tuple[str, str]:
         if agents.is_dir():
-            return DONE, str(agents)
+            return DONE, str(agents) + note
         if os.path.lexists(agents):
-            return BLOCKED, f"{agents} is there and is not a directory"
-        return TODO, f"make {agents} (0700)"
+            return BLOCKED, f"{agents} is there and is not a directory{note}"
+        return TODO, f"make {agents} (0700){note}"
 
     def apply() -> str:
         _maildir.make_private_dirs(agents)
         return f"made {agents} (0700)"
-    return Step("mail-root", f"the agents root, {agents}", check=check, apply=apply)
+    return Step("mail-root", f"the boxes root, {agents}", check=check, apply=apply)
 
 
 #: The `host` step's line on a host whose settings file is not there yet.
@@ -547,7 +578,9 @@ def regen_step(agents: Path, env: Mapping[str, str], boxes: Sequence[Step],
 
 def profile_step(mail_root: Path, env: Mapping[str, str]) -> Step:
     """`notmuch-profile`: the profile host mode reads (`_index`). DONE when
-    its file exists. Otherwise it is written from PROFILE_TEMPLATE, its
+    its file exists (`_index.host_profile_file`: an old file while it is
+    real, else the kit's). Otherwise the kit's path
+    (`_index.kit_profile_config`) is written from PROFILE_TEMPLATE, its
     database the mail root, only when no notmuch database is in the mail
     root already: setup adopts no database. Never written over."""
     from . import _index, _settings
@@ -556,7 +589,7 @@ def profile_step(mail_root: Path, env: Mapping[str, str]) -> Step:
     if why:
         line = f"{json.dumps(name)} ({via}) is not a notmuch profile: {why}"
         return Step("notmuch-profile", line, check=lambda: (BLOCKED, line))
-    found, _tried = _index.profile_file(name, dict(env))
+    found, _tried = _index.host_profile_file(name, dict(env))
     if found is not None:
         return Step("notmuch-profile", "", check=lambda: (DONE, f"{found} (profile {name}, {via})"))
     database = mail_root / ".notmuch"
@@ -565,7 +598,7 @@ def profile_step(mail_root: Path, env: Mapping[str, str]) -> Step:
             f"a notmuch database already exists at {database} and no profile names it: setup "
             "adopts no database. Write the profile by hand (see the host-migration contract) "
             "or choose another mail root"), manual=True)
-    target = _index.profile_config(name, dict(env))
+    target = _index.kit_profile_config(name, dict(env))     # nothing old is real here
 
     def check() -> tuple[str, str]:
         return TODO, f"write {target} (database.path={mail_root})"
@@ -766,8 +799,7 @@ def profile_shown(env: Mapping[str, str]) -> str:
     name, _via = _index.host_profile(dict(env))
     if _index.profile_name_problem(name):
         return "<the profile>"
-    found, _tried = _index.profile_file(name, dict(env))
-    return str(found or _index.profile_config(name, dict(env)))
+    return str(_index.profile_config(name, dict(env)))
 
 
 def notmuch_steps(env: Mapping[str, str], profile: Step) -> list[Step]:
@@ -835,13 +867,234 @@ def notmuch_steps(env: Mapping[str, str], profile: Step) -> list[Step]:
     return [index, deferred_hook_step(env, index)]
 
 
-#: Setup builds the empty index once (`notmuch-index`); nothing in
-#: sessionmail keeps it fresh (SC3: the requirement is named, not shipped).
-#: A note, not a step: it would never be DONE.
-NOTMUCH_NEW_NOTE = ("setup runs `notmuch new` once, to build an empty index; nothing here "
-                    "keeps it fresh: `message mark` and `memory` read what was indexed until "
-                    "something runs `notmuch --config=<profile> new` again (launchd, cron, or "
-                    "by hand)")
+# ── the delivery wrapper, nm-deliver ─────────────────────────────────────────
+
+#: The packaged pipe(8) wrapper, and the ONE line an install sets in it. The
+#: package copy keeps the line empty and runs notmuch as it always did.
+PACKAGED_NM_DELIVER = Path(__file__).parent / "postfix" / "nm-deliver"
+NM_DELIVER_MARK = "KIT_NOTMUCH_CONFIG="
+#: Where setup installs the wrapper; the variable moves it (tests install
+#: into a throwaway prefix).
+NM_DELIVER_DIR = "/usr/local/etc/postfix-agents"
+NM_DELIVER_DIR_VAR = "SESSIONMAIL_NM_DELIVER_DIR"
+#: The pipe service docs/postfix-configuration.md names for index at delivery.
+INSERT_SERVICE = "nminsert"
+DELIVERY_STEP = "delivery"
+#: What a privileged install runs, after setup stages the rendered copy.
+INSTALL = "/usr/bin/install"
+#: The characters a baked config path may hold: it is single-quoted in sh,
+#: so a quote, a space or a `$` is refused at install, never met at delivery.
+_SAFE_PATH = re.compile(r"/[A-Za-z0-9._@+=/-]+")
+
+
+def config_path_problem(value: str) -> str:
+    """"" when VALUE can be baked into nm-deliver: an absolute, normal path
+    of safe characters. Otherwise why not."""
+    if not value.startswith("/"):
+        return "it is not an absolute path"
+    if not _SAFE_PATH.fullmatch(value):
+        return "it holds a character outside A-Za-z0-9._@+=/-"
+    if os.path.normpath(value) != value:
+        return "it is not a normal path (a //, /./, /../ or a trailing /)"
+    return ""
+
+
+def render_nm_deliver(config: Path | str) -> bytes:
+    """The installed wrapper: the package copy, byte for byte, with its ONE
+    `KIT_NOTMUCH_CONFIG=` line set to CONFIG, single-quoted. Raises
+    ValueError when CONFIG cannot be baked (`config_path_problem`) or the
+    package copy does not hold exactly one such line."""
+    value = str(config)
+    why = config_path_problem(value)
+    if why:
+        raise ValueError(f"the notmuch config {value!r} cannot be baked into nm-deliver: {why}")
+    lines = PACKAGED_NM_DELIVER.read_text().split("\n")
+    at = [i for i, line in enumerate(lines) if line == NM_DELIVER_MARK]
+    if len(at) != 1:
+        raise ValueError(f"{PACKAGED_NM_DELIVER} holds {len(at)} `{NM_DELIVER_MARK}` lines, "
+                         "not one")
+    lines[at[0]] = f"{NM_DELIVER_MARK}'{value}'"
+    return "\n".join(lines).encode()
+
+
+def insert_service(env: Mapping[str, str]) -> str | None:
+    """postfix's `nminsert/unix` line (`postconf -M`), "" when master.cf has
+    none, None when there is no postconf to ask ($NM_DELIVER_POSTCONF, the
+    wrapper's own seam, else PATH). Raises NotAsked when postconf fails.
+    Reads only."""
+    exe = env.get("NM_DELIVER_POSTCONF") or shutil.which("postconf", path=env.get("PATH"))
+    if not exe:
+        return None
+    shown = f"{exe} -M {INSERT_SERVICE}/unix"
+    try:
+        proc = subprocess.run([exe, "-M", f"{INSERT_SERVICE}/unix"], capture_output=True,
+                              text=True, env=dict(env), timeout=NOTMUCH_TIMEOUT, check=False)
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise NotAsked(f"`{shown}` could not run: {exc}") from None
+    if proc.returncode != 0:
+        raise NotAsked(f"`{shown}` exited {proc.returncode}: {proc.stderr.strip()[:200]}")
+    return " ".join(proc.stdout.split())
+
+
+def service_argv(line: str) -> tuple[str, str]:
+    """(the program a pipe service runs, its `user=`), each "" when absent."""
+    args = line.split()[8:]
+    prog = next((a[len("argv="):] for a in args if a.startswith("argv=")), "")
+    user = next((a[len("user="):].split(":", 1)[0] for a in args if a.startswith("user=")), "")
+    return prog, user
+
+
+def staged_nm_deliver(env: Mapping[str, str]) -> Path:
+    """Where a privileged install stages the rendered wrapper: the kit's own
+    settings folder (`$HOME/.sessionkit/mail/settings/postfix/nm-deliver`),
+    which only this user writes, so the root `install` reads what setup wrote."""
+    from . import _index
+    return _index.kit_profiles(dict(env)).parent / "postfix" / "nm-deliver"
+
+
+def _write_file(target: Path, body: bytes, mode: int) -> None:
+    """BODY at TARGET in one step (a temp file in the same folder, then
+    os.replace), with MODE."""
+    tmp = target.with_name(f".{target.name}.{os.getpid()}.tmp")
+    try:
+        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        with os.fdopen(fd, "wb") as f:
+            f.write(body)
+            f.flush()
+            os.fsync(f.fileno())
+        os.chmod(tmp, mode)
+        os.replace(tmp, target)
+    finally:
+        if os.path.lexists(tmp):
+            os.unlink(tmp)
+
+
+def delivery_step(env: Mapping[str, str], profile: Step) -> Step:
+    """`delivery`: the installed nm-deliver, with the kit's notmuch profile
+    baked in (`render_nm_deliver`, the path `_index.profile_config` names),
+    and a READ-ONLY report on postfix's `nminsert` transport.
+
+    - DONE, nothing installed: no postconf to ask, or master.cf has no
+      `nminsert/unix` service. Not an insert host: setup never switches a
+      host to index at delivery, so it installs no wrapper nothing runs.
+    - BLOCKED: postconf fails; the service runs as another `user=` (the
+      profile baked in would be the wrong user's); the profile cannot be
+      named, or its path cannot be baked (refused here, at install); or the
+      profile's file is not there and PROFILE (the `notmuch-profile` step,
+      read before this one) will not write it. A wrapper that bakes in a
+      file that is not there defers every delivery, so setup never installs
+      one, and its apply checks again after PROFILE's has run.
+    - DONE: the installed copy is byte for byte what setup would write, and
+      the service's `argv=` runs it.
+    - MANUAL: it is current, but the service runs another path (repoint
+      `argv=` by hand; setup never edits postfix); or the install folder is
+      not there.
+    - TODO: install or refresh it. Written directly when its folder is
+      writable; else a privileged step, `sudo -- install -m 0755 <staged>
+      <target>`, after setup stages the rendered copy (`staged_nm_deliver`).
+    The folder is `$SESSIONMAIL_NM_DELIVER_DIR`, else NM_DELIVER_DIR."""
+    from . import _index
+    target_dir = Path(env.get(NM_DELIVER_DIR_VAR) or NM_DELIVER_DIR)
+    target = target_dir / "nm-deliver"
+
+    def fixed(state: str, line: str) -> Step:
+        return Step(DELIVERY_STEP, line, check=lambda: (state, line))
+    try:
+        line = insert_service(env)
+    except NotAsked as exc:
+        return fixed(BLOCKED, f"{exc}: cannot tell whether postfix delivers by {INSERT_SERVICE}")
+    if not line:
+        why = ("no postconf to ask" if line is None
+               else f"master.cf has no {INSERT_SERVICE}/unix service")
+        return fixed(DONE, f"not an insert host ({why}): no wrapper is installed; setup never "
+                     "switches a host to index at delivery")
+    prog, user = service_argv(line)
+    runs = f"{INSERT_SERVICE}/unix runs {prog or '(no argv=)'}"
+    try:
+        me = pwd.getpwuid(os.getuid()).pw_name
+    except KeyError:
+        me = str(os.getuid())
+    if user and user != me:
+        return fixed(BLOCKED, f"{runs} as user={user}, but setup runs as {me}: the profile it "
+                     f"bakes in would be {me}'s. Run {COMMAND} as {user}")
+    name, via = _index.host_profile(dict(env))
+    problem = _index.profile_name_problem(name)
+    if problem:
+        return fixed(BLOCKED, f"{json.dumps(name)} ({via}) is not a notmuch profile: {problem}")
+    config = _index.profile_config(name, dict(env))
+    try:
+        body = render_nm_deliver(config)
+    except ValueError as exc:
+        return fixed(BLOCKED, f"{exc}; no wrapper is installed")
+    points = bool(prog) and os.path.realpath(prog) == os.path.realpath(target)
+    report = runs if points else (f"{runs}, not {target}: repoint its argv= by hand "
+                                  "(setup never edits postfix)")
+    try:
+        current: bytes | None = target.read_bytes()
+    except FileNotFoundError:
+        current = None
+    except OSError as exc:
+        return fixed(BLOCKED, f"{target} could not be read ({exc.strerror or exc})")
+    baked = f"NOTMUCH_CONFIG={config} (profile {name}, {via})"
+
+    def waits(installed: bool = False) -> str:
+        head = (f"{config} is not there and {profile.id} is {profile.state or 'not run'}: "
+                f"waits on {profile.id}. ")
+        if installed:       # the copy is already in place: say what it does now
+            return head + (f"{target} bakes it in, so every delivery through it defers "
+                           "(4.3.0) until the file is there")
+        return head + ("Setup installs no wrapper: one that bakes in a missing file "
+                       "defers every delivery")
+
+    def gated(state: str, line: str, *, installed: bool = False
+              ) -> Callable[[], tuple[str, str]]:
+        def check() -> tuple[str, str]:
+            if profile.state != TODO and not config.is_file():
+                return BLOCKED, waits(installed)
+            return state, line
+        return check
+
+    def present() -> None:
+        if not config.is_file():
+            raise Left(waits())
+    if current == body:
+        if points:
+            done = f"{target}, {baked}; {runs}"
+            return Step(DELIVERY_STEP, done, check=gated(DONE, done, installed=True))
+        return Step(DELIVERY_STEP, f"{target} is current, {baked}; but {report}", manual=True)
+    if not target_dir.is_dir():
+        return Step(DELIVERY_STEP, f"{target_dir} is not a folder: make it "
+                    f"(`{sudo_line(['mkdir', '-p', str(target_dir)])}`), then run {COMMAND} "
+                    f"again; {report}", manual=True)
+    verb = "install" if current is None else "refresh (it is not what setup would write)"
+    todo = f"{verb} {target}, {baked}; {report}"
+    if os.access(target_dir, os.W_OK):
+        def apply() -> str:
+            present()
+            _write_file(target, body, 0o755)
+            return f"installed {target}, {baked}"
+        return Step(DELIVERY_STEP, todo, check=gated(TODO, todo), apply=apply)
+    staged = staged_nm_deliver(env)
+    what = f"{todo}. Setup writes {staged} first, then this line installs it"
+
+    def stage() -> str:
+        from . import _maildir
+        present()
+        _maildir.make_private_dirs(staged.parent)
+        _write_file(staged, body, 0o644)
+        return f"wrote {staged}"
+    return Step(DELIVERY_STEP, what, privileged=True, check=gated(TODO, what), apply=stage,
+                argv=(INSTALL, "-m", "0755", str(staged), str(target)))
+
+
+#: Setup builds the empty index once (`notmuch-index`) and schedules
+#: nothing: the readers keep it fresh themselves (`_fresh`). Still a
+#: note, because it says what keeps the index current and how to turn that
+#: off. A note, not a step: it would never be DONE.
+NOTMUCH_NEW_NOTE = ("setup runs `notmuch new` once, to build an empty index, and schedules "
+                    "nothing: `memory` refreshes the index before it reads, and `message mark` "
+                    "when an id is missing, each with a bounded `notmuch new --no-hooks` "
+                    "(`notmuch.refresh`, seconds, default 2; 0 turns it off)")
 
 
 def carrier_steps(env: Mapping[str, str]) -> list[Step]:
@@ -887,7 +1140,7 @@ def plan(env: Mapping[str, str], boxes: Sequence[str], *, write_maps: bool = Fal
             raise PlanRefused(f"--box {name!r}: {problem}")
     job = pull_job(env) if pull else None
     agents = roots(env)
-    steps = [mail_root_step(agents), host_step(env)]
+    steps = [mail_root_step(agents, env), host_step(env)]
     names: list[str] = []
     op, op_why = operator_box()
     if op is None:
@@ -905,6 +1158,7 @@ def plan(env: Mapping[str, str], boxes: Sequence[str], *, write_maps: bool = Fal
     profile = profile_step(agents.parent, env)
     steps.append(profile)
     steps += notmuch_steps(env, profile)
+    steps.append(delivery_step(env, profile))
     steps += carrier_steps(env)
     if job is not None:
         steps.append(pull_step(job, env))

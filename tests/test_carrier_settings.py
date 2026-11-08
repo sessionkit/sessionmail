@@ -144,18 +144,18 @@ def test_empty_env_sends_by_drop(no_file, sender, tmp_path, bin_dir):
     home = tmp_path / "home"
     for box in ("alpha", "beta"):
         for d in ("cur", "new", "tmp"):
-            (home / ".mail" / "agents" / box / d).mkdir(parents=True)
+            (home / ".sessionkit" / "mail" / "stores" / box / d).mkdir(parents=True)
     log = tmp_path / "sendmail.log"
     recording_sendmail(bin_dir / "sendmail", log)
     env = {"HOME": str(home), "PATH": str(bin_dir), "TMPDIR": str(tmp_path),
            "SENDMAIL_LOG": str(log),
-           "FAKE_VMAILBOX": "".join(f"{n}@{host}\tagents/{n}/\n" for n in ("alpha", "beta")),
+           "FAKE_VMAILBOX": "".join(f"{n}@{host}\tstores/{n}/\n" for n in ("alpha", "beta")),
            "FAKE_VALIAS": ""}
     assert not [k for k in env if "MAIL" in k and k.startswith(("SESSIONMAIL_", "SESSION_MAIL_"))]
     rc, out, err = send(sender, env, tmp_path, "alpha")
     assert rc == 0, err
     assert "sent via mail drop (no MTA) → alpha" in err
-    assert len(list((home / ".mail" / "agents" / "alpha" / "new").iterdir())) == 1
+    assert len(list((home / ".sessionkit" / "mail" / "stores" / "alpha" / "new").iterdir())) == 1
     assert not log.exists()                                # no sendmail ran
 
 
@@ -465,7 +465,7 @@ def maps_world(tmp_path, no_file):
         (agents / "alpha" / leaf).mkdir(parents=True)
     gen = write_fake(tmp_path / "map-gen", MAP_GEN)
     env = {"HOME": str(tmp_path), "PATH": os.environ.get("PATH", ""),
-           "SESSION_MAIL_ROOT": str(agents), "SESSIONMAIL_ROOT": str(agents),
+           "SESSIONMAIL_ROOT": str(agents.parent),
            "SESSIONMAIL_HOST": "host", "SESSIONMAIL_VMAILBOX_GEN": str(gen),
            "MAGICDNS_SUFFIX": "example.invalid",
            "MAP_GEN_LOG": str(tmp_path / "gen.log"),
@@ -613,7 +613,7 @@ def archived(tmp_path, no_file, monkeypatch):
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     env = {"HOME": str(tmp_path), "PATH": f"{bin_dir}{os.pathsep}/usr/bin{os.pathsep}/bin",
-           "SESSION_MAIL_ROOT": str(agents), "SESSIONMAIL_ROOT": str(agents),
+           "SESSIONMAIL_ROOT": str(agents.parent),
            "SESSIONMAIL_HOST": "host"}
     for var in ("SESSIONMAIL_VMAILBOX_GEN", "SESSIONMAIL_SENDMAIL", "MAGICDNS_SUFFIX",
                 "CLAUDE_CODE_SESSION_ID"):
@@ -713,7 +713,7 @@ def dead_world(tmp_path, no_file, monkeypatch):
     bin_dir.mkdir()
     (bin_dir / "jq").symlink_to(_shutil.which("jq"))
     env = {"HOME": str(tmp_path), "PATH": f"{bin_dir}{os.pathsep}/usr/bin{os.pathsep}/bin",
-           "SESSION_MAIL_ROOT": str(agents), "SESSIONMAIL_ROOT": str(agents),
+           "SESSIONMAIL_ROOT": str(agents.parent),
            "SESSIONMAIL_HOST": "host", "SESSION_SIDECAR_DIR": str(cars),
            "XDG_CONFIG_HOME": str(tmp_path / "xdg"),
            "MAP_GEN_WROTE": str(tmp_path / "maps-written")}

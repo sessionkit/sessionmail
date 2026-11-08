@@ -59,7 +59,7 @@ and not empty, wins over the file.
 
 - `sendmail`: `"drop"` (the default) selects the drop; an absolute path
   selects a mail server instead. Variable: `SESSIONMAIL_SENDMAIL`.
-- `root`: the mail root, default `~/.mail`. Variable: `SESSIONMAIL_ROOT`,
+- `root`: the mail root, default `~/.sessionkit/mail`. Variable: `SESSIONMAIL_ROOT`,
   which names the agents folder, so its parent is the mail root (the older
   `SESSION_MAIL_ROOT` is read the same way).
 - `host`: this host's short name, default the short host name. Variable:

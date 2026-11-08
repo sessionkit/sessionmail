@@ -35,11 +35,16 @@ message setup --pull                             # install the LaunchAgent
     first, through the kit's own profile (the `notmuch.*` keys). The box's
     last 15 minutes are then scanned for mail notmuch has not indexed yet.
   - *Our own leg*: the mail host's top `Received` header names one of this
-    host's IPs and a `BOX@<pull.relay_domain>` recipient. That makes it the
-    copy this host sent up. It is skipped only if the local copy is there,
-    after a short grace, so mail that bounced here is still pulled. An own
-    leg for a box with no maildir of its own (an alias) cannot be checked,
-    and is skipped.
+    host's IPs as the peer its smtpd saw (an IP in the sender's HELO does not
+    count), and a `BOX@<pull.relay_domain>` recipient. The recipient is read
+    from that header's `for <...>` clause, which postfix writes only for a
+    single recipient, or else from the `X-Original-To` the mail host writes
+    above it. That makes it the copy this host sent up. It is skipped only if
+    the local copy is there, after a short grace, so mail that bounced here
+    is still pulled. An own leg for a box with no maildir of its own (an
+    alias) cannot be checked. With a `for` clause it is skipped; known only
+    by `X-Original-To`, it is pulled, because it may be mail this host sent
+    to another host's addresses, and this is its only copy.
 - **A cursor per box**, `UIDVALIDITY UID`, under `pull.state_dir`. After a
   restart the puller carries on from the cursor. A box's first run starts
   at its oldest mail from the last `pull.backfill_seconds`. The dedup makes
@@ -84,8 +89,10 @@ message setup --pull                             # install the LaunchAgent
   Any password store's command works the same way.
 - **This host's IPs.** The own-leg check needs them. Set `pull.own_ips`,
   or leave it unset and the puller asks `tailscale ip` when it starts.
-  When it knows none, it refuses (exit 2) rather than pull this host's own
-  mail back down.
+  Only lines that are IP addresses count, and only from a run that exits
+  0, so an error sentence from tailscale is not taken for an IP. When it
+  knows none, it refuses (exit 2) rather than pull this host's own mail
+  back down.
 - **A box list.** `pull.boxes_file` holds one box per line, and `#` starts
   a comment. The puller reads the file again when it changes. It starts a
   thread for each new box and stops the thread of each box that was
@@ -115,7 +122,7 @@ not empty wins. Full rules: [settings][settings].
 | `listener` | yes | none | `HOST:PORT` of the local-only smtpd above |
 | `vmailbox` | yes | none | the postfix map that resolves `BOX@<local domain>` (`type:path`) |
 | `boxes_file` | no | `~/.sessionkit/mail/settings/pull.boxes` | the box list |
-| `state_dir` | no | `~/.sessionmail/puller` | cursors and the lock (not the job's log) |
+| `state_dir` | no | `~/.sessionkit/mail/state/puller` | cursors and the lock (not the job's log) |
 | `local_domain` | no | the `host` key, else the short host name | the domain in `BOX@<local domain>` |
 | `own_ips` | no | ask `tailscale ip` | this host's IPs, a list or comma-separated |
 | `unsorted_box` | no | none: general delivery off | the mail host's catch-all box |
@@ -129,8 +136,10 @@ not empty wins. Full rules: [settings][settings].
 
 In these paths, `~` is your home in the password database. It does not
 follow `$HOME` or `SESSIONMAIL_HOME`, so a hand run and the job find the same
-state dir. The mail root is the kit's `root` key, and the notmuch call uses
-the `notmuch.*` keys. The puller adds no key of its own for either.
+state dir. With `state_dir` unset, the state dir is
+`~/.sessionkit/mail/state/puller`, made on the first run; on an existing
+host whose `~/.sessionmail/puller` is still a real folder, that one. The mail root is the kit's `root` key, and the
+notmuch call uses the `notmuch.*` keys. The puller adds no key of its own for either.
 
 With a required key unset, the puller and `message setup --pull` both
 refuse, and name each missing key with its variable:

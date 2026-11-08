@@ -2,7 +2,7 @@
 marks, never a maildir flag; a peek proves it moved nothing.
 
 Hermetic: the maildir helper from test_message_list writes real RFC 5322
-files under tmp_path; SESSION_MAIL_ROOT and SESSIONMAIL_HOME point there.
+files under tmp_path; SESSIONMAIL_ROOT and SESSIONMAIL_HOME point there.
 """
 
 from __future__ import annotations

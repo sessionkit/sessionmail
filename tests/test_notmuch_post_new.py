@@ -81,7 +81,8 @@ class Db:
         self.tmp, self.config = tmp, config
         self.home = tmp / "home"
         self.home.mkdir()
-        self.state = self.home / ".sessionmail" / "post-new"
+        # The fresh default (SM-969 do-008): a HOME with no old folder.
+        self.state = self.home / ".sessionkit" / "mail" / "state" / "post-new"
         config.write_text(
             f"[database]\npath={self.root}\nhook_dir={hooks}\n"
             "[user]\nname=t\nprimary_email=t@example.invalid\n"
@@ -94,12 +95,18 @@ class Db:
             self.env.pop(var, None)
         self.count = 0
 
-    def deliver(self, box: str, msgid: str, headers: str = "") -> None:
+    def deliver(self, box: str, msgid: str, headers: str = "",
+                sender: str | None = "beta@example.invalid") -> Path:
+        """One message file in BOX's new/. SENDER is the whole From value
+        (a display name included); None writes no From line at all."""
         self.count += 1
-        (self.root / "agents" / box / "new" / f"{1908540800 + self.count}.M1P1.test").write_text(
-            f"From: beta@example.invalid\nTo: alpha@example.invalid\n"
+        path = self.root / "agents" / box / "new" / f"{1908540800 + self.count}.M1P1.test"
+        path.write_text(
+            (f"From: {sender}\n" if sender is not None else "") +
+            f"To: alpha@example.invalid\n"
             f"Subject: item {self.count}\nDate: Sun, 09 Jun 2030 12:00:00 +0000\n"
             f"Message-ID: <{msgid}>\n{headers}\nbody\n")
+        return path
 
     def notmuch(self, *args: str) -> subprocess.CompletedProcess:
         run = subprocess.run([NOTMUCH, *args], capture_output=True, text=True, env=self.env)
@@ -305,6 +312,175 @@ def test_without_the_indexed_headers_it_falls_back_and_says_so(tmp_path):
     assert "falling back to full-corpus grep" in run.stderr
     assert "superseded" in db.tags("old@example.invalid")
     assert "supersedes-applied" in db.tags("new@example.invalid")
+
+# ---------------------------------------------------------------------------
+# SM-973: a supersede counts only from the target's own sender (option 1a).
+# The carrier's From addr-spec must equal its target's, case-blind, display
+# name ignored. Otherwise the target is left alone and the carrier is tagged
+# supersedes-refused. It stops accidents, NOT a forger: the last test pins that.
+
+ALICE, BOB = "alice@example.invalid", "bob@example.invalid"
+CURRENT = "tag:memory and not tag:superseded"
+
+
+def cross(db: Db, header: str = "Supersedes", carrier_from: str | None = BOB,
+          target_from: str | None = ALICE) -> tuple[str, str]:
+    """A in the memory box from TARGET_FROM, indexed; then a carrier in a
+    seat box from CARRIER_FROM declaring HEADER: <A>, indexed."""
+    old, new = "x.alice@example.invalid", "b.bob@example.invalid"
+    db.deliver("memory", old, sender=target_from)
+    db.new()
+    db.deliver("alpha", new, f"{header}: <{old}>\n", sender=carrier_from)
+    db.new()
+    return old, new
+
+
+@pytest.mark.parametrize("header", ["Supersedes", "X-Supersedes"])
+def test_an_unrelated_senders_supersede_is_refused(db, header):
+    """THE HOLE SM-973 CLOSES: bob's carrier hid alice's atom from every
+    reader that trusts the tag. Now the target stays current, and the
+    refusal is a tag on the carrier, never `supersedes-applied`."""
+    old, new = cross(db, header)
+    assert "superseded" not in db.tags(old)
+    assert old in db.ids(CURRENT), "the reader that trusts the tag hides it"
+    assert "supersedes-refused" in db.tags(new)
+    assert "supersedes-applied" not in db.tags(new)
+    assert "supersedes-refused" not in db.tags(old)
+
+
+@pytest.mark.parametrize("target_from,carrier_from", [
+    (ALICE, f'"Alice Seat" <{ALICE.upper()}>'),
+    (f"Alice <{ALICE}>", ALICE),
+    (f"{ALICE} (Alice)", f"<Alice@Example.Invalid>"),
+    (f'"Smith, Alice <x@y>" <{ALICE}>', f"Alice\n  <{ALICE}>"),
+])
+def test_a_display_name_or_case_difference_still_matches(db, target_from, carrier_from):
+    """The addr-spec is what is compared: a display name (quoted, holding a
+    comma or an angle bracket), a comment, a folded header and the case of
+    the address do not make a sender a stranger."""
+    old, new = cross(db, carrier_from=carrier_from, target_from=target_from)
+    assert "superseded" in db.tags(old)
+    assert "supersedes-applied" in db.tags(new)
+    assert "supersedes-refused" not in db.tags(new)
+
+
+@pytest.mark.parametrize("carrier_from", [None, "", "undisclosed-recipients:;",
+                                          f"<{ALICE}>, <{BOB}>"])
+def test_a_carrier_with_no_single_from_is_refused(db, carrier_from):
+    """No From (or an empty one, or a group, or two addresses) names no
+    sender, so it can never be the target's: refused, the target untouched.
+    Two empty addresses must never count as a match."""
+    old, new = cross(db, carrier_from=carrier_from, target_from=ALICE)
+    assert "superseded" not in db.tags(old)
+    assert "supersedes-refused" in db.tags(new)
+    old2, new2 = "x2@example.invalid", "c2@example.invalid"
+    db.deliver("memory", old2, sender=None)
+    db.deliver("alpha", new2, f"Supersedes: <{old2}>\n", sender=None)
+    db.new()
+    assert "superseded" not in db.tags(old2), "two missing Froms matched"
+    assert "supersedes-refused" in db.tags(new2)
+
+
+def test_a_late_target_stays_pending_then_is_judged(db):
+    """The carrier can be indexed before its target. With no target there is
+    no From to compare, so the carrier stays pending (neither applied nor
+    refused), and is judged on the run that indexes the target."""
+    old, new = "late.alice@example.invalid", "early.bob@example.invalid"
+    db.deliver("alpha", new, f"Supersedes: <{old}>\n", sender=BOB)
+    db.new()
+    assert not {"supersedes-applied", "supersedes-refused"} & db.tags(new)
+    db.deliver("memory", old, sender=ALICE)
+    db.new()
+    assert "superseded" not in db.tags(old)
+    assert "supersedes-refused" in db.tags(new)
+
+
+def test_a_copy_planted_under_the_targets_id_cannot_vouch_for_it(db):
+    """notmuch keeps every file that shares a Message-ID under one message.
+    A second file under alice's id, From bob, must not let bob's carrier
+    through: every file of the target has to match."""
+    old, new = "x.alice@example.invalid", "b.bob@example.invalid"
+    db.deliver("memory", old, sender=ALICE)
+    db.deliver("alpha", old, sender=BOB)
+    db.new()
+    assert len(db.notmuch("search", "--output=files", id_query(old)).stdout.split()) == 2
+    db.deliver("alpha", new, f"Supersedes: <{old}>\n", sender=BOB)
+    db.new()
+    assert "superseded" not in db.tags(old)
+    assert "supersedes-refused" in db.tags(new)
+
+
+def test_an_unreadable_target_file_leaves_the_carrier_pending(db):
+    """A target file the hook cannot read (a maildir file renamed since the
+    index saw it is the real case) proves nothing either way: pending, not
+    refused, and judged once it can be read."""
+    old, new = "x.alice@example.invalid", "a.alice@example.invalid"
+    target = db.deliver("memory", old, sender=ALICE)
+    db.new()
+    target.chmod(0)
+    try:
+        if os.access(target, os.R_OK):
+            pytest.skip("running as a user who can read a mode-0 file")
+        db.deliver("alpha", new, f"Supersedes: <{old}>\n", sender=ALICE)
+        db.new()
+        assert not {"supersedes-applied", "supersedes-refused"} & db.tags(new)
+        assert "superseded" not in db.tags(old)
+    finally:
+        target.chmod(0o644)
+    db.new()
+    assert "superseded" in db.tags(old)
+    assert "supersedes-applied" in db.tags(new)
+
+
+def test_a_refused_carrier_is_not_read_again(db):
+    """A refusal is final for the carrier, like `supersedes-applied`: a re-run
+    with no new mail writes nothing."""
+    cross(db)
+    before = (db.notmuch("dump").stdout, db.notmuch("count", "--lastmod", "*").stdout)
+    assert "No new mail" in db.new().stdout
+    after = (db.notmuch("dump").stdout, db.notmuch("count", "--lastmod", "*").stdout)
+    assert after == before
+
+
+def test_an_index_wipe_re_derives_the_same_verdicts(db):
+    """The verdicts are a projection of the mail, like the tag itself: wipe
+    the index, rebuild, and the same carrier is applied and the same one is
+    refused."""
+    own_old, own_new = supersede(db, box="memory")
+    bob_old, bob_new = cross(db)
+    verdicts = {m: db.tags(m) & {"superseded", "supersedes-applied", "supersedes-refused"}
+                for m in (own_old, own_new, bob_old, bob_new)}
+    assert verdicts == {own_old: {"superseded"}, own_new: {"supersedes-applied"},
+                        bob_old: set(), bob_new: {"supersedes-refused"}}
+    db.wipe()
+    db.new()
+    assert {m: db.tags(m) & {"superseded", "supersedes-applied", "supersedes-refused"}
+            for m in verdicts} == verdicts
+    assert db.ids(CURRENT) == {own_new, bob_old}
+
+
+def test_without_the_indexed_headers_a_cross_sender_is_still_refused(tmp_path):
+    """The full-corpus fallback finds the carriers another way; the sender
+    rule is the same, and a refused carrier is not found again."""
+    if not os.access(NOTMUCH, os.X_OK):
+        pytest.skip(f"no {NOTMUCH}: no notmuch for the hook to find")
+    db = Db(tmp_path, indexed=False)
+    db.deliver("memory", "old@example.invalid", sender=ALICE)
+    db.deliver("alpha", "new@example.invalid", "Supersedes: <old@example.invalid>\n", sender=BOB)
+    assert "falling back" in db.new(quiet=False).stderr
+    assert "superseded" not in db.tags("old@example.invalid")
+    assert "supersedes-refused" in db.tags("new@example.invalid")
+
+
+def test_a_forged_from_still_passes_the_limit_of_option_1a(db):
+    """PINNED, NOT FIXED: 1a stops accidental cross-sender supersedes; it
+    does NOT stop a deliberate forger, who can copy a From. bob writes
+    `From: alice` and alice's atom is hidden. Signed-only (1c) follows
+    SM-970; when it lands this test changes on purpose."""
+    old, new = cross(db, carrier_from=ALICE)
+    assert "superseded" in db.tags(old)
+    assert "supersedes-applied" in db.tags(new)
+
 
 # ---------------------------------------------------------------------------
 # SM-796: every id spliced into a query is quoted the notmuch way, and the
@@ -709,7 +885,8 @@ def seam(tmp_path, request):
                 except (ProcessLookupError, PermissionError):
                     pass
         subprocess.run(["/usr/bin/pkill", "-9", "-f", str(tmp_path)], capture_output=True)
-        for path in (tmp_path / "home" / ".sessionmail" / "post-new",):
+        for path in (tmp_path / "home" / ".sessionmail" / "post-new",
+                     tmp_path / "home" / ".sessionkit" / "mail" / "state" / "post-new"):
             if path.exists():
                 path.chmod(0o755)
     request.addfinalizer(cleanup)
@@ -1036,3 +1213,205 @@ def test_an_again_it_cannot_clear_ends_the_runner(seam, tmp_path):
     db.new()
     db.quiet()
     assert len(rec.starts()) == 2, rec.lines()
+
+
+# ── SM-969 do-006: the post-new state folder follows the state rule ──
+#
+# The seam's state, `post-new` (`lock`, `again`, `log`), is a leaf of
+# sessionmail's state. ONE shell function, post_new_state, finds it by
+# `_settings.state_path`'s rules 2-4 (design.md §17): the OLD
+# $HOME/.sessionmail/post-new while it is a real folder that is not the new
+# one; else the NEW $HOME/.sessionkit/mail/state/post-new, when it is a
+# folder and as the fresh default (SM-969 do-008), made with its parents.
+# HOME-pinned: neither TMPDIR nor SESSIONMAIL_HOME moves it, so every caller
+# takes one lock. Only the new folder is ever made.
+
+PN_OLD = Path(".sessionmail") / "post-new"
+PN_NEW = Path(".sessionkit") / "mail" / "state" / "post-new"
+
+#: case -> the folder the seam's state is in.
+PN_CASES = {
+    "neither": PN_NEW,          # the fresh default: new (SM-969 do-008)
+    "old": PN_OLD,
+    "new": PN_NEW,
+    "stranded": PN_OLD,         # both real and distinct: old, never merged
+    "old-links-new": PN_NEW,    # after the move: old is a link to new
+    "parent-only": PN_NEW,      # no old leaf: the fresh default
+    "new-a-file": PN_NEW,       # not a folder, so not "new": the fresh default
+}
+
+#: The cases where the seam runs: at "new-a-file" mkdir fails on the file,
+#: and the seam is silent (`test_a_file_at_the_new_leaf_...`).
+PN_RUNS = sorted(c for c in PN_CASES if c != "new-a-file")
+
+
+def _lay_post_new(home: Path, case: str) -> None:
+    """Lay out the post-new leaf under HOME for CASE."""
+    old, new = home / PN_OLD, home / PN_NEW
+    if case in ("old", "stranded"):
+        old.mkdir(parents=True)
+    if case in ("new", "stranded", "old-links-new"):
+        new.mkdir(parents=True)
+        (new / "kept").write_text("from elsewhere\n")
+    if case == "old-links-new":
+        old.parent.mkdir(parents=True)
+        old.symlink_to(new)
+    if case == "parent-only":
+        old.parent.mkdir(parents=True)
+        new.parent.mkdir(parents=True)
+    if case == "new-a-file":
+        new.parent.mkdir(parents=True)
+        new.write_text("not a folder\n")
+
+
+def _names(top: Path) -> list[str]:
+    """Every name under TOP, links not followed."""
+    if not top.exists():
+        return []
+    return sorted(str(p.relative_to(top)) for p in top.rglob("*"))
+
+
+def _snapshot(home: Path) -> dict[str, str | None]:
+    """What is at the old and new leaf, by kind: a folder's names, a file's
+    text, a link's target, or None."""
+    out: dict[str, str | None] = {}
+    for rel in (PN_OLD, PN_NEW):
+        p = home / rel
+        if p.is_symlink():
+            out[str(rel)] = f"-> {os.readlink(p)}"
+        elif p.is_dir():
+            out[str(rel)] = " ".join(_names(p))
+        elif p.is_file():
+            out[str(rel)] = p.read_text()
+        else:
+            out[str(rel)] = None
+    return out
+
+
+@pytest.mark.parametrize("case", PN_RUNS)
+def test_the_seam_state_folder_is_chosen_by_the_state_rule(seam, tmp_path, monkeypatch, case):
+    """Per case: the run's `lock` and `log` land in the chosen folder (the
+    same folder `_settings.state_path` names for the leaf), the other leaf is
+    untouched, the new folder is never made, and neither SESSIONMAIL_HOME nor
+    TMPDIR moves it."""
+    from sessionmail import _settings
+    rec = Recorder(tmp_path)
+    seam.recorders.append(rec)
+    db = seam()
+    _lay_post_new(db.home, case)
+    chosen = db.home / PN_CASES[case]
+    monkeypatch.setenv("HOME", str(db.home))   # `_seat.home` expands `~` from the process
+    assert _settings.state_path("post-new", {"HOME": str(db.home)}) == chosen, "shell != Python"
+    elsewhere, tmpdir = tmp_path / "elsewhere", tmp_path / "tmpdir"
+    tmpdir.mkdir()
+    db.env.update(SESSIONMAIL_HOME=str(elsewhere), TMPDIR=str(tmpdir))
+    db.state = chosen
+    before = _snapshot(db.home)
+    db.set_command(rec.path)
+    db.deliver("alpha", f"{case}@example.invalid")
+    run = db.new()
+    assert run.returncode == 0 and run.stderr == ""
+    db.quiet()
+
+    assert len(rec.starts()) == 1, rec.lines()
+    assert {"lock", "log"} <= set(_names(chosen)), _names(chosen)
+    assert f"start {rec.path}" in (chosen / "log").read_text()
+    after = _snapshot(db.home)
+    other = str(PN_NEW if PN_CASES[case] == PN_OLD else PN_OLD)
+    if case != "old-links-new":                # there the two are one folder
+        assert after[other] == before[other], "the leaf not chosen was touched"
+    if PN_CASES[case] == PN_OLD and case != "stranded":
+        assert after[str(PN_NEW)] == before[str(PN_NEW)], "the new folder was made"
+    if PN_CASES[case] == PN_NEW and case != "old-links-new":
+        assert after[str(PN_OLD)] is None, "the old folder was made"
+    if case in ("new", "old-links-new", "stranded"):
+        assert (db.home / PN_NEW / "kept").read_text() == "from elsewhere\n"
+    assert not elsewhere.exists() and list(tmpdir.iterdir()) == []
+
+
+@pytest.mark.parametrize("case", ["old", "new", "stranded", "old-links-new"])
+def test_the_lock_is_taken_in_the_chosen_folder(seam, tmp_path, case):
+    """While a run is held, the runner's flock is on the chosen folder's
+    `lock`; the other folder holds no lock; a second arrival in the run is
+    served once from the same folder."""
+    rec, gate = gated(tmp_path)
+    seam.recorders.append(rec)
+    db = seam()
+    _lay_post_new(db.home, case)
+    chosen = db.home / PN_CASES[case]
+    db.state = chosen
+    db.set_command(rec.path)
+    db.deliver("alpha", "l0@example.invalid")
+    db.new()
+    wait_for(lambda: len(rec.starts()) == 1, "run 1 started")
+    with open(chosen / "lock", "a") as f:
+        with pytest.raises(BlockingIOError):
+            fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    if case != "old-links-new":
+        other = db.home / (PN_NEW if PN_CASES[case] == PN_OLD else PN_OLD)
+        assert not (other / "lock").exists() and not (other / "again").exists()
+    db.insert("l1@example.invalid")             # an arrival during the run
+    assert (chosen / "again").exists()
+    gate.touch()
+    db.quiet()
+    assert len(rec.starts()) == 2, rec.lines()
+
+
+#: sessionmail origin/master when the readers learned the state folder: on
+#: a host with only the old folder, the hook must do what it did then.
+BASE = "326099a"
+
+
+def test_a_file_at_the_new_leaf_is_the_fresh_default_and_the_seam_is_silent(seam, tmp_path, monkeypatch):
+    """No old folder and a FILE at the new leaf: the Python picks the new
+    path (fresh-new, as tools' leaf_path), and so does the shell; mkdir fails
+    on the file, so the seam runs nothing, says nothing, and makes no old
+    folder. notmuch itself is unharmed."""
+    from sessionmail import _settings
+    rec = Recorder(tmp_path)
+    seam.recorders.append(rec)
+    db = seam()
+    _lay_post_new(db.home, "new-a-file")
+    monkeypatch.setenv("HOME", str(db.home))
+    assert _settings.state_leaf("post-new", {"HOME": str(db.home)}) == (
+        db.home / PN_NEW, _settings.FRESH_NEW)
+    db.set_command(rec.path)
+    db.deliver("alpha", "file@example.invalid")
+    run = db.new()
+    assert run.returncode == 0 and run.stderr == ""
+    assert rec.starts() == []
+    assert (db.home / PN_NEW).read_text() == "not a folder\n"
+    assert not os.path.lexists(db.home / PN_OLD)
+
+
+@pytest.mark.parametrize("case", ["old"])
+def test_unmigrated_the_seam_leaves_what_the_base_hook_leaves(seam, tmp_path, case):
+    """An unmigrated host (a real old folder, no new leaf): today's hook and
+    the hook at BASE, each in its own scratch database and HOME, leave the
+    same names under HOME, the same log lines (clock and pid aside) and one
+    run each. A host with NO old folder is fresh, and differs from BASE on
+    purpose (SM-969 do-008): `test_the_seam_state_folder_is_chosen_...`."""
+    show = subprocess.run(["git", "-C", str(ROOT), "show", f"{BASE}:src/sessionmail/notmuch/post-new"],
+                          capture_output=True, check=False)
+    if show.returncode != 0:
+        pytest.skip(f"no git history for {BASE} here")
+    base = tmp_path / "post-new-base"
+    base.write_bytes(show.stdout)
+    base.chmod(0o755)
+    seen = []
+    for name, hook in (("today", HOOK), ("base", base)):
+        rec = Recorder(tmp_path, name=f"recorder-{name}")
+        seam.recorders.append(rec)
+        db = Db(tmp_path / name, hook=hook)
+        _lay_post_new(db.home, case)
+        db.state = db.home / PN_OLD
+        db.set_command(rec.path)
+        db.deliver("alpha", "u@example.invalid")
+        run = db.new()
+        db.quiet()
+        log = [re.sub(r"^\S+ \[\d+\] ", "", line).replace(str(rec.path), "REC")
+               for line in (db.state / "log").read_text().splitlines()]
+        log = [re.sub(r"secs=\d+", "secs=N", line) for line in log]
+        seen.append((run.returncode, run.stderr, _names(db.home), log, len(rec.starts())))
+    assert seen[0] == seen[1]
+    assert seen[0][4] == 1 and str(PN_OLD / "lock") in seen[0][2]

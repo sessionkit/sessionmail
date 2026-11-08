@@ -9,7 +9,8 @@ description: >-
   and resume it. The plugin ships three pager hooks (Stop, PostToolBatch,
   UserPromptSubmit); they
   act only when ~/.sessionkit/mail/settings/mail.json holds "hooks": true; a
-  missing file is written off.
+  missing file is written off. Each mail hook also has its own switch, on
+  unless the file sets it false.
 ---
 
 # pager
@@ -77,9 +78,9 @@ them on, run that, never a JSON edit; it is the person's act, not yours to
 choose). A fresh install has no file: the first ride-along writes it OFF
 (`{"version": 1, "hooks": false}`) and says so, once; a faulty file is off
 and says so once. `SESSIONMAIL_PAGER=off` wins over the file. The commands
-ignore it, and so does mail-guard (always on). Off is silent, mail
-included: mail rests in its box for `message list` or `pager listen`. The
-one exception is the DEAF line on a `pager_required` seat, above.
+ignore it, and so does mail-guard, which has its own switch. Off is silent,
+mail included: mail rests in its box for `message list` or `pager listen`.
+The one exception is the DEAF line on a `pager_required` seat, above.
 On, their lines live in `hook_lines.toml`: *pager is not listening*, with
 the arm instruction (Stop, exit 2); *pager is listening* (on a monitored
 seat it says the monitor hears for you and `pager mute` silences it); or
@@ -88,6 +89,17 @@ listener. The ride-along gives it after the mail,
 once, then only on change. Every seat with no listener is nagged unless
 it is muted.
 `pager stop` is `pager off`.
+
+One switch per hook, in the same file: `ride_along`, `stop_nag`,
+`mail_guard` and `birth`. Each is on when missing; only the boolean
+`false` turns its hook off, and a value that is not a boolean is ignored
+(the ride-along says so once). `"hooks"` still gates the ride-along, the Stop nag and the
+birth's box line: each speaks only when both are on. `mail_guard` and the
+birth itself need only their own key; `"mail_guard": false` turns off the
+guard's subject and body checks, and its subagent rules stay on.
+`pager settings hooks KEY on|off` sets one, and `pager settings hooks KEY`
+says whether that hook acts, and why. Like `"hooks"`, these are the
+person's switches, not yours to choose.
 
 Wake carry: every wake carries. A rule line `wake` or
 `wake!` (its synonym: `carry` or `carry!`) pages and lets the wake TURN
@@ -100,6 +112,14 @@ too. `carry *` is `wake *`; a draft never carries. Host switches, in the
 locked rules file: `set carry off` (every wake is a plain wake) and
 `set carry-prompt on` (a typed prompt carries too; default off). Inside a
 subagent, never. A mail that could not be judged wakes, never carries.
+
+Rule globs: `*` and `?` only, and case never counts. `[` is literal, so
+write `subject:*alice*`, never `subject:*[Aa]lice*`: that looks for the
+text `[Aa]lice` and misses `Alice, can you...`. The pager keeps such a
+line and names it as a warning (banner, ride-along, `pager rule list`,
+`pager rule add`). Only a case pair gets a rewrite (`*alice*`); a range
+such as `[0-9]` gets none, since `?` is broader than a set. `pager rule
+--help` has the grammar.
 
 Standing down a hand-armed seat after a bounded `pager listen --timeout N`
 returned 124: run `pager off`. Nothing is listening then, so it exits 3

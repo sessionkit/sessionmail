@@ -71,7 +71,7 @@ def wire(tmp_path, monkeypatch):
     write_fake(bin_dir / "sendmail", FAKE_SENDMAIL)
     out = tmp_path / "wire"
     env = {"HOME": str(tmp_path), "PATH": str(bin_dir), "TMPDIR": str(tmp_path),
-           "FAKE_WIRE": str(out), "SESSION_MAIL_ROOT": str(tmp_path / "mail"),
+           "FAKE_WIRE": str(out), "SESSIONMAIL_ROOT": str(tmp_path / "mail"),
            "SESSIONMAIL_HOST": HOST, "SESSIONMAIL_SENDMAIL": str(bin_dir / "sendmail")}
     monkeypatch.setattr(pager, "_mta_send", pager._deliver_by_mta)
 

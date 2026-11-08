@@ -257,7 +257,7 @@ def test_a_usable_account_name_makes_the_operator_box(env, mailroot):
     rc, out, _ = setup(env)
     assert rc == _setup.EX_OK, out
     assert state(out, f"box:{ACCOUNT_DEFAULT}") == "TODO"
-    assert (mailroot / "agents" / ACCOUNT_DEFAULT / "new").is_dir()
+    assert (mailroot / "stores" / ACCOUNT_DEFAULT / "new").is_dir()
     assert "no operator box" not in out
 
 

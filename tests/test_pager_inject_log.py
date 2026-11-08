@@ -690,7 +690,7 @@ def test_the_real_start_birth_is_logged_on_its_string(seat, monkeypatch, tmp_pat
     gen.chmod(0o755)
     monkeypatch.setenv(_seat.GEN_VAR, str(gen))
     monkeypatch.setattr(_seat, "doorbell", lambda address, session, env=None: (False, "NOT COPIED: test"))
-    Path(os.environ["SESSION_MAIL_ROOT"]).mkdir(parents=True, exist_ok=True)
+    Path(os.environ["SESSIONMAIL_ROOT"], "stores").mkdir(parents=True, exist_ok=True)
     r = start()
     assert r.exit_code == 0, r.output
     s = json.loads(r.stdout)["hookSpecificOutput"]["additionalContext"]

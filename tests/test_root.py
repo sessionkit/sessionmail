@@ -10,7 +10,7 @@ box's bare address.
 
 The box is `alpha`, the stranger is `beta`, and the hosts are `example.invalid`
 (`slipbox/project-conventions.md` convention 9). Nothing here touches a real
-box: `SESSION_MAIL_ROOT` is a temp dir, and the postfix map is replaced for
+box: `SESSIONMAIL_ROOT` is a temp dir, and the postfix map is replaced for
 every test.
 """
 
@@ -66,7 +66,7 @@ def keyed(key):
 
 @pytest.fixture
 def mailroot(tmp_path) -> Path:
-    root = tmp_path / "mail"
+    root = tmp_path / "mail" / "stores"
     for sub in ("new", "cur", "tmp"):
         (root / BOX / sub).mkdir(parents=True)
     return root
@@ -74,7 +74,7 @@ def mailroot(tmp_path) -> Path:
 
 @pytest.fixture
 def env(mailroot) -> dict[str, str]:
-    return {"SESSION_MAIL_ROOT": str(mailroot)}
+    return {"SESSIONMAIL_ROOT": str(mailroot.parent)}
 
 
 @pytest.fixture(autouse=True)
@@ -613,6 +613,8 @@ def test_no_key_home_is_exit_3_even_on_a_perfect_box(box, env):
     err = refused(_root.read_root, BOX, env=env)
     assert (err.code, err.kind) == (3, "key")
     assert "principal 'alpha'" in str(err) and "the caller's to provide" in str(err)
+    # SM-1027: say plainly that this is every box today, and name the recipe.
+    assert "refuses on every box today" in str(err) and _root.NO_FIRST_STEP in str(err)
     assert box.snapshot() == before
 
 
@@ -645,6 +647,8 @@ def test_no_such_box_refuses_exit_2_naming_it(env, keyed, mailroot):
     err = refused(_root.read_root, "gamma", env=env, key_source=keyed)
     assert (err.code, err.kind, err.result) == (2, "box", None)
     assert "'gamma'" in str(err) and "init births no box" in str(err)
+    # SM-1027: the step before it, by name, then the recipe.
+    assert "`message setup --box gamma`" in str(err) and _root.NO_FIRST_STEP in str(err)
     assert sorted(mailroot.rglob("*")) == before, "a refusal must not birth the box"
 
 
@@ -695,7 +699,7 @@ def test_flat_and_map_disagreeing_refuses_exit_2_naming_both(env, keyed, tmp_pat
                         lambda name: (elsewhere, f"{name}@example -> store/{name}"))
     err = refused(_root.read_root, BOX, env=env, key_source=keyed)
     assert (err.code, err.kind) == (2, "ambiguous")
-    assert str(elsewhere) in str(err) and str(Path(env["SESSION_MAIL_ROOT"]) / BOX) in str(err)
+    assert str(elsewhere) in str(err) and str(Path(env["SESSIONMAIL_ROOT"], "stores") / BOX) in str(err)
 
 
 def test_flat_and_map_agreeing_is_one_box(env, keyed, mailroot, monkeypatch):

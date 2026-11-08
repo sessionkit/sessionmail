@@ -16,8 +16,9 @@ in [configuration][].
 ## What postfix does for sessionmail
 
 postfix is a mail server (an MTA). By default sessionmail hands it every
-message it sends, and postfix delivers each copy into a box under
-`~/.mail/agents/`.
+message it sends, and postfix delivers each copy into a box under the
+boxes folder (`message path --boxes`: `~/.sessionkit/mail/stores/` on a
+host born after the move; `~/.mail/agents/` on one born before it).
 
 - **What it is:** an outside program. sessionmail does not install it, and
   nothing in this package configures it: the setup below is done by hand.
@@ -36,8 +37,9 @@ message it sends, and postfix delivers each copy into a box under
   `PATH`, or no maps named by `postconf`, there is no pre-flight
   (`src/sessionmail/_sender.py:935-943 @ c854322`).
 - **The maps:** `vmailbox-gen`, shipped in this package, writes both:
-  - `vmailbox` (`virtual_mailbox_maps`): each box under `~/.mail/agents/`,
-    its address to its maildir
+  - `vmailbox` (`virtual_mailbox_maps`): each box under the boxes folder,
+    its address to its maildir (relative to the root: `stores/<box>/`, or
+    `agents/<box>/` on a tree born before the move)
     (`src/sessionmail/postfix/vmailbox-gen:29-33 @ c854322`).
   - `valias` (`virtual_alias_maps`): a seat's mail copied into each live
     session's box, the doorbell
@@ -61,8 +63,9 @@ message it sends, and postfix delivers each copy into a box under
 - The file drop also runs the generator, in its print modes, which write
   no map (`src/sessionmail/_drop.py:25-35 @ c854322`).
 - **Delivery:** virtual(8) by default. Opt-in, a pipe into `notmuch
-  insert` through the packaged `nm-deliver`, so each message is indexed as
-  it lands; `delivery-check` says which a host uses
+  insert` through `nm-deliver`, which `message setup` installs with the
+  kit's notmuch profile baked in, so each message is indexed as it lands;
+  `delivery-check` says which a host uses
   ([index at delivery][index-at-delivery]).
 - **Hearing mail:** postfix only delivers. The pager watches the box
   itself (`src/sessionmail/pager.py:2595 @ c854322`).
@@ -74,7 +77,7 @@ message it sends, and postfix delivers each copy into a box under
 
 Three steps need root, once: the map directory, the `main.cf` lines and
 the reload. The maps, written in between, are yours. `<you>` is the account
-that owns `~/.mail`. Check each step before the next.
+that owns the mail root (`message path --root`). Check each step before the next.
 
 1. **Make the map directory**, owned by you, group `_postfix` (the group
    postfix's daemons run as: `id -gn $(postconf -h mail_owner)`), mode
@@ -125,9 +128,10 @@ that owns `~/.mail`. Check each step before the next.
 
    ```sh
    GEN="$("$(uv tool dir)/sessionmail/bin/python" -c 'import sessionmail, pathlib; print(pathlib.Path(sessionmail.__file__).parent / "postfix" / "vmailbox-gen")')"
-   mkdir -p ~/.mail/.postfix
-   ln -sfn "$GEN" ~/.mail/.postfix/vmailbox-gen
-   ~/.mail/.postfix/vmailbox-gen --root ~/.mail   # writes vmailbox and valias, and their .db
+   R="$(message path --root)"                     # the mail root: postfix's virtual_mailbox_base
+   mkdir -p "$R/.postfix"
+   ln -sfn "$GEN" "$R/.postfix/vmailbox-gen"
+   "$R/.postfix/vmailbox-gen" --root "$R"         # writes vmailbox and valias, and their .db
    ls -l /usr/local/etc/postfix-agents            # -rw-r-----  <you>  _postfix, four files
    ```
 
@@ -255,7 +259,7 @@ virtual_mailbox_domains = host-a, host-a.example.ts.net
 ```
 
 - Delivery runs as the mail owner's uid, so every file it writes in
-  `~/.mail` is the owner's (`src/sessionmail/postfix/vmailbox-gen:22-27 @ c854322`).
+  the mail root is the owner's (`src/sessionmail/postfix/vmailbox-gen:22-27 @ c854322`).
 - The domains are the short host name and its tailnet name, the two key
   forms the generator writes (`src/sessionmail/postfix/vmailbox-gen:29-33 @ c854322`).
 
@@ -304,26 +308,35 @@ next scheduled `notmuch new`, which scans every box. On a host with many
 boxes one scan can take tens of seconds, and anything that waits for the
 index waits for that scan. Index at delivery pipes each message into
 `notmuch insert`, which indexes that one message as it writes it. Nothing
-in sessionmail switches a host: it is a deploy, done by hand, and the
-default stays virtual(8).
+in sessionmail switches a host: editing `master.cf` and `main.cf` is a
+deploy, done by hand, and the default stays virtual(8). `message setup`
+installs and refreshes the wrapper the service runs, and reports the
+service; it never edits postfix.
 
 ### The lines
 
 ```text
 # /etc/postfix/master.cf (one service; user = the mail owner)
 nminsert  unix  -       n       n       -       -       pipe
-  flags=DORhu user=alice argv=/path/to/site-packages/sessionmail/postfix/nm-deliver ${recipient}
+  flags=DORhu user=alice argv=/usr/local/etc/postfix-agents/nm-deliver ${recipient}
 
 # /etc/postfix/main.cf
 virtual_transport = nminsert
 nminsert_destination_recipient_limit = 1
 ```
 
-- `argv` is the packaged wrapper, run by path: `nm-deliver` sits beside
-  `vmailbox-gen` in the installed package
-  (`src/sessionmail/postfix/nm-deliver @ adc95b6`). Find it with
-  `python3 -c 'import sessionmail, pathlib; print(pathlib.Path(sessionmail.__file__).parent / "postfix" / "nm-deliver")'`
-  in the environment sessionmail is installed in.
+- `argv` is the INSTALLED wrapper, `/usr/local/etc/postfix-agents/nm-deliver`.
+  `message setup`, run as the service's `user=`, writes it there from the
+  package copy (`src/sessionmail/postfix/nm-deliver`, beside `vmailbox-gen`)
+  with ONE line changed: `KIT_NOTMUCH_CONFIG='<path>'`, the kit's notmuch
+  profile, the same file `message` reads, resolved once at install. The
+  installed copy exports it as `NOTMUCH_CONFIG` for `notmuch insert`.
+  Its `delivery` step installs it only on a host whose `master.cf`
+  has an `nminsert` service, refreshes it when the package or the profile
+  changes, and is printed first as a `sudo` step when the folder is not
+  yours to write (`message setup --dry-run` shows it). The package copy
+  still runs by path, but bakes no config: its insert reads notmuch's
+  default config under `HOME`, and `delivery-check` reports that as a gap.
 - `user=` is the mail owner, the uid in `virtual_uid_maps`. pipe(8) refuses
   root and the mail system owner. Files land as that user, mode 0600, as
   under virtual(8).
@@ -354,10 +367,14 @@ nminsert_destination_recipient_limit = 1
 Check each one before the reload. `delivery-check`, run as the mail owner,
 reports the first four; the schedule is the host's to check.
 
-- **A notmuch config at a default path**, `~/.notmuch-config` of the mail
-  owner. pipe(8) passes no `NOTMUCH_CONFIG`, and the wrapper sets `HOME`
-  from the passwd entry, so an exported variable never reaches it
-  ([notmuch-settings][]).
+- **The wrapper installed by `message setup`**, so insert opens the kit's
+  notmuch profile, the config `message` reads. pipe(8) passes no
+  `NOTMUCH_CONFIG`, and the wrapper sets `HOME` from the passwd entry, so an
+  exported variable never reaches it: the path is baked into the installed
+  copy instead ([notmuch-settings][]). A wrapper with none (the package
+  copy, or one installed by hand) opens notmuch's default config under
+  `HOME`, `~/.notmuch-config`; the two agree only while they name one
+  database.
 - **`unread` in `new.tags`.** With it, insert writes the file to `new/`.
   Without it, insert writes `cur/…:2,S`, and the pager, which watches
   `new/`, never hears the mail (measured, notmuch 0.40;
@@ -428,10 +445,14 @@ it from the queue (`src/sessionmail/postfix/nm-deliver:29-39 @ adc95b6`):
   recipient limit, header flags, `unread`, the `post-insert` hook, the mail
   root.
 - It reads notmuch's settings as the wrapper's insert will find them:
-  `HOME` from the passwd entry, and no `NOTMUCH_CONFIG`, `NOTMUCH_PROFILE`
-  or `XDG_*` from the caller, since pipe(8) passes none. Run it as the
-  service's `user=`; run as anyone else, it reads that user's config, and
-  says so as a gap.
+  `HOME` from the passwd entry, nothing from the caller's `NOTMUCH_*` or
+  `XDG_*`, since pipe(8) passes none, and `NOTMUCH_CONFIG` set to the path
+  the wrapper the service runs bakes in (its `argv=`). It prints the file it
+  read: `notmuch read with config <path> (from <wrapper>)`. A wrapper that
+  bakes none, or that it cannot read, leaves notmuch's default, named, and
+  is a gap. `--profile PATH` names the config `message` reads; a delivery
+  config that is not that file is a gap. Run it as the service's `user=`;
+  run as anyone else, it reads that user's config, and says so as a gap.
 - A `virtual_mailbox_domains` entry that names a table (postfix's default,
   `$virtual_mailbox_maps`) is reported as a table, by `virtual_transport`.
   A table cannot be listed, so with `transport_maps` set its domains' rows

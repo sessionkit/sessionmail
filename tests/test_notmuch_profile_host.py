@@ -2,8 +2,10 @@
 
 Host mode is `SESSIONMAIL_INDEX` unset, empty or `host`. Its profile name is
 `$SESSIONMAIL_NOTMUCH_PROFILE` when set, else the `notmuch.profile` key in
-mail.json, else `sessionkit`. The profile FILE is found as notmuch finds it
-(`$XDG_CONFIG_HOME/notmuch/<name>/config`, then `~/.notmuch-config.<name>`).
+mail.json, else `sessionkit`. The profile FILE is an old one while it is
+real (`$XDG_CONFIG_HOME/notmuch/<name>/config`, then `~/.notmuch-config.<name>`),
+else the kit's (`~/.sessionkit/mail/settings/notmuch/<name>/config`;
+test_notmuch_kit_home.py).
 Every call passes `--config=<file>` and drops NOTMUCH_CONFIG,
 NOTMUCH_DATABASE and NOTMUCH_PROFILE from the child's environment. With no
 file, the call is refused by name: `~/.notmuch-config` is never a fallback.
@@ -71,7 +73,7 @@ class World:
         self.fake = write_fake(bin_dir / "notmuch", source)
         self.env = {"HOME": str(self.home), "XDG_CONFIG_HOME": str(self.xdg),
                     "PATH": f"{bin_dir}{os.pathsep}/usr/bin{os.pathsep}/bin",
-                    "SESSION_MAIL_ROOT": str(tmp / "mail" / "agents"),
+                    "SESSIONMAIL_ROOT": str(tmp / "mail"),
                     "SESSIONMAIL_NOTMUCH": str(self.fake)}
 
     def sha(self) -> str:
@@ -178,16 +180,19 @@ def test_a_profile_name_that_is_not_one_is_refused(world, bad):
 
 
 def test_profile_config_is_the_path_to_write(tmp_path):
-    """A function of HOME and XDG_CONFIG_HOME at call time: XDG unset or
-    empty is $HOME/.config."""
+    """A function of HOME at call time: with no old file, the path to write
+    is the kit's, `~/.sessionkit/mail/settings/notmuch/<name>/config`, and
+    XDG_CONFIG_HOME (unset, empty or set) never moves it."""
     assert _index.SESSIONKIT_PROFILE == "sessionkit"
     assert _index.PROFILE_KEY_VAR == "SESSIONMAIL_NOTMUCH_PROFILE"
     home = tmp_path / "h"
-    for xdg in (None, ""):
+    kit = home / ".sessionkit" / "mail" / "settings" / "notmuch"
+    for xdg in (None, "", str(tmp_path / "x")):
         env = {"HOME": str(home)} if xdg is None else {"HOME": str(home), "XDG_CONFIG_HOME": xdg}
-        assert _index.profile_config(env=env) == home / ".config" / "notmuch" / "sessionkit" / "config"
-    env = {"HOME": str(home), "XDG_CONFIG_HOME": str(tmp_path / "x")}
-    assert _index.profile_config("other", env) == tmp_path / "x" / "notmuch" / "other" / "config"
+        assert _index.profile_config(env=env) == kit / "sessionkit" / "config"
+        assert _index.kit_profile_config(env=env) == kit / "sessionkit" / "config"
+        assert _index.profile_config("other", env) == kit / "other" / "config"
+    assert not home.exists(), "a path lookup creates nothing"
 
 
 # ── 6.5: the inherited notmuch variables never reach a child ────────────────
@@ -225,9 +230,10 @@ def test_no_profile_refuses_by_name(world):
     r = _index.resolve(world.env)
     assert r.refused and r.config is None and r.mode == "host" and not r.host
     xdg, dot = _index.candidates("sessionkit", world.env)
+    kit = _index.kit_profile_config("sessionkit", world.env)
     assert r.refusal == (
         'no notmuch profile for this host: profile "sessionkit" (the default) has no file; '
-        f"tried {xdg}; {dot}; `message setup` writes it. "
+        f"tried {xdg}; {dot}; {kit}; `message setup` writes it. "
         "The default notmuch config is never read")
     assert str(world.stranger) not in r.refusal.replace(str(dot), "")
     with pytest.raises(_notmuch.CouldNotLook, match='profile "sessionkit"'):

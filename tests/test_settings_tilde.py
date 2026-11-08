@@ -7,8 +7,8 @@ The code says otherwise, and the code is what was designed (`setting`'s
 docstring, `_operator.host_sources`): every key read from "the template and
 the host" is read under the SETTINGS HOME, the password database's home
 (`_operator.settings_home`, the suite's seam), never `$HOME`. The host file
-the hooks, the monitor, `pager_required` and `capture` read is under
-`$HOME` (`_settings.path(env)`).
+the hooks, the monitor, the frozen watch, `pager_required` and `capture`
+read is under `$HOME` (`_settings.path(env)`).
 
 Pinned two ways: the behaviour, with a `mail.json` under each home; and the
 doc's `~` bullet, held to the keys table and to `_settings.KEYS`.
@@ -32,7 +32,10 @@ DOC = Path(__file__).resolve().parents[1] / "docs" / "settings.md"
 HOST_VALUES_KEYS = ("registry", "alert_runner")
 
 #: The keys the host file under `$HOME` decides, as docs/settings.md lists them.
-HOME_KEYS = ("hooks", "monitor", "pager_required", "capture")
+HOME_KEYS = ("hooks", "ride_along", "stop_nag", "mail_guard", "birth", "monitor",
+             "frozen_watch", "frozen_rules",
+             "frozen_after_seconds", "frozen_chain_seconds",
+             "pager_required", "capture")
 
 MARKER = "/marker/sendmail"
 
@@ -121,6 +124,32 @@ def test_pager_required_is_read_under_HOME(homes):
     assert not _seat.pager_required(None, "-", env).on
     _mail_json(home, {"pager_required": True})
     assert _seat.pager_required(None, "-", env).on
+
+
+#: Each frozen-watch key, a value for it in a host file, and what the
+#: resolved watch shows when that value was read. The asked-for seconds are
+#: over every floor, so a read is visible as the value itself.
+FROZEN_READS = {
+    "frozen_watch": (True, lambda w: w.on),
+    "frozen_rules": (["chain"], lambda w: w.rules == ("chain",)),
+    "frozen_after_seconds": (5000, lambda w: w.after.seconds == 5000),
+    "frozen_chain_seconds": (5000, lambda w: w.chain.seconds == 5000),
+}
+
+
+def test_every_frozen_key_has_a_read_check():
+    assert set(FROZEN_READS) == set(_settings.FROZEN_KEYS)
+
+
+@pytest.mark.parametrize("key", sorted(FROZEN_READS))
+def test_a_frozen_key_is_read_under_HOME_and_not_under_the_settings_home(homes, key):
+    acct, home = homes
+    value, was_read = FROZEN_READS[key]
+    env = {"HOME": str(home)}
+    _mail_json(acct, {key: value})
+    assert not was_read(_settings.frozen(env)), key
+    _mail_json(home, {key: value})
+    assert was_read(_settings.frozen(env)), key
 
 
 # ── the doc ──────────────────────────────────────────────────────────────────

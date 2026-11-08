@@ -128,6 +128,13 @@ class Fleet:
         _exe(self.bin / "ps", FAKE_PS)
         _exe(self.bin / "find", GATED_FIND)
         (self.bin / "sleep").symlink_to(TRUE)
+        # A `session` that cannot answer, ahead of any real one: every run's
+        # `tools_settings` then falls back alike, so the holder (whose PATH
+        # has no jq, and so falls back) and its waiters agree on the leaves
+        # in the request key. It makes them agree by BLINDING BOTH. It is not
+        # the cross-PATH case (a holder with no `session`, a waiter with
+        # one): that is a product path, and its own test is fix-008's.
+        _exe(self.bin / "session", "#!/bin/sh\nexit 2\n")
         self.gate = tmp / "gate"
         self.find_holding = tmp / "find-holding"
         (tmp / "home").mkdir()

@@ -103,8 +103,8 @@ def mta(tmp_path, monkeypatch):
     maildir = tmp_path / "scratch-maildir"
     for sub in ("tmp", "new", "cur"):
         (maildir / sub).mkdir(parents=True)
-    root = tmp_path / "mail"
-    root.mkdir()
+    root = tmp_path / "mail" / "stores"
+    root.mkdir(parents=True)
     for var in ("SESSIONMAIL_SEND_ORACLE", "SESSIONMAIL_SUBJECT_GUARD", "CLAUDE_CODE_AGENT",
                 "CLAUDE_SESSION_AGENT_SOCK", "CLAUDE_SESSION_PUB",
                 "SESSIONMAIL_REQUIRE_SIGNATURE", "SESSIONMAIL_RENDER",
@@ -114,7 +114,7 @@ def mta(tmp_path, monkeypatch):
     monkeypatch.setenv("FAKE_MTA_ARGV", str(tmp_path / "sendmail.argv"))
     monkeypatch.setenv("PATH", str(bin_dir))
     monkeypatch.setenv("HOME", str(tmp_path))
-    monkeypatch.setenv("SESSIONMAIL_ROOT", str(root))
+    monkeypatch.setenv("SESSIONMAIL_ROOT", str(root.parent))
     monkeypatch.setenv("SESSIONMAIL_HOST", HOST)
     monkeypatch.setenv("SESSIONMAIL_SENDMAIL", str(bin_dir / "sendmail"))
     monkeypatch.setenv("TM_AGENT_ADDRESS", "alpha")
@@ -471,12 +471,12 @@ def test_message_read_and_the_pager_view_show_the_decoded_text(mta, tmp_path, mo
     assert r.exit_code == 0, r.output
     (raw,) = mta.delivered()
     assert b"=3D" in raw and b"=\n" in raw, "the wire is QP, or this test proves nothing"
-    root = tmp_path / "mail"
+    root = tmp_path / "mail" / "stores"
     for sub in ("tmp", "new", "cur"):
         (root / "beta" / sub).mkdir(parents=True, exist_ok=True)
     delivered = root / "beta" / "new" / "1922716800.M1P1.test"
     delivered.write_bytes(raw)
-    monkeypatch.setenv("SESSION_MAIL_ROOT", str(root))
+    monkeypatch.setenv("SESSIONMAIL_ROOT", str(root.parent))
     monkeypatch.setenv("SESSIONMAIL_HOME", str(tmp_path / "sessionmail"))
     monkeypatch.setenv("CLAUDE_CODE_SESSION_ID", "00000000-0000-4000-8000-000000000818")
 

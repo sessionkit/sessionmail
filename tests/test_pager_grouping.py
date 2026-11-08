@@ -16,7 +16,7 @@ Pinned here:
     message in it is still given;
   - the page still names no sender and no subject.
 
-Hermetic: own maildir under `tmp_path`, `SESSION_MAIL_ROOT` pointed at it.
+Hermetic: own maildir under `tmp_path`, `SESSIONMAIL_ROOT` pointed at it.
 """
 
 from __future__ import annotations
@@ -53,8 +53,8 @@ def write(root, box, key, *, to=None, header_to=None, delivered_to=None,
 
 @pytest.fixture
 def root(tmp_path, monkeypatch):
-    r = tmp_path / "mail"
-    monkeypatch.setenv("SESSION_MAIL_ROOT", str(r))
+    r = tmp_path / "mail" / "stores"
+    monkeypatch.setenv("SESSIONMAIL_ROOT", str(r.parent))
     return r
 
 

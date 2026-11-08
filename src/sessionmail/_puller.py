@@ -16,11 +16,14 @@ Two skips, both decided before the mail is handed on:
     first, through the kit's own profile; then the box's last 15 minutes
     are scanned for what notmuch has not indexed yet.
   - OUR OWN LEG: the mail host's top Received header names one of this
-    host's IPs and a BOX@<relay domain> recipient, so this is the copy this
-    host sent up. It is skipped only when the local copy is there (after a
-    short grace), so a mail that bounced here is still pulled. An own leg
-    for a box with no local maildir (an alias) cannot be checked, and is
-    skipped.
+    host's IPs as smtpd's peer (never an IP in the HELO), and the recipient
+    is BOX@<relay domain>, by that Received's `for` clause or, for a mail
+    to several recipients, which has none, by the X-Original-To above it.
+    So this is the copy this host sent up. It is skipped only when the local
+    copy is there (after a short grace), so a mail that bounced here is
+    still pulled. An own leg for a box with no local maildir (an alias)
+    cannot be checked: the `for` form is skipped, the X-Original-To form
+    pulled, since it may be mail sent to another host's addresses.
 
 General delivery (`pull.unsorted_box`, off when unset): the mail host files
 mail for boxes it does not have in one catch-all box. Every puller watches
@@ -55,6 +58,7 @@ import dataclasses
 import email.utils
 import fcntl
 import imaplib
+import ipaddress
 import json
 import os
 import random
@@ -65,7 +69,7 @@ import subprocess
 import sys
 import threading
 import time
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -97,6 +101,14 @@ _HEADER_END = re.compile(rb"\r?\n\r?\n")
 _RECEIVED = re.compile(rb"^Received:(.*?)(?=^\S|\Z)", re.M | re.S | re.I)
 _RETURN_PATH = re.compile(rb"^Return-Path:\s*<([^>]*)>", re.M | re.I)
 _ORIG_TO = re.compile(rb"^X-Original-To:\s*<?([^@>\s]+)@", re.M | re.I)
+_ORIG_TO_DOMAIN = re.compile(rb"^X-Original-To:\s*<?[^@>\s]+@([^>\s]+)", re.M | re.I)
+# The mail host's smtpd writes its Received as `from HELO (NAME [ADDR])`. The
+# HELO is the sender's own word and may read `[192.0.2.10]`; postfix neuters
+# spaces and parens in it, so it is one token. Only the bracket inside the
+# parenthesis after it is the TCP peer. Ported from the mail repo's puller
+# (5f3b63f, "trust only smtpd's peer IP"), the same pattern as the mail host's
+# registration check uses.
+_CLIENT = re.compile(rb"from [^\s()]+ \([^\s()\[\]]+ \[(?:IPv6:)?([0-9A-Fa-f:.]+)\]\)")
 _SESSION = re.compile(r"[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}|[0-9a-f]{8}", re.I)
 _LOCAL_PART = re.compile(r"[A-Za-z0-9._+-]+")
 _BOX = re.compile(r"[A-Za-z0-9][A-Za-z0-9._+-]{0,127}")
@@ -142,7 +154,7 @@ class Config:
     backfill_seconds: int = 86400
     reissue_seconds: float = 300.0
     login_gate: int = 4
-    mail_root: Path = Path(".mail")
+    mail_root: Path = Path("~/.sessionkit/mail")
     notmuch_command: str = "notmuch"
     notmuch_timeout: float = 10.0
     notmuch_config: str | None = None
@@ -192,7 +204,7 @@ FIELD_SOURCES: dict[str, tuple[str, tuple[str, ...]]] = {
         "login_gate")},
     "local_domain": ("pull.local_domain", ("SESSIONMAIL_PULL_LOCAL_DOMAIN", "SESSIONMAIL_HOST",
                                            "SESSION_MAIL_HOST")),
-    "mail_root": ("root", ("SESSIONMAIL_ROOT", "SESSION_MAIL_ROOT", "MAIL_ROOT")),
+    "mail_root": ("root", ("SESSIONMAIL_ROOT",)),
     "notmuch_command": ("notmuch.command", (_notmuch.BINARY_VAR,)),
     "notmuch_timeout": ("notmuch.timeout", (_notmuch.TIMEOUT_VAR,)),
     "notmuch_config": ("notmuch.profile", (_settings.KEYS["notmuch.profile"].var,
@@ -227,6 +239,34 @@ def _under_settings_home(text: str) -> Path:
     return Path(text)
 
 
+#: The state folder's leaf the puller's default `pull.state_dir` is.
+STATE_LEAF = "puller"
+
+
+def _state_dir(given: str) -> Path:
+    """The puller's ONE state folder: its lock, its cursors and the mkdir
+    are all in it, so it is chosen once. GIVEN (an explicit `pull.state_dir`
+    or `SESSIONMAIL_PULL_STATE_DIR`, even one that spells the default) wins
+    as it always has, `~` the settings home. Unset ("": the key's DEFAULT
+    source, never its default text), it is the account-rooted `puller` leaf
+    (`_settings.account_state_path`): `<settings home>/.sessionmail/puller`
+    while that is a real folder of its own, else the state folder's
+    `puller/`, the key's default (`~/.sessionkit/mail/state/puller`), made
+    by `main` with its parents on a fresh host.
+    No variable moves it, `$SESSIONMAIL_HOME` and `$HOME` included, so a
+    hand run from an agent seat takes the LaunchAgent's lock. Nothing is
+    made by the choice.
+
+    One lock across a migration holds only while it is one inode: the move
+    must leave a symlink AT the old leaf (`~/.sessionmail/puller` -> the
+    new folder), so a puller started before it and one started after flock
+    the same `puller.lock`. A copy would be two folders, two locks and two
+    cursor sets: both pullers deliver every arrival."""
+    if given:
+        return _under_settings_home(given)
+    return _settings.account_state_path(STATE_LEAF)
+
+
 def _as_list(value: object) -> tuple[str, ...] | None:
     """A list of strings, or comma-separated text, as a tuple of its
     non-empty items; None when VALUE is neither."""
@@ -257,10 +297,12 @@ def config(env: Mapping[str, str] | None = None) -> Config | Missing:
     missing: list[str] = []
     invalid: list[tuple[str, str]] = []
     unreadable = ""
+    sources: dict[str, str] = {}
 
     def get(key: str) -> object:
         nonlocal unreadable
         got = _settings.setting(key, env)
+        sources[key] = got.source
         if got.source == _settings.UNREADABLE:
             unreadable = unreadable or got.why
             return None
@@ -330,8 +372,9 @@ def config(env: Mapping[str, str] | None = None) -> Config | Missing:
         invalid.append(("pull.imap_port", f"{imap_port} is out of range"))
     boxes_file = _under_settings_home(text("pull.boxes_file")
                                       or str(_settings.KEYS["pull.boxes_file"].default))
-    state_dir = _under_settings_home(text("pull.state_dir")
-                                     or str(_settings.KEYS["pull.state_dir"].default))
+    given_state_dir = text("pull.state_dir")
+    state_dir = _state_dir("" if sources["pull.state_dir"] == _settings.DEFAULT
+                           else given_state_dir)
     local_domain = text("pull.local_domain") or _drop.short_host(env)
     own_ips = items("pull.own_ips")
     boxes = {}
@@ -419,23 +462,43 @@ def wait_for_secret(cfg: Config, sleep: Callable[[float], None] = time.sleep) ->
 
 # -- what is ours ----------------------------------------------------------------
 
+def only_ips(lines: Iterable[str]) -> set[str]:
+    """The LINES that are IP addresses, stripped, as written. Anything else
+    is dropped: a sentence is never an own IP."""
+    ips = set()
+    for line in lines:
+        line = line.strip()
+        try:
+            ipaddress.ip_address(line)
+        except ValueError:
+            continue
+        ips.add(line)
+    return ips
+
+
 def ask_tailscale() -> set[str]:
     """This host's tailnet IPs, from the tailscale CLI; empty when it
-    cannot say."""
+    cannot say. Only a run that exits 0 counts, and only its lines that are
+    IPs: the macOS app's binary prints a sentence when the app is not up,
+    and that must leave the set empty so the puller refuses."""
     for ts in TAILSCALE:
         try:
             r = subprocess.run([ts, "ip"], capture_output=True, text=True, timeout=10)
         except (OSError, subprocess.TimeoutExpired):
             continue
-        ips = {line.strip() for line in r.stdout.splitlines() if line.strip()}
+        if r.returncode != 0:
+            continue
+        ips = only_ips(r.stdout.splitlines())
         if ips:
             return ips
     return set()
 
 
 def own_ips(cfg: Config) -> set[str]:
-    """`pull.own_ips` when set, else what tailscale says."""
-    return set(cfg.own_ips) if cfg.own_ips else ask_tailscale()
+    """`pull.own_ips` when set, else what tailscale says; IPs only. A
+    configured list with no IP in it is empty (the puller refuses), never a
+    fall back to tailscale."""
+    return only_ips(cfg.own_ips) if cfg.own_ips else ask_tailscale()
 
 
 def head_of(raw: bytes) -> bytes:
@@ -448,14 +511,39 @@ def top_received(head: bytes) -> bytes:
     return m.group(1) if m else b""
 
 
-def is_own_leg(head: bytes, ips: set[str], relay_domain: str) -> bool:
-    """The copy this host sent up: the mail host took it FROM one of IPS and
-    FOR BOX@<relay domain>. Mail this host sent straight to an address on the
-    mail host also comes from one of IPS, but was never delivered here, so
-    it is pulled."""
+def client_ip(top: bytes) -> str:
+    """The TCP peer the mail host's smtpd named in a Received header ("" if none)."""
+    m = _CLIENT.match(re.sub(rb"\s+", b" ", top).strip())
+    return m.group(1).decode() if m else ""
+
+
+def own_leg(head: bytes, ips: set[str], relay_domain: str) -> str:
+    """How this copy is known as the one this host sent up, or "" if it is not.
+
+    The mail host's top Received must name one of IPS as smtpd's TCP peer
+    (never an IP in the sender's HELO), and the recipient must be
+    BOX@<relay domain>: "for" when that Received's `for <...>` clause says
+    so, which postfix writes for a single recipient only; "x-original-to"
+    when only the X-Original-To does. That header is read from the block
+    above the top Received, where the mail host's delivery writes it, and
+    the topmost there wins; one a sender wrote lower down is never read.
+    Mail this host sent straight to an address on the mail host also comes
+    from one of IPS, but was never delivered here, so it is pulled."""
     top = top_received(head)
-    return (f"@{relay_domain}>".encode() in top
-            and any(f"[{ip}]".encode() in top for ip in ips))
+    if client_ip(top) not in ips:
+        return ""
+    if f"@{relay_domain}>".encode() in top:
+        return "for"
+    m = _RECEIVED.search(head)
+    x = _ORIG_TO_DOMAIN.search(head[: m.start()] if m else b"")
+    if x and x.group(1).decode(errors="replace").lower() == relay_domain.lower():
+        return "x-original-to"
+    return ""
+
+
+def is_own_leg(head: bytes, ips: set[str], relay_domain: str) -> bool:
+    """The copy this host sent up (see own_leg)."""
+    return bool(own_leg(head, ips, relay_domain))
 
 
 def base_box(box: str) -> str:
@@ -852,17 +940,24 @@ class BoxPuller(threading.Thread):
                 return verdict
         else:
             rcpt, box_dir = local_rcpt(self.box, head), self.box_dir
-        own = is_own_leg(head, self.ips, cfg.relay_domain)
-        if held(cfg, box_dir, mid) or (own and box_dir is None):
+        own = own_leg(head, self.ips, cfg.relay_domain)
+        note = ("" if not own else " (own leg NOT here)" if box_dir is not None
+                else " (own leg, no local maildir to check)")
+        # With no local maildir an own leg cannot be checked. Only the `for`
+        # form is skipped unchecked, as it always was: a no-`for` own leg may
+        # be mail this host sent to ANOTHER host's addresses, whose only copy
+        # is this one, so it is pulled (a twin at worst, never a loss).
+        if held(cfg, box_dir, mid) or (own == "for" and box_dir is None):
             self.counts["own" if own else "held"] += 1
             verdict = "own leg, here, skipped" if own and box_dir else (
                 "own leg, no local maildir to check, skipped" if own else "already here, skipped")
-        elif own and (self.stop.wait(OWN_GRACE) or held(cfg, box_dir, mid)):
+        elif own and box_dir is not None and (self.stop.wait(OWN_GRACE)
+                                              or held(cfg, box_dir, mid)):
             self.counts["own"] += 1
             verdict = f"own leg, here after {OWN_GRACE:g}s, skipped"
         elif cfg.dry_run:
             verdict = (f"WOULD PULL{' as ' + rcpt if self.general else ''}"
-                       f"{' (own leg NOT here)' if own else ''} ({len(raw)} bytes) - dry run")
+                       f"{note} ({len(raw)} bytes) - dry run")
         else:
             try:
                 inject(cfg, rcpt, raw, head, tag)
@@ -870,7 +965,7 @@ class BoxPuller(threading.Thread):
                 since = (f"{1000 * (time.monotonic() - pushed_at):.0f} ms after the push"
                          if pushed_at else "from the backlog")
                 verdict = (f"PULLED{' as ' + rcpt if self.general else ''}"
-                           f"{' (own leg NOT here)' if own else ''} {since}, "
+                           f"{note} {since}, "
                            f"{received_age(head)} after the mail host took it")
             except smtplib.SMTPRecipientsRefused as exc:
                 self.counts["refused"] += 1

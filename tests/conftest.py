@@ -18,11 +18,13 @@ import dataclasses
 import datetime
 import json
 import os
+import sys
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
+import _leaves
 import tool_call
 from fake_launchctl import FakeLaunchctl
 from fakes import fake_scutil_only, write_fake  # fake_scutil_only: re-exported (test_host_rule)
@@ -126,10 +128,11 @@ sys.stdout.write("[]")
 ORACLE_SEAT_VARS = ("SESSION_AGENT", "SESSION_SEAT")
 #: The session's signing key (`_sender`): a test that signs brings its own.
 SIGNER_VARS = ("CLAUDE_SESSION_AGENT_SOCK", "CLAUDE_SESSION_PUB")
-#: The mailstore root's other spellings. `SESSIONMAIL_ROOT` outranks the
-#: `SESSION_MAIL_ROOT` set below on every side (`_maildir.env_root`, SM-910);
-#: `MAIL_ROOT` is vmailbox-gen's.
-OTHER_ROOT_VARS = ("SESSIONMAIL_ROOT", "MAIL_ROOT")
+#: The mail root's RETIRED spellings (`_maildir.RETIRED_ROOT_VARS`): read by
+#: nothing since the move, cleared here so a runner that still exports one
+#: is not what a test measures. `SESSIONMAIL_ROOT`, the one variable, is set
+#: below to the sandbox's mail root; boxes live under its `stores/`.
+OTHER_ROOT_VARS = ("SESSION_MAIL_ROOT", "MAIL_ROOT")
 NOTMUCH_VARS = ("NOTMUCH_DATABASE", "NOTMUCH_PROFILE")
 #: The mail origin a v2 signature qualifies a bare address with (SM-594 design 4.2).
 #: Never the host's: a test that wants another, or none, sets its own.
@@ -144,6 +147,30 @@ HERMETIC_SUFFIX = "hermetic.invalid"
 #: tests/test_anchor.py holds the two definitions equal.
 ANCHOR = datetime.datetime(2030, 6, 9, 12, 34, 56, tzinfo=datetime.timezone.utc)
 ANCHOR_SUMMER = datetime.datetime(2030, 12, 8, 12, 34, 56, tzinfo=datetime.timezone.utc)
+
+
+#: The `python3` the suite hands its children when this interpreter's own bin
+#: has none that is this interpreter (SM-1028): one line, an `exec`.
+INTERPRETER_SHIM = '#!/bin/sh\nexec "{python}" "$@"\n'
+
+
+def interpreter_path(shim_dir: Path, path: str) -> str:
+    """PATH for a test's children: this interpreter's bin first, then PATH.
+
+    The bin holds the `python3` and the `session` of the install the suite
+    imports (a venv's, as `uv run` puts them), so a child that runs `python3`
+    or `session` by name asks the same sessiontools `_leaves` pinned, not
+    whichever the runner's PATH reaches first (SM-1028). When that bin has no
+    `python3`, or one that is another interpreter, SHIM_DIR gets a `python3`
+    that execs this one, and goes first."""
+    exe = Path(sys.executable)
+    first = [str(exe.parent)]
+    sibling = exe.parent / "python3"
+    if not (sibling.is_file() and os.path.samefile(sibling, exe)):
+        shim_dir.mkdir(parents=True, exist_ok=True)
+        write_fake(shim_dir / "python3", INTERPRETER_SHIM)   # fills {python}
+        first.insert(0, str(shim_dir))
+    return os.pathsep.join([*first, path]) if path else os.pathsep.join(first)
 
 
 @pytest.fixture(autouse=True)
@@ -177,6 +204,25 @@ def hermetic(tmp_path_factory, monkeypatch):
     # <sid>/mail/`, or `$SESSIONS_DIR/<sid>/mail/` - a launcher may set
     # that for its sessions, so a suite run from one would write into its tree.
     monkeypatch.delenv("SESSIONS_DIR", raising=False)
+    # Which tree that is (old or new) is sessiontools' leaf rule, so a test
+    # names a session's or a seat's folder by `_leaves`, never by spelling
+    # it. The sandbox HOME's answer is pinned HERE, before any code runs:
+    # asked later, the rule would follow a write into the wrong tree.
+    _leaves.reset()
+    _leaves.pin(sandbox / "user")
+    # And the CHILDREN must ask the resolver the pin asked (SM-1028). The pin
+    # above asks the sessiontools THIS interpreter imports; a hook a test runs
+    # by subprocess (`hooks/mail-guard-hook` runs `python3` from PATH) asks the
+    # sessiontools PATH's python3 imports, else `session` from PATH, else its
+    # own copy of the rule. On a runner whose PATH's python3 lacks sessiontools
+    # (`.venv/bin/python -m pytest` from a seat whose first python3 is a bare
+    # interpreter) the child answered from the seat's live `session` or its own
+    # rule, wrote into the other tree, and 96 tests saw "the sessions leaf
+    # moved". So every child's PATH starts with this interpreter's bin (the
+    # venv's `python3` and `session`, as `uv run` puts them), whatever PATH
+    # the runner carries. A test that means a hostile PATH sets its own.
+    monkeypatch.setenv("PATH", interpreter_path(sandbox / "interpreter",
+                                                os.environ.get("PATH", "")))
     # The writing model (SM-918) is read from Claude Code's transcript under
     # `$CLAUDE_CONFIG_DIR/projects/`, else `$HOME/.claude/projects/`. HOME is the
     # sandbox's above; a runner's CLAUDE_CONFIG_DIR would point every send at the
@@ -246,7 +292,7 @@ def hermetic(tmp_path_factory, monkeypatch):
     # session's box under it since message-subscriptions 4.2, and a test that
     # set a session id and forgot this read `~/.mail/agents/<id>` (measured,
     # SM-374 do-009). An empty root: a test that wants mail builds its own.
-    monkeypatch.setenv("SESSION_MAIL_ROOT", str(sandbox / "mail"))
+    monkeypatch.setenv("SESSIONMAIL_ROOT", str(sandbox / "mail"))
     # The RUNNER's own session must not leak into the tests. It always did -
     # nothing here ever deleted it - and it was harmless only by luck: every
     # reader that could see a session id also saw a SEAT var, and seat vars
@@ -330,7 +376,7 @@ def hermetic(tmp_path_factory, monkeypatch):
     for var, value in list(os.environ.items()):
         if var.endswith("_ROOT") and not os.path.isabs(value.strip()):
             monkeypatch.delenv(var)   # a `$<AGENT>_ROOT` hint: a Message-ID
-    monkeypatch.setenv(_maildir.LEGACY_ROOT_VAR, str(sandbox / "mail"))
+    monkeypatch.setenv(_maildir.ROOT_VAR, str(sandbox / "mail"))
     # Host mode reads the host's sessionkit profile and no other notmuch
     # config (`_index`): one is written here, under a sandbox
     # XDG_CONFIG_HOME, naming a database that does not exist. So a real
@@ -357,6 +403,13 @@ def hermetic(tmp_path_factory, monkeypatch):
     # ever read the runner's real `~/.claude/sessions`.
     monkeypatch.setattr(_seat, "claude_for", _claude_up)
     monkeypatch.setenv("SESSION_SIDECAR_DIR", str(sandbox / "no-sidecars-here"))
+    # And the runner's CLAUDE_PID (SM-998). Every verb drops the identity
+    # words a CLAUDE_PID says were inherited from a claude it does not run
+    # under (`_seat.drop_inherited`), so a suite run from a plain pane on a
+    # tmux server a seat started would see every seat a test sets dropped.
+    # Whether the runner sits under a claude must not decide a test. A test
+    # that means a CLAUDE_PID sets one (tests/test_inherited_identity.py).
+    monkeypatch.delenv(_seat.CLAUDE_PID_VAR, raising=False)
 
 
 #: What the conftest's `pager._mta_send` answers: a receipt for nothing sent.

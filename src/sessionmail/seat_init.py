@@ -6,8 +6,11 @@
 The adapter signs as its seat (say desk.alice, or a plus address such as
 heard+airpods), and its cert matches that name exactly, +tag and all. It:
 
-1. generates an ed25519 key at $SESSIONMAIL_HOME/seat-keys/<ADDRESS>/id_ed25519
-   (dir 0700, key 0600), and publishes its pub as seat.pub. No private key sits
+1. generates an ed25519 key at <seat-keys>/<ADDRESS>/id_ed25519 (dir 0700, key
+   0600), <seat-keys> being `_settings.seat_keys_dir()`: $SESSIONMAIL_HOME/seat-keys
+   when that is set; else ~/.sessionmail/seat-keys while it is a real folder (an
+   existing host's keys never move); else ~/.sessionkit/mail/state/seat-keys,
+   where a fresh host mints. It publishes its pub as seat.pub. No private key sits
    beside that pub's stem, so with the seat agent dead `ssh-keygen -Y sign -f
    seat.pub` FAILS instead of quietly signing from the file. A send that must sign is then refused.
 2. writes a session-birth-v1 cert, field for field as claude-agents
@@ -298,8 +301,13 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("address", help="the seat's address, e.g. bot.alice or heard+airpods")
     args = ap.parse_args(argv)
     os.umask(0o077)
-    sm_home = Path(os.environ.get("SESSIONMAIL_HOME") or "~/.sessionmail").expanduser()
-    keys = sm_home / "seat-keys"
+    try:
+        from sessionmail._settings import seat_keys_dir   # absolute: scripts/seat-init runs this file
+    except ImportError as exc:
+        print(f"seat-init: REFUSED - the sessionmail package is not importable ({exc}), so "
+              "the seat-keys folder cannot be found. Nothing was written.", file=sys.stderr)
+        return EX_REFUSED
+    keys = seat_keys_dir()
     home = keys / args.address
     registry = args.registry.resolve() if args.registry.exists() else args.registry
     try:
@@ -310,7 +318,11 @@ def main(argv: list[str] | None = None) -> int:
     except Refused as r:
         print(f"seat-init: REFUSED - {r}. Nothing was written.", file=sys.stderr)
         return EX_REFUSED
-    created = [d for d in (keys, home) if not d.exists()]
+    created: list[Path] = []     # every folder this run makes, the top one first
+    d = home
+    while not d.exists() and d != d.parent:
+        created.insert(0, d)
+        d = d.parent
     try:
         key, pub, publine = generate(home, args.address)
         sid = sid_of(publine)

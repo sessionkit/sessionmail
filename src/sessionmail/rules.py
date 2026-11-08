@@ -5,7 +5,7 @@ D3 (the grammar).
 
 One rule per line, and the VERB is the rule::
 
-    # ~/.sessionmail/seats/<seat>/rules
+    # ~/.sessionkit/mail/state/seats/<seat>/rules
     ride   to:kith@*                  # rides along, never wakes
     ride   from:*@delta.chat
     wake   x-project:atomnote
@@ -28,7 +28,12 @@ One rule per line, and the VERB is the rule::
   literal. There are no `[...]` classes, so a bracketed tag such as
   `subject:[draft]*` matches itself (build decision O-g; D2's
   reason for globs is that they "need no escaping"). This module only
-  stores them; the judgement (tasks 2.2) matches them.
+  stores them; the judgement (tasks 2.2) matches them. A glob with a
+  CLASS-SHAPED `[...]` (`*[Aa]lice*`, `[a-z]*`) parses and is kept, but
+  `lint` names it as a `RuleWarning`, because it can only match its own
+  brackets. For a case pair it names the glob that was meant (`*alice*`:
+  matching is already case-insensitive); for any other class it offers
+  no rewrite, since `?` is broader than a set.
 - **`*` alone** is the catch-all (`ride *`, D4 step 3): a rule with no
   conditions. It stands alone; `ride * to:x` is a bad line.
 - **`$me`** is this session's and this seat's addresses (D2), expanded by
@@ -195,8 +200,9 @@ COUNTS: dict[str, str] = {SHORTEN_MAX: "subject_shorten_max"}
 DEFAULT_SHORTEN_MAX = 10
 _COUNT = re.compile(r"[0-9]+\Z")
 #: Why a `set` line anywhere but the locked file is skipped.
-LOCKED_ONLY = ("'set' is a line of the locked file (~/.sessionmail/rules.locked) "
-               "only: skipped here, it sets nothing")
+LOCKED_ONLY = ("'set' is a line of the locked file (rules.locked, in "
+               f"{_settings.SHOWN_STATE_DIR}, or in {_settings.SHOWN_OLD_STATE_DIR} "
+               "while it is still there) only: skipped here, it sets nothing")
 
 #: A header field name, as far as a rule may write one: RFC 5322 allows
 #: any printable ASCII but `:`, and every header a mail here carries is
@@ -283,6 +289,125 @@ class RuleError:
 
     def __str__(self) -> str:
         return f"{self.source}:{self.line}: {self.reason}: {self.text}"
+
+
+@dataclass(frozen=True)
+class RuleWarning:
+    """A line that parses and is KEPT, but almost surely does not say what
+    its writer meant: named beside the bad lines, never skipped
+    (`lint`)."""
+
+    source: str
+    line: int
+    text: str
+    reason: str
+
+    def __str__(self) -> str:
+        return f"{self.source}:{self.line}: warning: {self.reason}: {self.text}"
+
+
+#: A bracketed run in a glob: `[`, then no bracket, then `]`.
+_BRACKETED = re.compile(r"\[([^\[\]]+)\]")
+#: A range class: in-order ranges and nothing else (`a-z`, `A-Za-z`,
+#: `a-f0-9`). A letter or digit standing alone beside a hyphen is a word
+#: (`non-urgent`, `e-mail`, `co-op`), so a tag.
+_RANGES_ONLY = re.compile(r"(?:[A-Za-z0-9]-[A-Za-z0-9])+")
+_RANGE = re.compile(r"([A-Za-z0-9])-([A-Za-z0-9])")
+_LETTERS = re.compile(r"[A-Za-z]+")
+#: Two digits side by side: a NUMBER (`2031`, `12`), so a tag. A class
+#: never writes one (`[0-9]`, `[a-f0-9]`).
+_NUMBER = re.compile(r"[0-9]{2}")
+
+
+def _same_kind(lo: str, hi: str) -> bool:
+    """True when LO-HI is a range a class would mean: both digits, both
+    lower case or both upper case, in order (`a-z`, `0-9`). `M-9` (from
+    `[RFC-822]`) and `6-0` (from `[2030-06-09]`) are not."""
+    kinds = (str.isdigit, str.islower, str.isupper)
+    return lo <= hi and any(k(lo) and k(hi) for k in kinds)
+
+
+def _class_shaped(inner: str) -> bool:
+    """True when INNER (between `[` and `]`) reads as a CLASS, not a tag:
+    only case pairs, every letter in both its cases (`Cc`, `kK`, `AaBb`),
+    or only in-order ranges, nothing standing alone (`a-z`, `A-Za-z`,
+    `0-9`, `a-f0-9`), either one after an optional `!`. A tag (`draft`,
+    `URGENT`, `RFC-822`, `2030-06-09`, `!important`), a word that only
+    holds a case pair (`Oops`, `Aaron`, `Dad`), a hyphenated word whose
+    letters either side of the hyphen happen to run in order
+    (`non-urgent`, `e-mail`, `co-op`: the other letters stand alone),
+    and anything holding a number (two digits side by side, as in a date
+    or `10-20`, where an in-order pair such as `0-2` is digits of two
+    numbers, not a range), is none of these, so the bracketed tag O-g
+    was built for is never warned about, and never told to become a
+    `?`."""
+    inner = inner.removeprefix("!")
+    if _LETTERS.fullmatch(inner) and all(ch.swapcase() in inner for ch in inner):
+        return True
+    if _NUMBER.search(inner) or not _RANGES_ONLY.fullmatch(inner):
+        return False
+    return all(_same_kind(lo, hi) for lo, hi in _RANGE.findall(inner))
+
+
+def _one_letter(inner: str) -> str | None:
+    """The letter a class-shaped INNER stands for when it is only that
+    letter's cases (`Cc`, `kK`), else None. Matching is already
+    case-insensitive, so that letter alone is EXACTLY the glob that was
+    meant: no broader, no narrower."""
+    if inner.isalpha() and len({ch.casefold() for ch in inner}) == 1:
+        return inner[0].casefold()
+    return None
+
+
+def _unclassed(match: re.Match[str]) -> str:
+    """What one bracketed run should have been written as: a case pair
+    (`[Cc]`) is its letter; anything else is kept as written."""
+    inner = match.group(1)
+    letter = _one_letter(inner) if _class_shaped(inner) else None
+    return match.group(0) if letter is None else letter
+
+
+def _class_warning(cond: Condition) -> str | None:
+    """Why COND's glob is class-shaped, or None. `[` is literal (build
+    decision O-g), so `subject:*[Aa]lice*` looks for the text `[Aa]lice`,
+    brackets and all, and never matches `Alice, can you...`: the
+    line parses, the mail falls through to the next line, and nothing says
+    so. This says so.
+
+    It names a rewrite only when the rewrite is NO BROADER than the
+    intent: every class in the glob is one letter's cases, so
+    `*[Aa]lice*` is exactly `*alice*`. Any other class (`[0-9]`, `[a-z]`,
+    `[AaBb]`, `[!a-z]`) has no glob as narrow as it: `?` is any one
+    character, and `subject:[a-z]*` written as `subject:?*` is a
+    catch-all, the deafness this warning exists to stop. So there it says
+    what the glob literally matches, and offers nothing."""
+    if cond.variable is not None or cond.name in ("priority", "draft"):
+        return None
+    shaped = [m for m in _BRACKETED.finditer(cond.glob) if _class_shaped(m.group(1))]
+    if not shaped:
+        return None
+    shown = " and ".join(m.group(0) for m in shaped)
+    said = (f"`[` is literal in a glob, there are no [...] classes: "
+            f"{cond.name}:{cond.glob} looks for the text {shown}, "
+            f"brackets and all, not one character from a set")
+    if all(_one_letter(m.group(1)) is not None for m in shaped):
+        meant = _BRACKETED.sub(_unclassed, cond.glob)
+        return f"{said}; matching is already case-insensitive, so write {cond.name}:{meant}"
+    return f"{said}; no glob is as narrow as a set, so no rewrite is offered"
+
+
+def lint(rules: Sequence[Rule]) -> tuple[RuleWarning, ...]:
+    """The WARNINGS in RULES, in line order: lines kept as written that
+    almost surely do not say what their writer meant. One today: a glob
+    with a class-shaped `[...]` (`_class_warning`). Pure, as
+    `parse` is; a warned line is still a rule, and still judged."""
+    out: list[RuleWarning] = []
+    for rule in rules:
+        for cond in rule.conditions:
+            reason = _class_warning(cond)
+            if reason is not None:
+                out.append(RuleWarning(rule.source, rule.line, rule.text, reason))
+    return tuple(out)
 
 
 class _Bad(Exception):
@@ -1060,9 +1185,10 @@ class Settings:
       may stand in it.
 
     - `subject_shorten`: `set subject-shorten on|off`, the HOST switch of
-      `message send`'s subject shortener. None (no line) is OFF,
-      the tool's default; only this line can turn it on, and an agent cannot
-      move the file (`locked_path`, never the environment).
+      `message send`'s subject shortener. None (no line) is ON,
+      the tool's default; only `set subject-shorten off` turns it off for the
+      host, and an agent cannot move the file (`locked_path`, never the
+      environment).
     - `carry`: `set carry on|off`, the HOST kill switch for carry.
       None (no line) is ON; `off` makes every wake, `carry` lines and
       (as every wake carries) `wake` lines alike, judge as a plain wake.
@@ -1360,7 +1486,7 @@ UNPREFIXED_ONLY: tuple[str, ...] = _headers.UNPREFIXED_ONLY
 #: D3 layer 3, P11: the agent MD's lines, one rule per line.
 PAGE_RULES_VAR = "SESSIONMAIL_PAGE_RULES"
 
-#: D3 layer 0, P2: `~/.sessionmail/rules.locked`.
+#: D3 layer 0, P2: `rules.locked` in the state folder (`default_locked_path`).
 LOCKED_FILE = "rules.locked"
 #: The one file of each of the other two file layers (P3: one file a layer).
 RULES_FILE = "rules"
@@ -1572,9 +1698,13 @@ def account_home() -> Path:
 
 
 def default_locked_path() -> Path:
-    """`~/.sessionmail/rules.locked`, where `~` is `account_home()`. Not
-    `_seat.home()`: that honours `$SESSIONMAIL_HOME`, which an agent sets."""
-    return account_home() / ".sessionmail" / LOCKED_FILE
+    """`~/.sessionmail/rules.locked` while it is a real file of its own,
+    else `~/.sessionkit/mail/state/rules.locked` (there, or the fresh
+    default), where `~` is the ACCOUNT's home
+    (`_settings.account_state_path`, rooted at `_operator.settings_home()`,
+    which is `account_home()`). Not `_settings.state_path` or `_seat.home()`:
+    those honour `$SESSIONMAIL_HOME` and `$HOME`, which an agent sets."""
+    return _settings.account_state_path(LOCKED_FILE)
 
 
 def locked_path() -> Path:
@@ -1604,6 +1734,9 @@ class Layers(Sequence[Layer]):
     #: operator config, the settings `judge` reads `$operator` and
     #: `$urgent` through. No other layer sets any.
     settings: Settings = NO_SETTINGS
+    #: Each KEPT line `lint` warns about (a class-shaped `[...]` glob),
+    #: in layer order: named where the bad lines are, never skipped.
+    warnings: tuple[RuleWarning, ...] = ()
 
     def focus(self, now: datetime | None) -> Focus | None:
         """The mode in effect at NOW: the first set mode whose end NOW has
@@ -1651,17 +1784,18 @@ def _session_name(session: str | None) -> tuple[str | None, RuleError | None]:
     return session, None
 
 
-def _seat_rules(seat: object, home: Path, name: str = RULES_FILE) -> Path | None:
+def _seat_rules(seat: object, seats: Path, name: str = RULES_FILE) -> Path | None:
     """The seat file NAME (`rules`, or `focus`): `<seat.root>/<name>` for a
-    `_seat.Seat`, else `<home>/seats/<address>/<name>`, the address folded
-    as `_seat.resolve` folds it (the `+` kept, the domain cut)."""
+    `_seat.Seat`, else `<seats>/<address>/<name>`, SEATS the `seats` leaf
+    (`_seat.seats_root`) and the address folded as `_seat.resolve` folds it
+    (the `+` kept, the domain cut)."""
     if seat is None:
         return None
     root = getattr(seat, "root", None)
     if root is not None:
         return Path(root) / name
     folder = _seat.fold_address(str(seat))
-    return home / "seats" / folder / name if folder else None
+    return seats / folder / name if folder else None
 
 
 def load_layers(seat: object, session: str | None,
@@ -1669,7 +1803,9 @@ def load_layers(seat: object, session: str | None,
                 home: Path | None = None, locked: Path | None = None) -> Layers:
     """The layers of D3, read now, in order; first match wins down them.
 
-    0. `locked`: `~/.sessionmail/rules.locked` (P2). Its path is NEVER
+    0. `locked`: `rules.locked` (P2), `default_locked_path()`: under
+       `~/.sessionmail/` while that is a real file, else
+       `~/.sessionkit/mail/state/` (there, or the fresh default); `~` the account's home. Its path is NEVER
        taken from ENV (D3, 10.28): not from `$SESSIONMAIL_HOME`, not from
        `$HOME`, and no variable holds its text. `locked` is for tests.
        Its `set` lines are DATA, not rules: they go to
@@ -1685,16 +1821,18 @@ def load_layers(seat: object, session: str | None,
     1. `session`: `<session dir>/mail/rules` (`_seat.session_root`: under
        the session dir sessiontools keeps, since session-settings 3.3a; it
        was `<home>/sessions/<SESSION>/rules`).
-    2. `seat`: SEAT's folder, `<home>/seats/<address>/rules` (or a
-       `_seat.Seat`'s own root).
+    2. `seat`: SEAT's folder, `<seats>/<address>/rules` (or a
+       `_seat.Seat`'s own root, which `_seat.resolve` puts in the same leaf).
     3. `env`: `$SESSIONMAIL_PAGE_RULES` from ENV, one rule per line (P11).
     4. `built-in`: D4 step 3, always present, always last.
 
-    HOME is the sessionmail home, `_seat.home(env)` unless given, so the
-    session and seat files follow `$SESSIONMAIL_HOME` as every other seat
-    file does. ENV defaults to the process environment. A layer with no
-    file (or an empty variable) is left out; an empty file is an empty
-    layer. A focus file's `HH:MM` end is anchored at its mtime (the fleet
+    The seat files are under the `seats` leaf, `_seat.seats_root(env)`
+    (`<_seat.home(env)>/seats` while that is real, else the state folder's,
+    the fresh default too, so
+    they follow `$SESSIONMAIL_HOME` as every other seat file does); a HOME
+    given is honoured as-is, `<home>/seats`. ENV defaults to the process
+    environment. A layer with no file (or an empty variable) is left out;
+    an empty file is an empty layer. A focus file's `HH:MM` end is anchored at its mtime (the fleet
     line's at the locked file's). This reads every file on every call;
     re-reading only on a change is `LiveLayers`.
 
@@ -1706,12 +1844,13 @@ def load_layers(seat: object, session: str | None,
     `Layers.settings.runner` the same way (`alert_runner()`).
     """
     env = os.environ if env is None else env
-    home = _seat.home(dict(env)) if home is None else home
+    seats = _seat.seats_root(env) if home is None else home / _seat.SEATS_DIR
     locked = locked_path() if locked is None else locked
     op = _operator.read()
     aliases = operator_aliases(op)
     layers: list[Layer] = []
     errors: list[RuleError] = []
+    warnings: list[RuleWarning] = []
     modes: list[Focus] = []
 
     def add(name: str, text: str | None, source: str) -> None:
@@ -1720,6 +1859,7 @@ def load_layers(seat: object, session: str | None,
         got, bad = parse(text, source, aliases=aliases)
         layers.append(Layer(name, got))
         errors.extend(bad)
+        warnings.extend(lint(got))
 
     def add_file(name: str, path: Path | None) -> None:
         if path is None:
@@ -1751,6 +1891,7 @@ def load_layers(seat: object, session: str | None,
         rules_text, entries = _split_fleet(text)
         got, bad = parse(rules_text, str(locked), aliases=aliases)
         layers.append(Layer(LOCKED, got))
+        warnings.extend(lint(got))
         fleet, fleet_bad = _focus_from(entries, str(locked), set_at, FLEET)
         settings, set_bad = parse_settings(text, str(locked), aliases=aliases)
         empty = _operator_empty(text, str(locked), aliases, settings, operator_globs(op))
@@ -1764,17 +1905,18 @@ def load_layers(seat: object, session: str | None,
         errors.append(err)
     session_dir = _seat.session_root(sid, env) if sid else None
     add_focus(SESSION, session_dir / FOCUS_FILE if session_dir else None)
-    add_focus(SEAT, _seat_rules(seat, home, FOCUS_FILE))
+    add_focus(SEAT, _seat_rules(seat, seats, FOCUS_FILE))
     layers.extend(mode.layer() for mode in modes)
 
     # 1-4.
     add_file(SESSION, session_dir / RULES_FILE if session_dir else None)
-    add_file(SEAT, _seat_rules(seat, home))
+    add_file(SEAT, _seat_rules(seat, seats))
     page_rules = env.get(PAGE_RULES_VAR) or ""
     add(ENV, page_rules if page_rules.strip() else None, PAGE_RULES_VAR)
     layers.append(built_in())
     return Layers(tuple(layers), tuple(errors), tuple(modes),
-                  replace(settings, configured=operator_globs(op), runner=alert_runner()))
+                  replace(settings, configured=operator_globs(op), runner=alert_runner()),
+                  tuple(warnings))
 
 
 def _operator_empty(text: str, source: str, aliases: frozenset[str], settings: Settings,
@@ -1809,15 +1951,15 @@ def layer_files(seat: object, session: str | None,
     seat's `rules`. The paths are the loader's own (same HOME, same session
     check, same seat folder), so what is watched is what is read."""
     env = os.environ if env is None else env
-    home = _seat.home(dict(env)) if home is None else home
+    seats = _seat.seats_root(env) if home is None else home / _seat.SEATS_DIR
     locked = locked_path() if locked is None else locked
     sid, _ = _session_name(session)
     session_dir = _seat.session_root(sid, env) if sid else None
     files = (locked,
              session_dir / FOCUS_FILE if session_dir else None,
-             _seat_rules(seat, home, FOCUS_FILE),
+             _seat_rules(seat, seats, FOCUS_FILE),
              session_dir / RULES_FILE if session_dir else None,
-             _seat_rules(seat, home))
+             _seat_rules(seat, seats))
     return tuple(f for f in files if f is not None)
 
 

@@ -102,9 +102,9 @@ def env(tmp_path: Path, rail_bash: str) -> dict[str, str]:
     notmuch.chmod(0o755)
     home = tmp_path / "home"
     home.mkdir()
-    (tmp_path / "mail").mkdir()
+    (tmp_path / "mail" / "stores").mkdir(parents=True)
     return {"PATH": f"{bin_dir}:/usr/bin:/bin", "HOME": str(home),
-            "SESSION_MAIL_ROOT": str(tmp_path / "mail"),
+            "SESSIONMAIL_ROOT": str(tmp_path / "mail"),
             "SESSIONMAIL_PYTHON": sys.executable}
 
 
@@ -138,7 +138,7 @@ LAYOUTS = {
 
 @pytest.mark.parametrize("layout", sorted(LAYOUTS))
 def test_both_rails_resolve_two_boxes_to_the_delivered_one(tmp_path, layout, rail_bash):
-    root = tmp_path / "mail"
+    root = tmp_path / "mail" / "stores"
     build, delivered = LAYOUTS[layout]
     build(root)
     want = root / delivered
@@ -153,7 +153,7 @@ def test_both_rails_resolve_two_boxes_to_the_delivered_one(tmp_path, layout, rai
     others = {str(p) for p in root.glob(f"**/{PROJECT}") if p.is_dir()} - {str(want)}
     assert others and all(o in err[0] for o in others), (others, err[0])
 
-    path, how = _maildir.resolve_box(PROJECT, {"SESSION_MAIL_ROOT": str(root)})
+    path, how = _maildir.resolve_box(PROJECT, {"SESSIONMAIL_ROOT": str(root.parent)})
     assert path == want, how
     assert "move it aside" in how and all(o in how for o in others), how
 
@@ -189,11 +189,11 @@ def test_the_python_rail_marker_matches_the_boxes_module():
 
 def test_a_store_made_after_a_resolution_is_seen(tmp_path):
     """The store list is cached on the root's mtime; making a store moves it."""
-    root = tmp_path / "mail"
+    root = tmp_path / "mail" / "stores"
     flat = box(root / PROJECT)
-    assert _maildir.resolve_box(PROJECT, {"SESSION_MAIL_ROOT": str(root)})[0] == flat
+    assert _maildir.resolve_box(PROJECT, {"SESSIONMAIL_ROOT": str(root.parent)})[0] == flat
     nested = box(store(root, "kit-store") / PROJECT)
-    assert _maildir.resolve_box(PROJECT, {"SESSION_MAIL_ROOT": str(root)})[0] == nested
+    assert _maildir.resolve_box(PROJECT, {"SESSIONMAIL_ROOT": str(root.parent)})[0] == nested
 
 
 # ── the CLI under its own `set -u`, on both bashes (SM-963) ───────────────────────────
@@ -265,22 +265,30 @@ def test_no_root_and_no_home_is_the_clis_refusal_not_a_bash_abort(rail_bash):
                        env={"PATH": "/usr/bin:/bin"})
     assert "unbound variable" not in r.stderr, r.stderr
     assert r.returncode == 2, r.stderr
-    assert "no root" in r.stderr and "SESSION_MAIL_ROOT" in r.stderr, r.stderr
-    assert "SESSIONMAIL_ROOT" in r.stderr, r.stderr
+    assert "no root" in r.stderr and "SESSIONMAIL_ROOT" in r.stderr, r.stderr
 
 
-@pytest.mark.parametrize("var", ["SESSIONMAIL_ROOT", "SESSION_MAIL_ROOT"])
-def test_a_root_variable_needs_no_home(tmp_path, rail_bash, var):
-    """An absolute root from either spelling resolves with HOME unset: the guard
-    sits inside mail_box_env_root, on the one branch that needs HOME."""
-    flat = box(tmp_path / "flat")
+def test_a_root_variable_needs_no_home(tmp_path, rail_bash):
+    """An absolute root resolves with HOME unset: the guard sits inside
+    mail_box_env_root, on the one branch that needs HOME. The variable names
+    the mail root; the box is under its stores/."""
+    flat = box(tmp_path / "stores" / "flat")
     r = subprocess.run([rail_bash, str(LIB), "flat"], capture_output=True, text=True,
-                       env={"PATH": "/usr/bin:/bin", var: str(tmp_path)})
+                       env={"PATH": "/usr/bin:/bin", "SESSIONMAIL_ROOT": str(tmp_path)})
     assert r.returncode == 0, r.stderr
     assert r.stdout.strip() == str(flat)
 
 
-@pytest.mark.parametrize("given", [{}, {"SESSIONMAIL_ROOT": "~/m/agents"},
+def test_the_retired_spelling_decides_nothing(tmp_path, rail_bash):
+    """SESSION_MAIL_ROOT is retired: set alone, with no HOME, the rail has no
+    root to build and refuses (rc 2), as if nothing were set."""
+    box(tmp_path / "stores" / "flat")
+    r = subprocess.run([rail_bash, str(LIB), "flat"], capture_output=True, text=True,
+                       env={"PATH": "/usr/bin:/bin", "SESSION_MAIL_ROOT": str(tmp_path)})
+    assert r.returncode == 2 and "no root" in r.stderr, (r.returncode, r.stderr)
+
+
+@pytest.mark.parametrize("given", [{}, {"SESSIONMAIL_ROOT": "~/m"},
                                    {"SESSIONMAIL_ROOT": "~"}])
 def test_env_root_without_home_is_the_clis_refusal(rail_bash, given):
     """`--env-root`, and a tilde root, need HOME. With none, the CLI refuses (rc 2),
@@ -294,7 +302,7 @@ def test_env_root_without_home_is_the_clis_refusal(rail_bash, given):
 
 
 def test_the_default_root_is_under_home(tmp_path, rail_bash):
-    flat = box(tmp_path / ".mail" / "agents" / "flat")
+    flat = box(tmp_path / ".sessionkit" / "mail" / "stores" / "flat")
     r = subprocess.run([rail_bash, str(LIB), "flat"], capture_output=True, text=True,
                        env={"PATH": "/usr/bin:/bin", "HOME": str(tmp_path)})
     assert r.returncode == 0, r.stderr
@@ -304,7 +312,7 @@ def test_the_default_root_is_under_home(tmp_path, rail_bash):
 # ── wake: the pointer section ───────────────────────────────────────────────────────────
 
 def test_wake_on_the_live_shape_points_at_the_brief_and_names_the_stray(env):
-    root = Path(env["SESSION_MAIL_ROOT"])
+    root = Path(env["SESSIONMAIL_ROOT"], "stores")
     stray = box(root / PROJECT, cur=False)
     for i in range(3):
         drop(stray, f"old.{i}", letter(f"old.{i}@{HOST}", f"{PROJECT}+super", f"old letter {i}"))
@@ -321,7 +329,7 @@ def test_wake_on_the_live_shape_points_at_the_brief_and_names_the_stray(env):
 
 
 def test_the_pointer_section_is_newest_first_and_only_this_seats(env):
-    root = Path(env["SESSION_MAIL_ROOT"])
+    root = Path(env["SESSIONMAIL_ROOT"], "stores")
     base = box(store(root, "kit-store") / PROJECT)
     t = T0
     drop(base, "a", letter(f"older@{HOST}", SEAT, "the older brief"), mtime=t)
@@ -339,7 +347,7 @@ def test_the_pointer_section_is_newest_first_and_only_this_seats(env):
 
 
 def test_the_pointer_section_says_none_when_nothing_is_addressed(env):
-    root = Path(env["SESSION_MAIL_ROOT"])
+    root = Path(env["SESSIONMAIL_ROOT"], "stores")
     base = box(store(root, "kit-store") / PROJECT)
     drop(base, "c", letter(f"other@{HOST}", OTHER, "a letter to another seat"))
     r = wake(env, TM_AGENT_ADDRESS=SEAT)
@@ -349,7 +357,7 @@ def test_the_pointer_section_says_none_when_nothing_is_addressed(env):
 
 
 def test_the_pointer_section_caps_and_says_how_many_more(env):
-    root = Path(env["SESSION_MAIL_ROOT"])
+    root = Path(env["SESSIONMAIL_ROOT"], "stores")
     base = box(store(root, "kit-store") / PROJECT)
     for i in range(12):
         drop(base, f"m{i:02d}", letter(f"m{i}@{HOST}", SEAT, f"brief {i}"), mtime=T0 + i)
@@ -364,7 +372,7 @@ def test_a_session_box_wake_shows_a_copy_stamped_with_the_seat_address(env):
     """A copy delivered to the seat's SESSION box by its alias row keeps the stamp it
     was sent to (the seat's address). A wake of the session-id box must match the
     address too, or it shows nothing of its own copies."""
-    root = Path(env["SESSION_MAIL_ROOT"])
+    root = Path(env["SESSIONMAIL_ROOT"], "stores")
     sbox = box(root / SID)
     drop(sbox, "copy.1", letter(f"copy.1@{HOST}", SEAT, "the copy in my session box"))
     r = wake(env, SID, TM_AGENT_ADDRESS=SEAT, CLAUDE_CODE_SESSION_ID=SID)
@@ -377,7 +385,7 @@ def test_a_session_box_wake_shows_a_copy_stamped_with_the_seat_address(env):
 def test_a_wake_of_another_box_does_not_list_the_callers_own_letters(env):
     """`memory wake <other>` from this seat lists the letters addressed to <other>
     only: the caller's own address must not leak in under <other>'s heading."""
-    root = Path(env["SESSION_MAIL_ROOT"])
+    root = Path(env["SESSIONMAIL_ROOT"], "stores")
     base = box(store(root, "kit-store") / PROJECT)
     other = f"{PROJECT}+super"
     drop(base, "mine.1", letter(f"mine.1@{HOST}", SEAT, "a letter to the caller"))
@@ -392,7 +400,7 @@ def test_a_wake_of_another_box_does_not_list_the_callers_own_letters(env):
 def test_a_seat_whose_mail_is_copied_to_both_boxes_sees_it_once(env):
     """No regression for a seat whose alias row is live: the letter rests in the base
     box AND the session box; the plus seat's wake reads the base box and shows it once."""
-    root = Path(env["SESSION_MAIL_ROOT"])
+    root = Path(env["SESSIONMAIL_ROOT"], "stores")
     base = box(store(root, "kit-store") / PROJECT)
     sbox = box(root / SID)
     text = letter(f"both.1@{HOST}", SEAT, "copied to both boxes")

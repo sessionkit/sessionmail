@@ -18,6 +18,7 @@ import pytest
 
 from sessionmail import _layer, _subscription as sub
 
+import _leaves
 from _seatmap import seat_map_path, seat_subscribe
 
 
@@ -49,7 +50,7 @@ def test_an_agents_bare_name_has_no_plus_and_no_dot(name, agent):
 
 def test_a_seat_layer_folds_its_d_files_in_name_order():
     d = _layer.settings_dir("voicemode+super")
-    assert d == home() / ".session/seats/voicemode+super/settings"
+    assert d == _leaves.seat_dir("voicemode+super") / "settings"   # the pinned seats leaf
     write(d / "mail.json", {"subscriptions": {"a": True, "b": True, "c": False}})
     write(d / "mail.d" / "90-judy.json", {"subscriptions": {"b": False}})
     write(d / "mail.d" / "50-x.json", {"subscriptions": {"c": True, "b": True}})

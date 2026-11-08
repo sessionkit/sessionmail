@@ -44,7 +44,10 @@ The Python packages, and what each one is for:
 - mcp 2.2.0 or later: the three MCP servers, `message mcp`, `pager mcp` and
   `memory mcp`, which the plugin starts.
 - [sessiontools][pkg-tools] 0.3.0 or later: which sessions are live, and
-  their settings.
+  their settings, and where it keeps the `seats` and `sessions` folders
+  those settings are in. A sessiontools from before the 0.3.2 release
+  keeps them in `~/.session/`, and sessionmail reads them there; from
+  0.3.2, sessionmail reads them wherever sessiontools has put them.
 
 ## Optional
 
@@ -55,7 +58,7 @@ The Python packages, and what each one is for:
 | launchd (`launchctl`, `plutil`) | `message seat agent --install`, which keeps a bot seat's ssh-agent running across reboots, and `message setup --pull`, which installs the puller. | Both refuse on a system other than macOS. | macOS ships it. | Software Update. |
 | `sudo` | `message setup`'s privileged steps, run at a terminal. | `message setup` prints each privileged line for you to run yourself. | macOS ships it. | Software Update. |
 | `python3` on the PATH | The plugin's mail guard, a hook on each Bash call that stops a mail send the shell has damaged before it runs. | The hook exits 0 and the guard is off. | Apple's Command Line Tools bring `/usr/bin/python3`. | Software Update. |
-| `/usr/bin/perl` | The [post-new command][post-new-command], once you set one, and postfix delivery straight into the index, once you set that up. | The post-new command is not run, and says so in `~/.sessionmail/post-new/no-perl`; postfix holds the mail and tries again later. | macOS ships it. | Software Update. |
+| `/usr/bin/perl` | The [post-new command][post-new-command], once you set one, and postfix delivery straight into the index, once you set that up. | The post-new command is not run, and says so in `no-perl` in its state folder (`~/.sessionkit/mail/state/post-new/`, or `~/.sessionmail/post-new/` on an existing host where that folder is still real); postfix holds the mail and tries again later. | macOS ships it. | Software Update. |
 
 One more tool is used if it is there: `memory run` counts tokens with a
 `tokens` command when one is on the PATH, and estimates (bytes / 4) when

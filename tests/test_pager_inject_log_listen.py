@@ -58,9 +58,9 @@ _n = 0
 
 @pytest.fixture
 def rig(tmp_path, monkeypatch):
-    root = tmp_path / "mail"
-    root.mkdir()
-    monkeypatch.setenv("SESSION_MAIL_ROOT", str(root))
+    root = tmp_path / "mail" / "stores"
+    root.mkdir(parents=True)
+    monkeypatch.setenv("SESSIONMAIL_ROOT", str(root.parent))
     monkeypatch.setenv("SESSIONMAIL_HOME", str(tmp_path / "sessionmail"))
     monkeypatch.setenv("TM_AGENT_ADDRESS", "alpha")
     monkeypatch.delenv("CLAUDE_CODE_AGENT", raising=False)
@@ -239,8 +239,12 @@ def test_a_monitor_page_is_one_row_per_line_sized_on_it(rig):
     for line, row, mid in zip(out, pages, ("m1@example.invalid", "m2@example.invalid")):
         assert_inject(row, "monitor")
         assert_sized(row, line)
-        assert row["items"] == [{"id": mid, "kind": "mail", "view": "count", "given": 0,
-                                 "in_mail": None, "cut": True}]
+        # The line names its one mail by sender and subject, so that mail's
+        # item is a header, given the characters the naming cost.
+        naming = ', from beta: "SECRET-SUBJECT"'
+        assert naming in line, line
+        assert row["items"] == [{"id": mid, "kind": "mail", "view": "header",
+                                 "given": len(naming), "in_mail": None, "cut": True}]
         assert isinstance(row["ms"], int) and row["ms"] >= 0
     raw = (log_dir() / _injectlog.FILE).read_text()
     assert "SECRET-SUBJECT" not in raw and "SENDER-NAME" not in raw and "beta@" not in raw

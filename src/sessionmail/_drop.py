@@ -161,25 +161,11 @@ def selected(env: Mapping[str, str]) -> bool:
 
 def mail_root(env: Mapping[str, str]) -> Path:
     """The tree the map values are relative to (postfix's
-    virtual_mailbox_base): the parent of the agents root the sender and
-    readers use (`_maildir.env_root`: `$SESSIONMAIL_ROOT`, then
-    `$SESSION_MAIL_ROOT`, the one order the readers read too; as
-    `_seat.regen_maps` takes `root.parent`), else `$MAIL_ROOT`, else the
-    settings file's `root`, else ~/.mail - the generator's own default.
-
-    `$MAIL_ROOT` is the generator's variable and the drop's alone: the
-    readers never take it. With it set and neither root variable,
-    `_setup.roots` refuses the mismatch rather than deliver where nobody
-    reads (that refusal is kept; the readers were not widened)."""
-    agents = _maildir.env_root(env)
-    if agents is not None:
-        return agents.parent
-    if env.get("MAIL_ROOT"):
-        return Path(env["MAIL_ROOT"]).expanduser()
-    given = _settings.file_path("root", env)
-    if given is not None:
-        return Path(given).expanduser()
-    return Path(env.get("HOME") or os.path.expanduser("~")) / ".mail"
+    virtual_mailbox_base): `_maildir.mail_root`, THE one resolver, kept
+    under this name for the drop's callers. Nothing here reads a variable
+    of its own any more: `$MAIL_ROOT`, once the generator's and the drop's
+    alone, is retired (`_maildir.RETIRED_ROOT_VARS`)."""
+    return _maildir.mail_root(env)
 
 
 def short_host(env: Mapping[str, str]) -> str:

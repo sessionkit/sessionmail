@@ -224,6 +224,19 @@ def fenced(msg: Message) -> Heard:
     return Heard(device=_device(msg), speaker="", verified=False)
 
 
+def voice_header(msg: Message, env: Mapping[str, str] | None = None,
+                 signed: Signed | None = None, *, voice: Voice | None = None) -> Heard | None:
+    """The header fields MSG's line is headed by when it is voice: `heard`'s
+    for a TRUSTED spoken turn, `fenced`'s (no speaker) for UNVERIFIED voice,
+    else None (the mail line). THE one place that chooses between them, so
+    every renderer makes the same trust decision. VOICE is a recognition
+    already made, else one is made here with SIGNED as its verdict seam."""
+    rec = recognise(msg, env, signed) if voice is None else voice
+    if rec.state == TRUSTED:
+        return heard(msg, env, voice=rec)
+    return fenced(msg) if rec.state == UNVERIFIED else None
+
+
 def _device(msg: Message) -> str:
     device = read_header(msg, "Ears-Device").value or ""
     return " ".join(device.split())
@@ -289,7 +302,7 @@ def view(msg: Message, pointer: "str | Callable[[], str]",
     rec = recognise(msg, env, signed)
     voice = rec.state == TRUSTED
     unverified = rec.state == UNVERIFIED
-    spoken = heard(msg, env, voice=rec) if voice else fenced(msg) if unverified else None
+    spoken = voice_header(msg, env, voice=rec)
     # A heard line's device moves into its bracket.
     add = extras(msg, voice and spoken is None)
     fence = (UNVERIFIED_FENCE,) if unverified else ()

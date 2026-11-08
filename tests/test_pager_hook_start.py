@@ -75,7 +75,7 @@ def write_settings(text: str) -> Path:
 
 class Rig:
     def __init__(self, tmp_path: Path, monkeypatch):
-        self.root = Path(os.environ["SESSION_MAIL_ROOT"])
+        self.root = Path(os.environ["SESSIONMAIL_ROOT"], "stores")
         self.home = Path(os.environ["SESSIONMAIL_HOME"])
         self.runs = tmp_path / "gen-runs"
         self.rings = [NOT_COPIED]

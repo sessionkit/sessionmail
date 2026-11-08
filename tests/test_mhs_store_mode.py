@@ -95,7 +95,7 @@ def base_env(tmp: Path, fake: Fake, **extra: str) -> dict[str, str]:
     """Nothing inherited: a scratch HOME and XDG dir, the named fake, plus EXTRA."""
     (tmp / "home").mkdir(exist_ok=True)
     return {"HOME": str(tmp / "home"), "XDG_CONFIG_HOME": str(tmp / "xdg"),
-            "SESSION_MAIL_ROOT": str(tmp / "mail"), "PATH": "/usr/bin:/bin",
+            "SESSIONMAIL_ROOT": str(tmp / "mail"), "PATH": "/usr/bin:/bin",
             _mhs.ORACLE_VAR: fake.path, **extra}
 
 
@@ -359,12 +359,12 @@ def test_a_real_wake_with_no_profile_renders_boot_and_counts_and_could_not_look(
     """The spec scenario, on the bundled oracle against a sandbox box (never a
     real one, SM-530): stderr names the profile first; BOOT and COUNTS render;
     RECENT says COULD NOT LOOK."""
-    root = tmp_path / "mail"
+    root = tmp_path / "mail" / "stores"
     for sub in ("new", "cur", "tmp"):
         (root / "alpha" / sub).mkdir(parents=True)
     (tmp_path / "home").mkdir()
     env = {k: v for k, v in os.environ.items() if k not in (*OVERRIDES, _mhs.ORACLE_VAR)}
-    env.update(SESSION_MAIL_ROOT=str(root), HOME=str(tmp_path / "home"),
+    env.update(SESSIONMAIL_ROOT=str(root.parent), HOME=str(tmp_path / "home"),
                XDG_CACHE_HOME=str(tmp_path / "cache"), XDG_CONFIG_HOME=str(tmp_path / "xdg"),
                NOTMUCH_DATABASE=str(tmp_path / "planted-db"),
                **REFUSALS["missing-profile"])

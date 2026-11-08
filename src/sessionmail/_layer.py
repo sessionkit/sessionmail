@@ -93,8 +93,22 @@ def is_agent_name(name: str) -> bool:
 
 
 def seats_root(env: Mapping[str, str] | None = None) -> Path:
-    """`~/.session/seats`: sessiontools' root, from HOME."""
-    return _st().session_root(env) / "seats"
+    """The seats leaf, where sessiontools keeps it: its own `seats_root`
+    (from 0.3.2: `~/.session/seats` while that is a real folder, else
+    `~/.sessionkit/tools/state/seats`), so sessionmail never spells the
+    root. A sessiontools without that resolver (before 0.3.2) answers as it always did: `~/.session/seats`, from HOME."""
+    st = _st()
+    found = getattr(st, "seats_root", None)
+    if found is not None:
+        return found(env)
+    return st.session_root(env) / "seats"
+
+
+def sessions_root(env: Mapping[str, str] | None = None) -> Path:
+    """The sessions leaf, as sessiontools keeps it (`settings.sessions_root`:
+    `$SESSIONS_DIR`, else the old or new folder by its leaf rule). Every
+    session's dir, and so its `settings/` layer, is under it."""
+    return _st().sessions_root(env)
 
 
 def seat_dir(seat: str, env: Mapping[str, str] | None = None) -> Path:
@@ -287,5 +301,5 @@ def log(seat_root: Path, key: str, value: object | None, *, by: str,
 
 
 __all__ = ["LayerError", "TOOL", "FILE", "LIVE", "ENV", "SUBSCRIPTIONS", "ADDRESS", "LOG", "is_agent_name",
-           "seats_root", "seat_dir", "settings_dir", "session_settings_dir", "read", "boxes",
+           "seats_root", "sessions_root", "seat_dir", "settings_dir", "session_settings_dir", "read", "boxes",
            "address", "set_entry", "set_value", "log"]

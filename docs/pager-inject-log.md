@@ -2,8 +2,9 @@
 
 Every string sessionmail puts into an agent's context gets one JSONL row, sized, in the session dir. The text itself is kept only when capture is on.
 
-- **Where:** `~/.session/sessions/<sid>/log/mail/pager.jsonl`, one file per session. A central view is a
-  merge of these files ([merge them][sum]). No session id, no file.
+- **Where:** `<sessions>/<sid>/log/mail/pager.jsonl`, one file per session. `<sessions>` is sessiontools'
+  sessions folder, which `session path sessions` prints. A central view is a merge of these files
+  ([merge them][sum]). No session id, no file.
 - **What gets a row:** every injection, one row each. A row's `via` names the path:
   `monitor`, `listen`, `start`, `prompt`, `batch`, `stop` or `pretooluse-deny`.
 - **Its size:** `chars`, `lines` and `tokens_est` are measured on the exact string the agent saw, after every trim.
@@ -24,7 +25,7 @@ Every string sessionmail puts into an agent's context gets one JSONL row, sized,
 ## The files
 
 ```text
-~/.session/sessions/<sid>/log/mail/
+<sessions>/<sid>/log/mail/
   pager.jsonl      the rows (0600)
   pager.1.jsonl    the one older generation: pager.jsonl is renamed here at 16 MB
   seq              the row counter, and the lock every writer takes
@@ -35,7 +36,12 @@ Every string sessionmail puts into an agent's context gets one JSONL row, sized,
 ```
 
 `<sid>` is the Claude Code session id, from `CLAUDE_CODE_SESSION_ID` (or `CLAUDE_SESSION_ID`). The session dir is
-sessiontools' `session_dir`: `$HOME/.session/sessions/<sid>`.
+sessiontools' `session_dir`: `<sessions>/<sid>`. This page names no fixed folder for `<sessions>`, because
+sessiontools' rule picks it per host, and a release may move it. To see it on this host:
+
+```sh
+session path sessions
+```
 
 ## The rows
 
@@ -53,6 +59,7 @@ An **`inject` row** adds:
 | `tool_use_ids` | the batch's `tool_calls[].tool_use_id`, or the deny's `tool_use_id`; `[]` when there are none |
 | `chars` `lines` `tokens_est` `tok` | the size of the exact string emitted (`tokens_est` = max(1, chars // 4)) |
 | `items` | the mails behind the string, in order: `id` (Message-ID, or null), `kind` (`mail`/`heard`), `view` (`whole`/`text`/`header`/`count`), `given` (its chars in the string), `in_mail` (the body's chars, or null), `cut` |
+| `items` on a monitor page | the one mail the line names by sender and subject is `view: header`, its `given` the characters that naming cost in the line (a voice turn: its heard header); every other mail on the page stays `view: count`, `given: 0`. A hand page's items are all `count`. The row still holds the Message-ID and sizes, never the words |
 | `superseded` `held` `past_budget` | how many mails were replaced, held back for room, or refused past the 8,000-char ride budget; counted, never listed |
 | `capped` | the cap that bit, if any: `give_by`, `room`, `batch` or `text` |
 | `ms` | for a hook, from hook entry to the emit; for a page, from the oldest mail's arrival. Null on a monitor line that has no arrival (the deaf and off lines) |
@@ -116,7 +123,7 @@ jq -rs '(map(select(.seat)) | map({(.sid): .seat}) | add // {}) as $seat
   | map(select(.event == "inject") | .seat //= ($seat[.sid] // "(no seat)"))
   | group_by([.seat, .ts[0:10]])[]
   | [.[0].seat, .[0].ts[0:10], length, (map(.tokens_est) | add)] | @tsv' \
-  ~/.session/sessions/*/log/mail/pager*.jsonl
+  "$(session path sessions)"/*/log/mail/pager*.jsonl
 ```
 
 It prints one line per seat per day: seat, date, injections, estimated tokens. For example:

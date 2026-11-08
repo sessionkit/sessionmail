@@ -2,7 +2,7 @@
 tasks 3.3, design D6, specs/message "What reaches me, and who hears this
 box").
 
-Every test runs over a synthetic mail root (`SESSION_MAIL_ROOT`) and
+Every test runs over a synthetic mail root (`SESSIONMAIL_ROOT`) and
 conftest's hermetic `SESSIONMAIL_HOME`. Live sessions come from a stub, the
 `ps` table is a stub, and the harness (`sessiontools.sessions`) is a stub:
 nothing reads this host's `~/.mail`, its processes or its sessions."""
@@ -62,9 +62,9 @@ NO_MAP = "; map not measured: no postfix here"
 
 @pytest.fixture
 def root(tmp_path, monkeypatch):
-    r = tmp_path / "mail"
-    r.mkdir()
-    monkeypatch.setenv("SESSION_MAIL_ROOT", str(r))
+    r = tmp_path / "mail" / "stores"
+    r.mkdir(parents=True)
+    monkeypatch.setenv("SESSIONMAIL_ROOT", str(r.parent))
     monkeypatch.delenv("TM_AGENT_ADDRESS", raising=False)
     monkeypatch.delenv("CLAUDE_CODE_AGENT", raising=False)
     monkeypatch.setattr(_seat, "_postfix_maps", lambda p: None)     # no postfix here
@@ -530,4 +530,74 @@ def test_the_live_mail_root_is_never_read(root, home, monkeypatch):
     mkbox(fake_home / ".mail" / "agents" / "atomnote")
     monkeypatch.setenv("HOME", str(fake_home))
     assert sub_list("atomnote").exit_code == EX_REFUSED
-    assert os.environ["SESSION_MAIL_ROOT"] == str(root)
+    assert os.environ["SESSIONMAIL_ROOT"] == str(root.parent)
+
+
+# ── --for a short session id (design 5.3: the session dirs) ───────────────
+
+OTHER_TWIN = OTHER[:8] + "-9999-4999-8999-999999999999"
+
+
+def session_dirs(*sids: str) -> None:
+    """The session dirs sessiontools keeps: the short id's candidates."""
+    for sid in sids:
+        _mail(sid).mkdir(parents=True, exist_ok=True)
+
+
+def test_for_a_short_session_id_roots_the_tree_at_the_full_session(root, home, monkeypatch):
+    mkbox(root / "eve")
+    mkbox(root / OTHER)
+    session_dirs(OTHER, SID)
+    session_declare(OTHER, "eve")
+    as_caller(monkeypatch, "ivan", SID)
+    done = sub_list("--for", OTHER[:8])
+    assert done.exit_code == 0, done.output
+    assert f"message subscription list: '{OTHER[:8]}' is session {OTHER}" in done.stderr
+    lines = body(done.stdout)
+    assert [label(line) for line in lines] == [OTHER[:8], "eve"]
+    assert "NO BOX" not in footer(done.stdout), "the full box is found"
+
+
+def test_for_someone_else_never_says_this_session(root, home, monkeypatch):
+    """The wrong answer: `--for` another session's id once printed
+    `(this session)` above a tree that is not the caller's."""
+    mkbox(root / OTHER)
+    session_dirs(OTHER)
+    as_caller(monkeypatch, "ivan", SID)
+    for who in (OTHER, OTHER[:8]):
+        top = body(sub_list("--for", who).stdout)[0]
+        assert "(this session)" not in top and "(another session)" in top, top
+
+
+def test_for_ones_own_session_is_still_this_session(root, home, monkeypatch):
+    mkbox(root / SID)
+    session_dirs(SID)
+    as_caller(monkeypatch, None, SID)
+    for who in (SID, SID[:8]):
+        assert body(sub_list("--for", who).stdout)[0] == f"{SID[:8]} (this session)"
+
+
+def test_for_an_ambiguous_or_unknown_short_session_id_refuses(root, home, monkeypatch):
+    mkbox(root / OTHER)                       # a box alone is not a session dir
+    as_caller(monkeypatch, "ivan", SID)
+    done = sub_list("--for", OTHER[:8])
+    assert done.exit_code == EX_REFUSED, done.output
+    assert "no session on this host starts with it" in done.stderr
+    assert done.stdout == ""
+    session_dirs(OTHER, OTHER_TWIN)
+    done = sub_list("--for", OTHER[:8])
+    assert done.exit_code == EX_REFUSED, done.output
+    assert "ambiguous" in done.stderr and OTHER in done.stderr and OTHER_TWIN in done.stderr
+    assert done.stdout == ""
+
+
+def test_for_an_exact_short_named_session_dir_wins(root, home, monkeypatch):
+    """A session folder in the home named exactly as typed is that session,
+    not a prefix of another."""
+    mkbox(root / OTHER)
+    session_dirs(OTHER)
+    (home / "sessions" / OTHER[:8]).mkdir(parents=True)
+    as_caller(monkeypatch, "ivan", SID)
+    done = sub_list("--for", OTHER[:8])
+    assert done.exit_code == 0, done.output
+    assert "is session" not in done.stderr

@@ -22,6 +22,7 @@ from click.testing import CliRunner
 
 from sessionmail import _injectlog, _seat, _tokens, pager
 from sessionmail.pager import cli
+import _leaves
 
 ROOT = Path(__file__).resolve().parents[1]
 DOC = ROOT / "docs" / "pager-inject-log.md"
@@ -133,10 +134,10 @@ def test_no_session_no_line(seat):
 
 
 def test_pager_status_prints_the_today_line_on_stderr(seat, tmp_path, monkeypatch):
-    root = tmp_path / "mail"
+    root = tmp_path / "mail" / "stores"
     for d in ("new", "cur", "tmp"):
         (root / SESSION / d).mkdir(parents=True)
-    monkeypatch.setenv("SESSION_MAIL_ROOT", str(root))
+    monkeypatch.setenv("SESSIONMAIL_ROOT", str(root.parent))
     _injectlog.write(SESSION, via="batch", s="x" * 400, seat=seat)
     r = CliRunner().invoke(cli, ["status"], prog_name="pager")
     assert r.exit_code == pager.EX_NOTHING, r.output
@@ -155,7 +156,7 @@ def documented_jq() -> str:
     block = text.split("<!-- jq-sum:", 1)[1].split("```sh\n", 1)[1].split("```", 1)[0]
     m = re.search(r"jq -rs '(.*?)'", block, re.S)
     assert m, block
-    assert "~/.session/sessions/*/log/mail/pager*.jsonl" in block
+    assert '"$(session path sessions)"/*/log/mail/pager*.jsonl' in block
     return m.group(1)
 
 
@@ -176,8 +177,10 @@ def test_the_documented_jq_sums_tokens_per_seat_per_day(seat, monkeypatch):
     spec.loader.exec_module(guard)
     guard.log_deny({"session_id": SESSION, "tool_name": "Bash"}, "d" * 120, time.monotonic())  # 30
     guard.log_deny({"session_id": "lonely-session", "tool_name": "Bash"}, "e" * 8, time.monotonic())  # 2
-    files = sorted(str(p) for p in Path(os.environ["HOME"]).glob(
-        ".session/sessions/*/log/mail/pager*.jsonl"))
+    # The doc asks sessiontools for the folder (`session path sessions`); the
+    # rows are under the sessions leaf it names for this HOME (pinned, `_leaves`).
+    files = sorted(str(p) for p in _leaves.sessions_root().glob(
+        "*/log/mail/pager*.jsonl"))
     assert len(files) == 3
     out = subprocess.run(["jq", "-rs", documented_jq(), *files], capture_output=True,
                          text=True, check=True).stdout

@@ -103,8 +103,10 @@ def test_the_mcp_child_reads_the_locked_file_not_the_parents_seam(world, monkeyp
     """The caveat (9994ef61): the MCP tool's child is a new process, so a
     parent-side patch of `rules.locked_path` does not reach it. The child
     reads the file the wrapper names, and that file is OFF here, so the
-    send is refused exactly as today (kind subject, exit 2)."""
+    send is refused exactly as today (kind subject, exit 2). Since SM-978 no
+    file is ON, so the wrapper's file says `off` aloud; the parent's says on."""
     wrapper = _setup(world, monkeypatch, host_on=False)
+    (world.tmp / "locked" / "rules.locked").write_text("set subject-shorten off\n")
     monkeypatch.setattr("sessionmail.rules.locked_path",
                         lambda: world.tmp / "parent-only" / "rules.locked")
     (world.tmp / "parent-only").mkdir()

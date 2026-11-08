@@ -11,9 +11,9 @@ is touched.
 from __future__ import annotations
 
 import json
+import os
 import re
 import stat
-import os
 from pathlib import Path
 
 import pytest
@@ -22,6 +22,7 @@ from click.testing import CliRunner
 from sessionmail import _notmuch, _seat
 from sessionmail.message import cli
 from sessionmail.pager import cli as pager_cli
+import _leaves
 from fakes import FAKE_NOTMUCH_BY_ID, forest, message, write_fake
 
 EX_OK, EX_USAGE, EX_REFUSED = 0, 2, 2
@@ -75,9 +76,49 @@ def seat(tmp_path, monkeypatch):
 
 def _mail(sid: str) -> Path:
     """Where a session's mail state is since session-settings 3.3a: under
-    the session dir sessiontools keeps, `$HOME/.session/sessions/<sid>/mail/`
-    (spelt out, not asked of the code, so the test can see it move)."""
-    return Path(os.environ["HOME"]) / ".session" / "sessions" / sid / "mail"
+    the session dir sessiontools keeps, `<sessions leaf>/<sid>/mail/`. The
+    leaf is sessiontools' own answer for the sandbox HOME, pinned before the
+    test ran (`_leaves`), not asked of sessionmail, so the test can see the
+    code write anywhere else."""
+    return _leaves.session_mail(sid)
+
+
+def test_the_marks_are_under_the_session_dir_sessiontools_names(seat):
+    """The pin `_mail` stands on: the file a mark is written to is the one
+    under sessiontools' session dir for this HOME, whichever tree that is."""
+    from sessiontools import settings
+    assert run(ID, "done").exit_code == EX_OK
+    assert seat.marks_file() == settings.session_dir(SESSION) / "mail" / "marks"
+    assert seat.marks_file().is_file()
+
+
+def test_an_old_only_home_keeps_its_marks_in_the_old_session_dir(seat):
+    """A HOME that already holds `~/.session/sessions/` (a live host, an
+    earlier session's folder in it) keeps every new session's dir there:
+    the marks land in the OLD tree, by the path spelled out, at any
+    sessiontools, and nothing is made in the new one."""
+    home = Path(os.environ["HOME"])
+    old = home / ".session" / "sessions"
+    (old / "earlier-session").mkdir(parents=True)
+    assert run(ID, "done").exit_code == EX_OK
+    marks = old / SESSION / "mail" / "marks"
+    assert marks.read_text().split()[1:4] == [ID, "done", "alpha"]
+    assert not (home / ".sessionkit" / "tools" / "state" / "sessions").exists()
+
+
+def test_a_leaf_that_moves_after_the_pin_fails_the_test(tmp_path):
+    """`_leaves` is not a loosening: once a HOME's sessions leaf is pinned,
+    a write that makes the OTHER tree real (so the rule would now pick it)
+    is caught, not followed."""
+    home = tmp_path / "h"
+    home.mkdir()
+    pinned = _leaves.sessions_root(home)
+    old = home / ".session" / "sessions"
+    new = home / ".sessionkit" / "tools" / "state" / "sessions"
+    assert pinned in (old, new)
+    (new if pinned == old else old).mkdir(parents=True)
+    with pytest.raises(AssertionError, match="the sessions leaf moved"):
+        _leaves.sessions_root(home)
 
 
 def run(*argv: str):
@@ -253,13 +294,13 @@ def test_done_here_quiets_the_ride_along_there(seat, tmp_path, monkeypatch):
     quiets it, and nothing in between touched the maildir. Plain status
     reads this session's box since message-subscriptions 4.2, so the
     message is in the box (a sandbox mail root, never `~/.mail`)."""
-    mail = tmp_path / "mail"
+    mail = tmp_path / "mail" / "stores"
     for d in ("tmp", "new", "cur"):
         (mail / SESSION / d).mkdir(parents=True)
     (mail / SESSION / "new" / "1923171201.M1P1.test").write_text(
         f"From: beta@example.invalid\nTo: alpha@example.invalid\nSubject: hello\n"
         f"Message-ID: <{ID}>\n\nbody\n")
-    monkeypatch.setenv("SESSION_MAIL_ROOT", str(mail))
+    monkeypatch.setenv("SESSIONMAIL_ROOT", str(mail.parent))
     box_before = sorted(p.name for p in (mail / SESSION).rglob("*"))
 
     before = CliRunner().invoke(pager_cli, ["status"], prog_name="pager")
@@ -418,8 +459,8 @@ def boxed(seat, tmp_path, monkeypatch):
     tests measure is which id the INDEX resolved to - not whether it exists."""
     from test_message_list import deliver
 
-    root = tmp_path / "mail"
-    monkeypatch.setenv("SESSION_MAIL_ROOT", str(root))
+    root = tmp_path / "mail" / "stores"
+    monkeypatch.setenv("SESSIONMAIL_ROOT", str(root.parent))
     deliver(root, "alpha", "1923171201", subject="mine", mid=ALPHA_1)
     deliver(root, "gamma", "1923171201", subject="first", mid=GAMMA_1)
     deliver(root, "gamma", "1923171202", subject="second", mid=GAMMA_2)
@@ -494,7 +535,7 @@ def test_a_bare_index_is_looked_up_in_the_box_a_bare_list_numbered(boxed, tmp_pa
     from test_message_list import deliver
     from sessionmail.message import cli as message_cli
 
-    deliver(tmp_path / "mail", SESSION, "1923171201", subject="this session's", mid=SESSION_1)
+    deliver(tmp_path / "mail" / "stores", SESSION, "1923171201", subject="this session's", mid=SESSION_1)
     listed = CliRunner().invoke(message_cli, ["list"], prog_name="message")
     assert listed.exit_code == 0, listed.output + listed.stderr
     row = next(line for line in listed.output.splitlines() if "this session's" in line)
@@ -606,8 +647,8 @@ def twice_filed(seat, tmp_path, monkeypatch):
     3), then B: `list` numbers each file, so one id is two rows."""
     from test_message_list import deliver
 
-    root = tmp_path / "mail"
-    monkeypatch.setenv("SESSION_MAIL_ROOT", str(root))
+    root = tmp_path / "mail" / "stores"
+    monkeypatch.setenv("SESSIONMAIL_ROOT", str(root.parent))
     monkeypatch.setenv("CLAUDE_CODE_SESSION_ID", "")     # the seat box answers a bare index
     deliver(root, "alpha", "1923171201", subject="a", mid=A)
     deliver(root, "alpha", "1923171202", subject="dup, first file", mid=DUP)

@@ -105,7 +105,7 @@ def env(tmp_path, bin_dir, mailroot, monkeypatch):
         "SESSIONMAIL_HOME": str(tmp_path / "sessionmail"),
         "PATH": str(bin_dir),
         "TMPDIR": str(tmp_path),
-        "SESSION_MAIL_ROOT": str(mailroot / "agents"), "SESSIONMAIL_ROOT": str(mailroot / "agents"),
+        "SESSIONMAIL_ROOT": str(mailroot),
         "SESSION_MAIL_HOST": HOST, "SESSIONMAIL_HOST": HOST,
         "SESSIONMAIL_SENDMAIL": "drop",
         "SESSIONMAIL_VMAILBOX_GEN": str(bin_dir / "vmailbox-gen"),

@@ -176,7 +176,7 @@ def test_the_macos_names_seam_is_carried_by_identity_and_any_other_function_ther
                                   ["box", "list"]])
 def test_what_the_child_is_handed_adds_nothing_to_a_reply(monkeypatch, argv):
     """No runpy warning, no line of the prelude's: the reply is the bare child's, byte for byte."""
-    monkeypatch.setenv("SESSION_MAIL_ROOT", str(os.environ["SESSION_MAIL_ROOT"]))
+    monkeypatch.setenv("SESSIONMAIL_ROOT", str(os.environ["SESSIONMAIL_ROOT"]))
     monkeypatch.setattr(message, "_live_sessions", lambda: set())
     command = [*_mcp.COMMANDS["message"], *argv]
     seamed = anyio.run(_mcp.run_child, command)

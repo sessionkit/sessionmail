@@ -41,14 +41,31 @@ verb and the plugin's hooks; `memory init`; and default delivery, by postfix
 - **One search engine.** The ratified pager spec says search SHALL be notmuch,
   with no second index.
 - **Hearing does not need it.** `pager listen` watches the box's `new/` itself.
-- **sessionmail does not keep the host index fresh.** `message setup` runs
+- **The readers keep the host index fresh.** `message setup` runs
   `notmuch new --no-hooks` once, only on sessionmail's own profile while its
-  index is empty, never under `~/.notmuch-config`. After that the host runs
-  `notmuch new` on a schedule, such as a launchd agent. The other exception is
-  `store-index`, which indexes a store's own index.
+  index is empty, never under `~/.notmuch-config`, and schedules nothing.
+  After that:
+  - `memory` (`wake`, `ls`, `tree`, `cat`, `run`) runs
+    `notmuch --config=<profile> new --no-hooks --quiet` before it reads;
+  - `message mark` runs it once when an id is in neither the index nor the
+    seat's own boxes, then asks again.
+- **The refresh is bounded.** `notmuch.refresh` (`SESSIONMAIL_NOTMUCH_REFRESH`)
+  is its limit in seconds: 2 by default, and 0 turns it off. At the limit
+  notmuch is stopped with SIGINT, which keeps what it indexed, and the reader
+  reads the index as it was, with one line on stderr. A refresh behind
+  another `notmuch new` (a host's own job) stops at the limit too, so a
+  reader is never held up longer.
+- **Host mode only.** In store mode nothing refreshes; `store-index` keeps
+  a store's own index.
+- **The refresh runs no hooks.** So on a host where nothing else runs a
+  hooked `notmuch new`, the profile's saved queries and store-index stats
+  do not see the `agent`, `memory` or `superseded` tags. Run a hooked
+  `notmuch new` (a job, or by hand) if you use them. A host that runs its
+  own job and does not want the cost at read time sets `notmuch.refresh` to 0.
 - **An insert host indexes at delivery.** postfix pipes each message into
-  `notmuch insert`, so mail is searchable as it lands. The scheduled `notmuch new`
-  is still needed, for the drop's mail and flag renames. See
+  `notmuch insert`, so mail is searchable as it lands. The readers' refresh
+  picks up the drop's mail. Flag renames still need a hooked or scheduled
+  `notmuch new` if the host wants the tags. See
   [index at delivery][index-at-delivery].
 - **Which index:** the host's own profile by default. `SESSIONMAIL_INDEX=store`
   reads one store's index instead.

@@ -5,7 +5,7 @@ Read-only. Package data run by path, like `vmailbox-gen` and `store-index`;
 not a console script (one package, three commands). Stdlib only, and it
 imports nothing from sessionmail.
 
-    delivery-check [--box DIR] [--files N]
+    delivery-check [--box DIR] [--files N] [--profile PATH]
 
 Prints one verdict line, then its evidence, then its gaps:
 
@@ -30,10 +30,18 @@ notmuch's `new.tags` (must hold `unread`, or insert writes to cur/ and the
 pager never hears the mail), the `post-insert` hook in `database.hook_dir`,
 and `database.mail_root` against `virtual_mailbox_base`. notmuch is read in
 the environment pipe(8) gives nm-deliver: HOME from the passwd entry, PATH
-/usr/bin:/bin, TZ and LANG, and no NOTMUCH_CONFIG, NOTMUCH_PROFILE or XDG_*,
-so it finds the config the wrapper's insert will find, not the caller's. The
-pipe runs as the service's `user=`; run the check as that user, or the
-notmuch reads are some other user's (a gap says so).
+/usr/bin:/bin, TZ and LANG, and no NOTMUCH_PROFILE or XDG_*, so it finds the
+config the wrapper's insert will find, not the caller's. That config is the
+one the wrapper the service runs (its `argv=` path) bakes in: the line
+`KIT_NOTMUCH_CONFIG='<path>'` that `message setup` writes into the copy it
+installs, set here as NOTMUCH_CONFIG. A wrapper with no such path (the
+package copy, or one installed by hand) leaves notmuch its default lookup
+under HOME, and that is a gap: `message` reads the kit profile. The check
+prints the file it read either way. --profile PATH names the profile
+`message` reads (`message setup` can pass it); a delivery config that is
+not that file is a gap. The pipe runs as the service's `user=`; run the
+check as that user, or the notmuch reads are some other user's (a gap says
+so).
 
 --box DIR runs the file-name test over the newest N files (default 50) in
 DIR's new/ and cur/. DIR is a box's maildir, absolute or relative to
@@ -75,6 +83,9 @@ TIMEOUT = 10
 #: LANG by default); nm-deliver adds HOME from passwd. Nothing else reaches it.
 PIPE_PATH = "/usr/bin:/bin"
 PIPE_PASSED = ("TZ", "LANG")
+#: The ONE line `message setup` bakes into the wrapper it installs.
+#: Empty in the package copy.
+BAKED = re.compile(r"^KIT_NOTMUCH_CONFIG='([^']*)'$", re.MULTILINE)
 
 
 class CannotLook(Exception):
@@ -100,11 +111,35 @@ def me() -> tuple[str, str]:
     return pw.pw_name, pw.pw_dir
 
 
-def pipe_env() -> dict[str, str]:
-    """The environment nm-deliver runs notmuch in, under pipe(8)."""
+def pipe_env(config: str | None = None) -> dict[str, str]:
+    """The environment nm-deliver runs notmuch in, under pipe(8): with
+    NOTMUCH_CONFIG only when the wrapper bakes one in (CONFIG)."""
     env = {"PATH": PIPE_PATH, "HOME": me()[1]}
     env.update({k: os.environ[k] for k in PIPE_PASSED if k in os.environ})
+    if config:
+        env["NOTMUCH_CONFIG"] = config
     return env
+
+
+def default_config(home: str) -> str:
+    """The file notmuch opens with no NOTMUCH_CONFIG, NOTMUCH_PROFILE or
+    XDG_CONFIG_HOME: `$HOME/.config/notmuch/default/config`, else
+    `$HOME/.notmuch-config` (notmuch 0.32 and later). The second is named
+    when neither is there."""
+    xdg = os.path.join(home, ".config", "notmuch", "default", "config")
+    return xdg if os.path.isfile(xdg) else os.path.join(home, ".notmuch-config")
+
+
+def baked_config(prog: str) -> tuple[str | None, str]:
+    """(the NOTMUCH_CONFIG the wrapper at PROG exports, or None; why None)."""
+    try:
+        text = Path(prog).read_text(errors="replace")
+    except OSError as exc:
+        return None, f"cannot read {prog} ({exc.strerror or exc})"
+    m = BAKED.search(text)
+    if not m or not m.group(1):
+        return None, f"{prog} bakes no notmuch config"
+    return m.group(1), ""
 
 
 def run(argv: list[str], env: dict[str, str] | None = None) -> tuple[int, str, str]:
@@ -128,6 +163,7 @@ def is_table(entry: str) -> bool:
 
 class Host:
     def __init__(self) -> None:
+        self.config: str | None = None       # the NOTMUCH_CONFIG delivery exports
         self.postconf = binary("NM_DELIVER_POSTCONF")
         self.postmap = binary("NM_DELIVER_POSTMAP")
         self.notmuch = binary("NM_DELIVER_NOTMUCH")
@@ -160,7 +196,7 @@ class Host:
     def notmuch_get(self, key: str) -> list[str] | None:
         if not self.notmuch:
             return None
-        rc, out, _ = run([self.notmuch, "config", "get", key], env=pipe_env())
+        rc, out, _ = run([self.notmuch, "config", "get", key], env=pipe_env(self.config))
         return out.splitlines() if rc == 0 else None
 
 
@@ -197,6 +233,11 @@ def classify_service(name: str, line: str) -> tuple[str, list[str]]:
         gaps.append(f"{name}: flags={flags or '(none)'} lacks {''.join(missing)}; "
                     "virtual(8) writes Delivered-To, X-Original-To and Return-Path (DORhu)")
     return kind, gaps
+
+
+def service_prog(line: str) -> str:
+    """The `argv=` program of a pipe service line, or "" when it names none."""
+    return next((t[len("argv="):] for t in line.split()[8:] if t.startswith("argv=")), "")
 
 
 def service_user(line: str) -> str:
@@ -240,7 +281,7 @@ def file_test(box: Path, count: int) -> tuple[str, list[str]]:
     return line, [last] if last in ("virtual", "insert") else []
 
 
-def check(box: str | None, count: int) -> tuple[list[str], int]:
+def check(box: str | None, count: int, profile: str | None = None) -> tuple[list[str], int]:
     host = Host()
     out: list[str] = []
     gaps: list[str] = []
@@ -306,8 +347,30 @@ def check(box: str | None, count: int) -> tuple[list[str], int]:
     insert = "insert" in kinds.values()
     if insert:
         name, home = me()
+        progs = [service_prog(line) for kind, _, line in looked.values() if kind == "insert"]
+        wrappers = sorted({p for p in progs if os.path.basename(p) == "nm-deliver"})
+        found = {w: baked_config(w) for w in wrappers}
+        configs = sorted({c for c, _ in found.values() if c})
+        if len(configs) > 1:
+            gaps.append(f"the insert services' wrappers bake different notmuch configs "
+                        f"({', '.join(configs)}): notmuch was read with the first")
+        host.config = configs[0] if configs else None
+        if host.config:
+            where = next(w for w, (c, _) in found.items() if c == host.config)
+            read, via = host.config, f"from {where}"
+        else:
+            read = default_config(home)
+            via = "notmuch's default: no NOTMUCH_CONFIG reaches insert"
+            for _config, why in found.values():
+                gaps.append(f"{why}: insert reads notmuch's default config ({read}), not the "
+                            "kit profile `message` reads. `message setup` installs the "
+                            "wrapper with it baked in")
         out.append(f"  notmuch read as the pipe reads it: user {name}, HOME={home or '(none)'}, "
-                   "no NOTMUCH_CONFIG")
+                   + (f"NOTMUCH_CONFIG={host.config}" if host.config else "no NOTMUCH_CONFIG"))
+        out.append(f"  notmuch read with config {read} ({via})")
+        if profile and os.path.realpath(profile) != os.path.realpath(read):
+            gaps.append(f"delivery's notmuch config is {read}, but `message` reads {profile} "
+                        "(--profile): two configs agree only while they name one database")
         users = sorted({service_user(line) for kind, _, line in looked.values()
                         if kind == "insert"} - {""})
         others = [u for u in users if u != name]
@@ -375,11 +438,13 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--box", help="a box's maildir for the file-name test "
                     "(absolute, or relative to virtual_mailbox_base)")
     ap.add_argument("--files", type=int, default=50, help="how many newest files (default 50)")
+    ap.add_argument("--profile", help="the notmuch config `message` reads; a delivery "
+                    "config that is not this file is a gap")
     args = ap.parse_args(argv)
     if args.files < 1:
         ap.error("--files must be at least 1")
     try:
-        lines, rc = check(args.box, args.files)
+        lines, rc = check(args.box, args.files, args.profile)
     except CannotLook as exc:
         print(f"delivery-check: cannot look: {exc}", file=sys.stderr)
         return 2

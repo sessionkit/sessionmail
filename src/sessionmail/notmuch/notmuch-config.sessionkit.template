@@ -45,10 +45,12 @@ header.Name=Name
 header.Parent=Parent
 
 [query]
-# This profile's root IS the mail root, so `path:agents/**` matches here.
+# This profile's root IS the mail root, so `path:stores/**` matches here
+# (a host born after the move; a tree born before keeps `agents/`).
 memory=tag:memory and not tag:superseded
-paper=path:agents/** and tag:unread
+paper=path:stores/** and tag:unread
 atoms=Type:requirement or Type:decision or Type:idea or Type:finding or Type:question or Type:note
 
 # No [sessionmail] section: the post-new hook's own defaults,
-# path:agents/** and path:agents/memory/**, are right for the mail root.
+# path:<boxes>/** and path:<boxes>/memory/** for the folder the tree has,
+# are right for the mail root.

@@ -60,6 +60,15 @@ SIG_HEADER = "X-Session-Signature"
 #: The signed fields, in the verifier's order (session-mail-verify `HDRS`).
 SIGNED = ("from", "to", "subject", "date", "message-id")
 SIG_NS_DEFAULT = "session-mail@example.com"
+
+#: The by-hand first step, while `init` has none. Every
+#: refusal a stranger meets first names it by this path, so the doc and the
+#: messages move together: `tests/test_first_root_wording.py` pins both.
+FIRST_ROOT_DOC = "docs/memory-first-root.md"
+#: The sentence those refusals end with. `mhs-thread` is a script that keeps
+#: its own copy of the wording; the test pins that the two agree.
+NO_FIRST_STEP = (f"memory has no automated first step yet: the by-hand recipe is "
+                 f"{FIRST_ROOT_DOC} in the sessionmail plugin")
 _BEGIN, _END = "-----BEGIN SSH SIGNATURE-----", "-----END SSH SIGNATURE-----"
 _BARE_BOX = re.compile(r"[a-z0-9][a-z0-9._-]*", re.IGNORECASE)
 
@@ -350,8 +359,9 @@ def resolve(box: str, env: Mapping[str, str] | None = None) -> tuple[Path, str]:
     try:
         path, how = _maildir.resolve_box(box, dict(env) if env is not None else None)
     except _maildir.NoSuchBox as exc:
-        raise InitError(f"no such BOX {box!r}: {exc}. init births no box; that is the "
-                        f"step before it", EX_NOT_FOUND, kind="box") from None
+        raise InitError(f"no such BOX {box!r}: {exc}. init births no box: make it with "
+                        f"`message setup --box {box}`. {NO_FIRST_STEP}",
+                        EX_NOT_FOUND, kind="box") from None
     if not how.startswith("via map"):
         from . import _seat  # as `_maildir` does: _seat reads _maildir
         mapped = _seat.box_via_map(box)
@@ -404,7 +414,9 @@ def read_root(box: str, *,
         raise InitError(
             f"the box key for {box!r} is absent: no allowed_signers names the principal "
             f"{box!r}, so no [ROOT] can be judged canon and none may be minted. The key's "
-            f"home is the caller's to provide. Nothing minted", EX_SIGNATURE, kind="key")
+            f"home is the caller's to provide, and nothing provides it yet, so init "
+            f"refuses on every box today. Nothing minted. {NO_FIRST_STEP}",
+            EX_SIGNATURE, kind="key")
     if key.principal != box.lower() or not Path(key.allowed_signers).is_file():
         raise InitError(
             f"the box key for {box!r} is unusable: principal {key.principal!r}, "

@@ -53,17 +53,21 @@ PERL=/usr/bin/perl
 POST_NEW_TIMEOUT=300
 
 # The two path queries are config keys, read like post_new_command below
-# (openspec/changes/store-index, notmuch-hook). Unset or
-# empty, each is today's query and the batch is byte-identical to before. A
-# store index's paths are relative to the STORE root, where `agents/**` can
-# never match, so a store profile sets `sessionmail.agent_query = path:**`.
+# (openspec/changes/store-index, notmuch-hook). Unset or empty, each is the
+# host index's query: `path:<boxes>/**`, where <boxes> is the folder under
+# database.path that holds the boxes (`stores`, or `agents` while only that
+# one is there: `_maildir.boxes_name`, inline). A store index's paths are
+# relative to the STORE root, where neither can match, so a store profile
+# sets `sessionmail.agent_query = path:**`.
 # A value is spliced before `and not tag:X`: one term, or parenthesized.
 # Never `*`: `* and not tag:agent` is a Xapian parse error that drops the
 # whole batch, +memory included (E16).
 agent_query=$("$NOTMUCH" config get sessionmail.agent_query 2>/dev/null)
 memory_query=$("$NOTMUCH" config get sessionmail.memory_query 2>/dev/null)
+db_path=$("$NOTMUCH" config get database.path 2>/dev/null)
+if [ -n "$db_path" ] && [ ! -d "$db_path/stores" ] && [ -d "$db_path/agents" ]; then boxes=agents; else boxes=stores; fi
 printf '+agent -- %s and not tag:agent\n+memory -- %s and not tag:memory\n' \
-  "${agent_query:-path:agents/**}" "${memory_query:-path:agents/memory/**}" \
+  "${agent_query:-path:$boxes/**}" "${memory_query:-path:$boxes/memory/**}" \
   | "$NOTMUCH" tag --batch
 
 # ---------------------------------------------------------------------------
@@ -129,11 +133,29 @@ printf '+agent -- %s and not tag:agent\n+memory -- %s and not tag:memory\n' \
 #     `notmuch new` refreshes the path - the old loop had the same gap.
 #     Idempotent; rebuild-from-nothing still holds - after an index wipe
 #     all carriers re-apply once, in one batch.
+#
+# A SUPERSEDE COUNTS ONLY FROM THE TARGET'S OWN SENDER.
+# Before, any mail carrying either header tagged its target superseded,
+# whoever sent it, so an unrelated sender could hide anyone's atom from every
+# reader that trusts the tag. Now the carrier's From must equal the From of
+# its target (the addr-spec, case-blind; a display name is ignored), in every
+# file the index holds for the target:
+#   - same sender:  +superseded on the target, as before;
+#   - different sender, or a carrier with no From: the target is left alone
+#     and the carrier is tagged supersedes-refused, so a refusal is queryable
+#     (tag:supersedes-refused) and never re-read;
+#   - target not in the index yet, or one of its files unreadable (a moved
+#     maildir file): the carrier stays pending and is judged on a later run.
+# THIS STOPS ACCIDENTS, NOT A FORGER: anyone who can write a file into a
+# maildir can copy the target's From, and nothing checks it. Only a verified
+# signature closes that door (a signed-only rule, once seats sign by default).
+# The verdicts are a projection of the mail like the tag: after an index wipe
+# every carrier is judged again, the same way.
 carriers=$("$NOTMUCH" search --query=sexp --output=files \
-             '(and (or (Supersedes *) (XSupersedes *)) (not (tag supersedes-applied)))' 2>/dev/null)
+             '(and (or (Supersedes *) (XSupersedes *)) (not (tag supersedes-applied)) (not (tag supersedes-refused)))' 2>/dev/null)
 if [ $? -ne 0 ]; then
   echo "post-new: indexed Supersedes query failed; falling back to full-corpus grep" >&2
-  carriers=$("$NOTMUCH" search --output=files -- 'not tag:supersedes-applied' 2>/dev/null \
+  carriers=$("$NOTMUCH" search --output=files -- 'not tag:supersedes-applied and not tag:supersedes-refused' 2>/dev/null \
     | tr '\n' '\0' \
     | xargs -0 $GREP -l -i -E -m1 '^(x-)?supersedes:' 2>/dev/null)
 fi
@@ -153,6 +175,29 @@ id_query() {
   done
   idq="id:\"$idq$_rest\""
 }
+# The From addr-spec of a message file, lowercased; empty when it has no
+# From or names more than one address. Unfolds the header, drops quoted
+# strings and (comments), then takes the one <angle-addr>, else the bare
+# addr-spec. "Alice <A@X>" and "a@x (Alice)" both give a@x.
+from_addr() {
+  awk '
+    NF == 0 { exit }
+    /^[ \t]/ { if (on) v = v " " $0; next }
+    { if (on) exit }
+    /^[Ff][Rr][Oo][Mm]:/ { on = 1; v = $0; sub(/^[^:]*:/, "", v) }
+    END {
+      gsub(/\\./, "", v); gsub(/"[^"]*"/, "", v); gsub(/\([^()]*\)/, "", v)
+      n = 0; a = ""; r = v
+      while (match(r, /<[^<>]*>/)) {
+        n++; a = substr(r, RSTART + 1, RLENGTH - 2); r = substr(r, RSTART + RLENGTH)
+      }
+      if (n == 0) a = v
+      else if (n > 1) a = ""
+      gsub(/^[ \t\r]+|[ \t\r]+$/, "", a)
+      if (a ~ /[ \t\r,;<>]/) a = ""
+      print tolower(a)
+    }' "$1" 2>/dev/null
+}
 printf '%s\n' "$carriers" \
   | while read -r f; do
       [ -n "$f" ] || continue
@@ -162,6 +207,31 @@ printf '%s\n' "$carriers" \
             | tr -d '<> \r\t')
       [ -n "$sup" ] || continue
       id_query "$sup"; supq=$idq
+      # The sender check. A carrier with no From can never match.
+      cfrom=$(from_addr "$f")
+      if [ -z "$cfrom" ]; then
+        [ -n "$cid" ] && { id_query "$cid"; printf '+supersedes-refused -- %s\n' "$idq"; }
+        continue
+      fi
+      # Every file of the target, so a copy planted under the target's id
+      # by another sender cannot vouch for it. A failed search, no file yet,
+      # or a file gone from its indexed path: pending, judged next run.
+      tfiles=$("$NOTMUCH" search --output=files -- "$supq" 2>/dev/null) || continue
+      [ -n "$tfiles" ] || continue
+      verdict=same
+      while read -r tf; do
+        [ -n "$tf" ] || continue
+        [ -r "$tf" ] || { verdict=pending; break; }
+        [ "$(from_addr "$tf")" = "$cfrom" ] || verdict=refused
+      done <<EOF
+$tfiles
+EOF
+      case $verdict in
+        pending) continue ;;
+        refused)
+          [ -n "$cid" ] && { id_query "$cid"; printf '+supersedes-refused -- %s\n' "$idq"; }
+          continue ;;
+      esac
       printf '+superseded -- %s\n' "$supq"
       # A carrier is DONE only once its target is in the index. If the
       # target arrives later (another box, a sync, a late delivery), the
@@ -203,10 +273,23 @@ printf '%s\n' "$carriers" \
 #     same whoever triggered the run. It is killed at POST_NEW_TIMEOUT
 #     seconds (TERM to its group, KILL 5 s later); its exit status is logged
 #     and otherwise ignored.
-# State, created only when the key is set: $HOME/.sessionmail/post-new/
-# (`lock`, `again`, `log`, rolled to `log.1` past 1 MiB). HOME and not
-# TMPDIR or SESSIONMAIL_HOME: launchd, postfix and agents must all take the
-# same lock, and no caller's environment may move it.
+# State, used only when the key is set: the `post-new` folder (`lock`,
+# `again`, `log`, rolled to `log.1` past 1 MiB), a leaf of sessionmail's
+# state found by post_new_state below, by `_settings.state_path`'s rules
+# 2-4 (its rule 1, $SESSIONMAIL_HOME, never applies here; see below):
+#   1. the OLD $HOME/.sessionmail/post-new while it is a real folder that
+#      is not the new one (`-ef`: a symlink to it is the new one);
+#   2. else the NEW $HOME/.sessionkit/mail/state/post-new: when it is a
+#      folder, and as the fresh default (`fresh-new`), created
+#      with its parents. A host with a real old folder keeps it.
+# Only the new folder is ever created. Something that is not a folder at
+# the new path (with no old folder) is the fresh default too, as the Python
+# chooses it: mkdir fails there, and the seam is silent. Old and new both
+# real is STRANDED: old is used, nothing is merged. HOME and not TMPDIR or SESSIONMAIL_HOME: launchd,
+# postfix and agents run this same script, so all of them choose the same
+# folder and take the same lock, and no caller's environment may move it.
+# The old path is a fallback, dropped one release after every peer reads
+# the new one on every host.
 #
 # Every failure here is silent toward notmuch: `true` and not `:`, because a
 # failed redirection on a POSIX special builtin exits a POSIX shell (dash),
@@ -214,7 +297,13 @@ printf '%s\n' "$carriers" \
 [ -z "${SESSIONMAIL_IN_POST_NEW_COMMAND:-}" ] || exit 0
 cmd=$("$NOTMUCH" config get sessionmail.post_new_command 2>/dev/null)
 [ -n "$cmd" ] && [ -n "${HOME:-}" ] || exit 0
-state=$HOME/.sessionmail/post-new
+post_new_state() {
+  _old=$HOME/.sessionmail/post-new _new=$HOME/.sessionkit/mail/state/post-new
+  if [ -d "$_old" ] && ! [ "$_old" -ef "$_new" ]; then state=$_old
+  else state=$_new     # a folder there, or the fresh default
+  fi
+}
+post_new_state
 { /bin/mkdir -p "$state" && true > "$state/again"; } 2>/dev/null || exit 0
 [ -x "$PERL" ] || { echo "not run: $PERL is missing" > "$state/no-perl"; exit 0; } 2>/dev/null
 $PERL - "$state" "$NOTMUCH" "$POST_NEW_TIMEOUT" >/dev/null 2>&1 <<'RUNNER'

@@ -16,7 +16,10 @@ message setup --pull                 # also install the mail puller's LaunchAgen
   applied: the sudo steps first, each with its exact command (or `none`),
   then every step with its state, `DONE`, `TODO`, `BLOCKED` or `MANUAL`.
   A sudo step runs only at a terminal. Without one, it is printed for you
-  to run. This version has no sudo step.
+  to run. A sudo step that is not `TODO` prints why instead of a command,
+  so there is never a line to copy that setup itself would not run. The
+  one sudo step is the delivery wrapper's install, below, when its folder
+  is not yours to write.
 - **It is safe to re-run.** Every check only reads. A second run reports
   every step it finished as `DONE` and writes nothing.
 - **Exit:** 0 every step is DONE · 1 a step failed (what ran before it
@@ -30,13 +33,13 @@ message setup --pull                 # also install the mail puller's LaunchAgen
 
 ## What it does
 
-- **The agents root**, `~/.mail/agents` (the `root` key, or
-  `$SESSIONMAIL_ROOT`, else the older `$SESSION_MAIL_ROOT`), made 0700.
-  If the readers' root and the [file drop][file-drop]'s root differ, it
-  refuses (exit 2): the drop would deliver into a tree nothing reads.
-  Both read the two root variables in the same order, so that happens
-  only when `MAIL_ROOT`, which the drop reads and the readers do not, is
-  set without either of them.
+- **The boxes root**, `message path --boxes`: `stores/` under the mail
+  root (`$SESSIONMAIL_ROOT` when set, else the `root` key, else
+  `~/.sessionkit/mail`), or `agents/` on a tree born before the move, made
+  0700. The readers, the sender and the [file drop][file-drop] share one
+  resolver, so there is no second root to refuse. A retired root variable
+  that is still set (`SESSION_MAIL_ROOT`, `MAIL_ROOT`) is named on this
+  step as ignored; it decides nothing.
 - **The first boxes.** The file drop never makes a box, so mail to a box
   nobody made is refused. Setup makes:
   - the operator's box: `operator.mailbox` (in the session tool's
@@ -58,10 +61,14 @@ message setup --pull                 # also install the mail puller's LaunchAgen
   table of the host's own. That setup is yours: [postfix
   configuration][postfix-configuration].
 - **The notmuch profile** (`notmuch-profile`): the one notmuch config
-  sessionmail reads, `$XDG_CONFIG_HOME/notmuch/sessionkit/config` (the
-  `notmuch.profile` key names another). When there is none, setup writes it
-  from the package's template, its database the mail root. It never writes
-  over a file. If the mail root already holds a notmuch database
+  sessionmail reads (the `notmuch.profile` key names another). When there
+  is none, setup writes it at
+  `~/.sessionkit/mail/settings/notmuch/sessionkit/config`, from the
+  package's template, its database the mail root. An existing
+  `$XDG_CONFIG_HOME/notmuch/sessionkit/config`, else
+  `~/.notmuch-config.sessionkit`, is the profile while it is a real file:
+  the step is done, and setup writes, moves and copies nothing. It never
+  writes over a file. If the mail root already holds a notmuch database
   (`<root>/.notmuch`), it writes nothing and prints a `MANUAL` line: setup
   adopts no database. More: [notmuch settings][notmuch-settings].
 - **The notmuch index** (`notmuch-index`): sessionmail's own index, built
@@ -82,6 +89,26 @@ message setup --pull                 # also install the mail puller's LaunchAgen
   replaces a different file. A link to another sessionmail copy of the
   hook is left as is. A link to our own hook that now points nowhere (a
   rebuilt tool venv) is repaired.
+- **The delivery wrapper** (`delivery`), on a host that indexes at
+  delivery: postfix's `master.cf` has an `nminsert` service
+  ([index at delivery][index-at-delivery]). Setup installs or refreshes
+  `/usr/local/etc/postfix-agents/nm-deliver` from the package, with the
+  notmuch profile's path baked in, so delivery indexes through the same
+  config `message` reads. It reports, and never edits, the service: when
+  its `argv=` runs another path, a `MANUAL` line says to repoint it. When
+  the folder is not yours to write, the install is a privileged step,
+  printed first with its exact `sudo` line, and run only at a terminal;
+  setup writes the copy it installs under
+  `~/.sessionkit/mail/settings/postfix/` first. Run setup as the
+  service's `user=`: under another user the step is `BLOCKED`. It is
+  `BLOCKED` too while the profile's file is not there and the profile
+  step will not write it (a notmuch database already in the mail root):
+  a wrapper baking in a missing file would defer every delivery, so the
+  copy the service runs is left as it is. If the installed copy already
+  bakes in a file that has gone, the `BLOCKED` line says so: every
+  delivery through it defers until the file is back. A host with
+  no `nminsert` service, or no `postconf`, gets no wrapper: the step is
+  `DONE`.
 - **What sends your mail** (`carrier`). It reports the carrier and where
   its value came from, such as `the mail drop (the default, from
   ~/.sessionkit/mail/settings/mail.template.json)` or `the MTA at
@@ -109,15 +136,18 @@ message setup --pull                 # also install the mail puller's LaunchAgen
   and any other profile are left exactly as they are, and no hook is linked
   into their folders.
 - **It runs `notmuch new` once, while no index exists.** That one run builds
-  the empty index the hook folder needs. Nothing in setup keeps the index
-  fresh: until something runs `notmuch --config=<profile> new` again
-  (launchd, cron, or by hand), `message mark` and `memory` read what was
-  indexed.
+  the empty index the hook folder needs. Setup schedules nothing.
+- **The readers keep the index fresh.** `memory` refreshes it before it
+  reads, and `message mark` when an id is missing, each with a bounded
+  `notmuch new --no-hooks` (`notmuch.refresh`, seconds, default 2; 0 turns
+  it off). More: [notmuch][notmuch].
 - It never makes a session box, and it never touches another host.
 - It does not install the puller unless you pass `--pull`, and it never
   boots out a puller job it did not write.
 
 [file-drop]: file-drop.md
+[index-at-delivery]: postfix-configuration.md#index-at-delivery-opt-in
+[notmuch]: notmuch.md
 [notmuch-settings]: notmuch-settings.md
 [post-new-hook]: notmuch-settings.md#the-post-new-hook
 [postfix-configuration]: postfix-configuration.md
