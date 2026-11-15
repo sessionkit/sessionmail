@@ -25,9 +25,9 @@ Several agents in one seat? See the sessionkit skill's card, "Several agents in 
 - `read` - 40 lines / 400 tokens of body by default; claims.
 - `mark` - seen and reactions, as headers on a reply; never wakes anyone.
 - `receipt` - hidden: what SID RECORDED, never that it read it; docs/message-receipt.md has exits.
+- `address` - hidden: the From a send from this shell would carry; exit 2 when it has none.
 - `verify` - who signed a message; `--trust` judges the signer. The
   verifier's exits: 0 good, 1 bad, 2 unsigned, 3 usage.
 
 References (flat, 40 lines / 400 tokens each): `references/`.
-Specs: `openspec/specs/message/spec.md`, in the git repository; the release
-archive leaves `openspec/` out.
+Specs: the OpenSpec spec `message`, kept in the project's OpenSpec store, outside this tree.

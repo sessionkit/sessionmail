@@ -1,6 +1,6 @@
 """The mail tool's SEAT and SESSION layers in the new tree: one `mail.json`.
 
-sessiontools `openspec/changes/session-settings`, task 3.2:
+sessiontools OpenSpec change `session-settings`, task 3.2:
 
     ~/.session/seats/<seat>/settings/mail.json    the seat's layer
     ~/.session/seats/<seat>/log/settings.jsonl    who changed it, and why

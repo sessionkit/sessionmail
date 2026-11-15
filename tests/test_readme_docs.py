@@ -186,9 +186,12 @@ def dead_openspec_pointers(text: str) -> list[str]:
 def test_shipped_prose_points_into_openspec_only_the_agents_md_way(rel):
     """SM-849: openspec/ is export-ignored, so a shipped doc that names a
     path in it sends an archive reader nowhere. A pointer is allowed when its
-    paragraph (or list item) says so the AGENTS.md way, "in the git
-    repository; the release archive leaves `openspec/` out", or when it is a
-    commit-pinned citation, `openspec/<path>:<line> @ <sha>`."""
+    paragraph (or list item) says "the release archive leaves `openspec/`
+    out", or when it is a commit-pinned citation,
+    `openspec/<path>:<line> @ <sha>`. Since SM-1064 openspec/ holds only the
+    store pointer, and tests/test_openspec_pointer.py refuses any path into
+    the old specs/ or changes/ layout outright; docs name a spec or change by
+    its OpenSpec name instead."""
     dead = dead_openspec_pointers((ROOT / rel).read_text())
     assert not dead, f"{rel} points into openspec/ without saying the archive leaves it out: {dead}"
 

@@ -1,4 +1,4 @@
-"""The judgement: `openspec/changes/pager-filters`, tasks 2.2.
+"""The judgement: OpenSpec change `pager-filters`, tasks 2.2.
 
 Design D4, as ruled (P1-P15): every `wake!` line from
 EVERY layer first (a match wakes), then the FIRST matching line down the

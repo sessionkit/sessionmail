@@ -1,6 +1,6 @@
 """SM-518 do-005: the mail-guard's deny row, from stdlib, failing open.
 
-openspec/changes/pager-inject-log, "The mail-guard's deny is logged from
+OpenSpec change pager-inject-log, "The mail-guard's deny is logged from
 stdlib, and fails open" (RULED: `event: inject, via: pretooluse-deny`).
 hooks/mail-guard/hook.py runs on system
 python3 and cannot import sessionmail, so it carries its own copy of the

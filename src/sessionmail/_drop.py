@@ -12,7 +12,7 @@ SELECTED BY ONE SETTING, the one that already names the MTA:
 
 The sender then delivers in-process through this module instead of piping
 to a sendmail, and runs its deliverability pre-flight against THIS module's
-resolution instead of postfix's compiled maps (openspec/specs/message, "The
+resolution instead of postfix's compiled maps (OpenSpec spec message, "The
 send self-gates on deliverability" - the gate moves with the transport, it
 does not go away). It is a mode, not a program: the package spec allows
 exactly three commands on the PATH ("One package, three commands"), so there

@@ -1,6 +1,6 @@
 """The sender: the six jobs `session-mail-send` did, in the package.
 
-openspec/changes/send-in-python, step 4. Same argv as the bash oracle, so
+OpenSpec change send-in-python, step 4. Same argv as the bash oracle, so
 step 5's switch is a dispatch and step 6's diff compares like with like.
 Every `send:NNNN` below is a line of that script (2,575 lines, as it was
 when ported); every refusal is exit 2 or 3 and fires BEFORE the
@@ -39,7 +39,7 @@ from datetime import datetime
 from email._header_value_parser import parse_message_id
 from email.utils import format_datetime
 from pathlib import Path
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 
 import sessiontools
 
@@ -300,7 +300,7 @@ def fold(name: str, value: str, width: int = LINE_SHOULD) -> str:
     after the colon included), as `\n ` - so RFC 5322 unfolding, which removes
     the line break and keeps the space, gives the value back EXACTLY. Lines
     are packed greedily to WIDTH; a word longer than that stays whole on its
-    own line (openspec/changes/subject-shorten: "the exact round-trip wins
+    own line (OpenSpec change subject-shorten: "the exact round-trip wins
     over the 78"). A break only ever comes before a non-empty word, so no line
     is white space alone (RFC 5322 3.2.2). Pure."""
     first, *words = f"{name}: {value}".split(" ")
@@ -836,9 +836,11 @@ def header_values(head: bytes, name: str) -> list[str]:
     return values
 
 
-def find_messages(root: Path, ids: set[str]) -> dict[str, str]:
+def find_messages(root: Path, ids: set[str], *,
+                  budget: "ParentBudget | None" = None) -> dict[str, str]:
     """Each wanted `<id>` to ONE file under ROOT whose Message-ID is it.
-    A plain walk of every box's new/ and cur/; stops when all are found."""
+    A plain walk of every box's new/ and cur/; stops when all are found,
+    or, given a BUDGET, when it runs out (what was found so far)."""
     wanted = {i: i.strip("<>").encode() for i in ids}
     found: dict[str, str] = {}
     if not wanted or not root.is_dir():
@@ -848,6 +850,8 @@ def find_messages(root: Path, ids: set[str]) -> dict[str, str]:
         if os.path.basename(dirpath) not in ("new", "cur"):
             continue
         for name in filenames:
+            if budget is not None and not budget.tick():
+                return found
             path = os.path.join(dirpath, name)
             head = _head(path)
             for msgid, needle in wanted.items():
@@ -864,6 +868,49 @@ def find_messages(root: Path, ids: set[str]) -> dict[str, str]:
 #: `notmuch new` holding the database lock must not hold a send.
 NOTMUCH_TIMEOUT = 2.0
 
+#: How long ONE send may spend finding its threading targets (notmuch and the
+#: walk together) before it stops looking and threads one hop. The walk reads
+#: every head under the mail root for an id this host does not hold, which is
+#: seconds on a large root (a measured 16-18 s over ~121k files). The tightest
+#: caller known gives a whole send 5 s, and a send on a mail-drop host already
+#: spends ~2.6 s outside the lookup (interpreter start, three map-generator
+#: runs), so 1 s leaves ~1.4 s of margin under load. A parent the index knows
+#: is found in ~10 ms, so the budget only ever cuts an unindexed walk short.
+PARENT_BUDGET_SECONDS = 1.0
+
+#: The budget's clock: a module attribute, so a test can drive it without
+#: sleeping. Read when a budget is made, never at import.
+parent_clock: Callable[[], float] = time.monotonic
+
+
+class ParentBudget:
+    """One send's threading lookup: a deadline on `parent_clock`, the heads
+    the walk read (`heads`), and whether it ran out (`spent`)."""
+
+    def __init__(self, seconds: float | None = None,
+                 clock: Callable[[], float] | None = None) -> None:
+        self.clock = parent_clock if clock is None else clock
+        self.seconds = PARENT_BUDGET_SECONDS if seconds is None else seconds
+        self.deadline = self.clock() + self.seconds
+        self.heads = 0
+        self.spent = False
+
+    def left(self) -> float:
+        """Seconds left, never below zero; marks the budget spent at zero."""
+        left = self.deadline - self.clock()
+        if left <= 0:
+            self.spent = True
+            return 0.0
+        return left
+
+    def tick(self) -> bool:
+        """Before one more head is read: True and counted while time is
+        left, False (and spent) once the deadline has passed."""
+        if self.spent or self.left() <= 0:
+            return False
+        self.heads += 1
+        return True
+
 
 def id_term(bare: str) -> str:
     """notmuch's query for ONE Message-ID, quoted: `id:"<bare>"`, any `"`
@@ -873,7 +920,8 @@ def id_term(bare: str) -> str:
     return 'id:"' + bare.replace('"', '""') + '"'
 
 
-def notmuch_files(root: Path, ids: set[str], env: Mapping[str, str]) -> dict[str, str]:
+def notmuch_files(root: Path, ids: set[str], env: Mapping[str, str], *,
+                  budget: ParentBudget | None = None) -> dict[str, str]:
     """Each wanted `<id>` to ONE file under ROOT, by notmuch's index - the
     accelerator (mail, so notmuch, with a fallback). Empty for every id when notmuch is
     not on env's PATH, fails,
@@ -898,9 +946,15 @@ def notmuch_files(root: Path, ids: set[str], env: Mapping[str, str]) -> dict[str
     top = root.resolve()
     for msgid in ids:
         bare = msgid.strip().strip("<>")
+        timeout = NOTMUCH_TIMEOUT
+        if budget is not None:
+            left = budget.left()
+            if left <= 0:
+                return found                   # spent: nothing more is asked
+            timeout = min(timeout, left)
         try:
             res = subprocess.run([*prefix, "search", "--output=files", id_term(bare)],
-                                 capture_output=True, text=True, timeout=NOTMUCH_TIMEOUT,
+                                 capture_output=True, text=True, timeout=timeout,
                                  env=child)
         except (OSError, subprocess.SubprocessError):
             return found                       # no index to ask: the walk answers
@@ -919,13 +973,16 @@ def notmuch_files(root: Path, ids: set[str], env: Mapping[str, str]) -> dict[str
     return found
 
 
-def find_parents(root: Path, ids: set[str], env: Mapping[str, str]) -> dict[str, str]:
+def find_parents(root: Path, ids: set[str], env: Mapping[str, str], *,
+                 budget: ParentBudget | None = None) -> dict[str, str]:
     """notmuch first, then the walk for whatever it did not find (a bare box
-    without notmuch, an index that has not seen a just-arrived parent yet)."""
-    found = notmuch_files(root, ids, env)
+    without notmuch, an index that has not seen a just-arrived parent yet).
+    Given a BUDGET, both stop when it runs out (`budget.spent`); without one,
+    the walk runs to the end."""
+    found = notmuch_files(root, ids, env, budget=budget)
     rest = ids - found.keys()
     if rest:
-        found.update(find_messages(root, rest))
+        found.update(find_messages(root, rest, budget=budget))
     return found
 
 
@@ -1521,9 +1578,18 @@ def _deliver(req: Request, body: bytes, env: Mapping[str, str], err: list[str], 
         canon_addr(req.from_)
         canon_addr(req.to)
         check_key_seat(req.from_, env, required, err)   # before the MTA and the mint
+    from . import _operator
+    split = _operator.split_notice(env)           # said once in this process
+    if split is not None:
+        err.append(f"{PREFIX}⚠  {split}")
     carrier = _settings.carrier(env)              # before the pre-flight and the mint
     if carrier.kind == "refused":
         raise Refused(f"no MTA: {carrier.why} - NOTHING WAS SENT", EX_MTA, kind="mta")
+    if carrier.kind == "drop":                    # the drop writes into the mail root itself
+        refused = _operator.split_root_refusal(env)
+        if refused:
+            raise Refused(f"REFUSING TO SEND (mail drop) - {refused} - NOTHING WAS SENT",
+                          EX_MTA, kind="undeliverable")
     sendmail = carrier.path or DEFAULT_SENDMAIL
     dropping = drop_preflight(req, env) if carrier.kind == "drop" else None
     if dropping is not None:
@@ -1542,21 +1608,37 @@ def _deliver(req: Request, body: bytes, env: Mapping[str, str], err: list[str], 
         preflight(req, host, env, err)
 
     # Threading: notmuch when it is here, else one walk of the maildir, for
-    # every target (send:1111-1129, :886; the accelerator amends decision 5).
+    # every target (send:1111-1129, :886; the accelerator amends decision 5),
+    # inside ONE budget: when it runs out the send threads one hop and says
+    # so. PARENT_CHECK=off skips the lookup entirely: one hop, no notice.
     check = parent_check_on(env, err)
-    targets = {i for i in (req.in_reply_to, req.supersedes) if i}
-    files = find_parents(root_of(env), targets, env) if targets else {}
-    if check and req.supersedes and req.supersedes not in files:
-        err.append(f"{PREFIX}⚠  supersede target {req.supersedes} is NOT in the local index - "
-                   f"the Supersedes: header is still written and the send proceeds, but "
-                   f"threading falls back to ONE HOP. Expected for a cross-host or another "
-                   f"seat's message; if the target IS local, check the id.")
-    if (check and req.in_reply_to and req.in_reply_to != req.supersedes
-            and req.in_reply_to not in files):
-        err.append(f"{PREFIX}⚠  reply target {req.in_reply_to} is NOT in the local index - "
-                   f"the In-Reply-To: header is still written and the send PROCEEDS (the parent "
-                   f"may be cross-host or in a box this host cannot see), but a mistyped id "
-                   f"threads onto nothing. Silence: SESSIONMAIL_PARENT_CHECK=off.")
+    targets = {i for i in (req.in_reply_to, req.supersedes) if i} if check else set()
+    budget = ParentBudget()
+    files = find_parents(root_of(env), targets, env, budget=budget) if targets else {}
+    unfound = []                                 # in the order the warnings below use
+    if req.supersedes and req.supersedes not in files:
+        unfound.append(f"supersede target {req.supersedes}")
+    if req.in_reply_to and req.in_reply_to != req.supersedes and req.in_reply_to not in files:
+        unfound.append(f"reply target {req.in_reply_to}")
+    if budget.spent and unfound:
+        # The lookup did not finish, so "NOT in the local index" would be a
+        # guess: say what is known, once.
+        err.append(f"{PREFIX}⚠  {' and '.join(unfound)} not found within the "
+                   f"{budget.seconds:g} s parent lookup ({budget.heads} files read) - the "
+                   f"headers are still written and the send PROCEEDS, threaded one hop. "
+                   f"Silence: SESSIONMAIL_PARENT_CHECK=off.")
+    else:
+        if check and req.supersedes and req.supersedes not in files:
+            err.append(f"{PREFIX}⚠  supersede target {req.supersedes} is NOT in the local index - "
+                       f"the Supersedes: header is still written and the send proceeds, but "
+                       f"threading falls back to ONE HOP. Expected for a cross-host or another "
+                       f"seat's message; if the target IS local, check the id.")
+        if (check and req.in_reply_to and req.in_reply_to != req.supersedes
+                and req.in_reply_to not in files):
+            err.append(f"{PREFIX}⚠  reply target {req.in_reply_to} is NOT in the local index - "
+                       f"the In-Reply-To: header is still written and the send PROCEEDS (the "
+                       f"parent may be cross-host or in a box this host cannot see), but a "
+                       f"mistyped id threads onto nothing. Silence: SESSIONMAIL_PARENT_CHECK=off.")
     references = references_chain(req.in_reply_to, files.get(req.in_reply_to)) if req.in_reply_to else []
 
     # Mint (send:1857-1862).

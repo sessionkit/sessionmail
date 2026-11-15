@@ -1,10 +1,9 @@
 """The per-hook switches, as the shipped text teaches them.
 
 Every switch (`_settings.SWITCH_KEYS`) is in the schema, the settings doc,
-the CHANGELOG's newest section with notes in it (its [Unreleased] section,
-or at a release tip, where the stamp leaves [Unreleased] empty, the release
-just stamped), the hook manifest's description, the pager skill and both
-help pages that name the hooks; `mail_guard` is in the guard's README too. The text says the switches' truth, not the one-key
+the CHANGELOG notes of the release that shipped the switches, the hook
+manifest's description, the pager skill and both help pages that name the
+hooks; `mail_guard` is in the guard's README too. The text says the switches' truth, not the one-key
 world they replaced: no "always on" for the guard, no "the birth is
 ungated"; `"mail_guard": false` turns off the subject and body checks only,
 the subagent rules stay on; the switches are a person's, by convention, and
@@ -64,31 +63,41 @@ def _sections(text: str) -> list[str]:
     return [text[a:b] for a, b in zip(starts, [*starts[1:], len(text)])]
 
 
-def _newest_notes(text: str) -> str:
-    """The CHANGELOG's newest section with notes in it, alone, so a key
-    named only in an older release's notes does not count.
+def _keys_named(section: str) -> list[str]:
+    """The switch keys a section names as keys: in code quotes or JSON
+    quotes (`ride_along`, "birth"), not as a word in prose."""
+    return [key for key in _settings.SWITCH_KEYS
+            if re.search(rf"[`\"]{re.escape(key)}[`\"]", section)]
 
-    That is [Unreleased] while it holds anything beyond its heading. At a
-    release tip it does not: scripts/release.py stamps by writing the new
-    `## [X.Y.Z] - DATE` heading under an [Unreleased] it leaves empty, so the
-    notes are the release's, the next section down. An empty section is
-    passed over; no section at all reads as nothing (the length check in
-    the surface test then says so)."""
+
+def _switch_notes(text: str) -> str:
+    """The switches are named in the notes of the release that shipped
+    them, found as the section that names the most switch keys (the newest
+    on a tie), by what it says and not by where it sits.
+
+    So the notes stay found when a later entry lands above them under
+    [Unreleased] (naming no key, or one key in passing), and when
+    scripts/release.py stamps them under a new heading; a key named only in
+    another section does not count, since only the one section is read. No
+    section that names a key reads as nothing (the length check in the
+    surface test then says so)."""
+    best, most = "", 0
     for section in _sections(text):
-        if section.partition("\n")[2].strip():
-            return section
-    return ""
+        named = len(_keys_named(section))
+        if named > most:
+            best, most = section, named
+    return best
 
 
 def _changelog_notes() -> str:
-    return _newest_notes(CHANGELOG.read_text(encoding="utf-8"))
+    return _switch_notes(CHANGELOG.read_text(encoding="utf-8"))
 
 
 def surfaces() -> dict[str, str]:
     """Each shipped place a reader is told about the switches, as read."""
     return {
         "docs/settings.md": SETTINGS_DOC.read_text(encoding="utf-8"),
-        "CHANGELOG.md newest notes": _changelog_notes(),
+        "CHANGELOG.md switch notes": _changelog_notes(),
         "hooks/hooks.json description": json.loads(HOOKS_JSON.read_text())["description"],
         "skills/pager/SKILL.md": SKILL.read_text(encoding="utf-8"),
         "pager settings hooks --help": _help("settings", "hooks"),
@@ -174,22 +183,35 @@ def test_every_switch_is_named_in_every_surface(name, key):
 
 RELEASE_SCRIPT = ROOT / "scripts/release.py"
 
-#: A CHANGELOG as a release finds it: notes under [Unreleased], an older
-#: release below naming a key the new notes do not.
+#: A CHANGELOG as a release finds it: the switches' notes under
+#: [Unreleased], an older release below naming one key in passing.
 BEFORE_CUT = """# Changelog
 
 Preamble.
 
 ## [Unreleased]
 
-### Changed: the new notes
+### Added
 
-- `ride_along` is new here.
+- **One switch per hook.** `ride_along` and `mail_guard` are new.
 
 ## [0.1.0] - 2030-06-09
 
 - `stop_nag` was in the old release only.
 """
+
+#: A later entry that lands under [Unreleased], above the release that
+#: shipped the switches, and names no key.
+UNRELATED = "### Changed\n\n- An unrelated page says which box it reads.\n\n"
+
+#: A later entry that names one key in passing.
+IN_PASSING = "### Fixed\n\n- The guard's `mail_guard` line reads cleaner.\n\n"
+
+
+def _under_unreleased(text: str, entry: str) -> str:
+    """TEXT with ENTRY written under its [Unreleased] heading, as the next
+    change after a release lands."""
+    return text.replace("## [Unreleased]\n", "## [Unreleased]\n\n" + entry, 1)
 
 
 def _load_release(monkeypatch, changelog: Path):
@@ -216,37 +238,12 @@ def _stamp(monkeypatch, tmp_path: Path, text: str, version: str = "0.2.0") -> st
     return _load_release(monkeypatch, path).stamp_changelog(version)
 
 
-def test_the_reader_takes_unreleased_while_it_holds_notes():
-    got = _newest_notes(BEFORE_CUT)
+def test_the_reader_takes_unreleased_while_it_holds_the_switches_notes():
+    got = _switch_notes(BEFORE_CUT)
     assert got.startswith("## [Unreleased]\n")
     assert "ride_along" in got
     assert "stop_nag" not in got, "an older release's notes were read"
     assert "Preamble" not in got
-
-
-def test_the_reader_takes_the_release_under_an_empty_unreleased():
-    text = BEFORE_CUT.replace("## [Unreleased]\n", "## [Unreleased]\n\n## [0.2.0] - 2030-12-08\n", 1)
-    got = _newest_notes(text)
-    assert got.startswith("## [0.2.0] - 2030-12-08\n")
-    assert "ride_along" in got
-    assert "stop_nag" not in got, "an older release's notes were read"
-
-
-def test_the_reader_passes_over_a_section_of_blank_lines():
-    text = BEFORE_CUT.replace("## [Unreleased]\n", "## [Unreleased]\n\n  \n\t\n## [0.2.0] - 2030-12-08\n", 1)
-    assert _newest_notes(text).startswith("## [0.2.0] - 2030-12-08\n")
-
-
-def test_the_reader_takes_the_top_release_when_there_is_no_unreleased():
-    text = BEFORE_CUT.replace("## [Unreleased]\n", "## [0.2.0] - 2030-12-08\n", 1)
-    got = _newest_notes(text)
-    assert got.startswith("## [0.2.0] - 2030-12-08\n")
-    assert "stop_nag" not in got
-
-
-def test_the_reader_reads_a_changelog_with_no_notes_as_nothing():
-    assert _newest_notes("# Changelog\n\nPreamble.\n") == ""
-    assert _newest_notes("# Changelog\n\n## [Unreleased]\n\n") == ""
 
 
 def test_the_release_stamp_moves_the_notes_and_the_reader_follows(monkeypatch, tmp_path):
@@ -256,25 +253,100 @@ def test_the_release_stamp_moves_the_notes_and_the_reader_follows(monkeypatch, t
     stamped = _stamp(monkeypatch, tmp_path, BEFORE_CUT)
     by_name = next(s for s in _sections(stamped) if s.startswith("## [Unreleased]"))
     assert not by_name.partition("\n")[2].strip(), "the stamp no longer empties [Unreleased]"
-    got = _newest_notes(stamped)
+    got = _switch_notes(stamped)
     assert got.startswith("## [0.2.0] - 2030-12-08\n")
     assert "ride_along" in got
     assert "stop_nag" not in got
 
 
+@pytest.mark.parametrize("entry", [UNRELATED, IN_PASSING], ids=["names-no-key", "names-one-key"])
+def test_a_later_entry_above_the_release_does_not_move_the_notes(monkeypatch, tmp_path, entry):
+    """The next change after the release lands under [Unreleased], above
+    the release that shipped the switches: the notes are still that
+    release's, whether the new entry names no key or one in passing."""
+    later = _under_unreleased(_stamp(monkeypatch, tmp_path, BEFORE_CUT), entry)
+    assert _sections(later)[0].startswith("## [Unreleased]\n\n###"), "the entry did not land"
+    got = _switch_notes(later)
+    assert got.startswith("## [0.2.0] - 2030-12-08\n")
+    assert "ride_along" in got
+    assert "unrelated page" not in got and "reads cleaner" not in got
+
+
+def test_the_reader_takes_the_newest_section_on_a_tie():
+    text = BEFORE_CUT.replace("`ride_along` and `mail_guard` are", "`ride_along` is")
+    assert _switch_notes(text).startswith("## [Unreleased]\n")
+
+
+def test_a_key_in_prose_is_not_a_key_named():
+    """`birth` and `stop_nag` read as words ("the birth", "the Stop nag")
+    in notes about other things: only a quoted key counts."""
+    assert _keys_named("- the birth's box line; the Stop nag; birth and ride along.") == []
+    assert _keys_named('- `birth`, and `"stop_nag": false`.') == [_settings.STOP_NAG, _settings.BIRTH]
+
+
+def test_the_reader_reads_a_changelog_naming_no_key_as_nothing():
+    assert _switch_notes("# Changelog\n\nPreamble.\n") == ""
+    assert _switch_notes("# Changelog\n\n## [Unreleased]\n\n") == ""
+    assert _switch_notes(BEFORE_CUT.replace("`", "")) == ""
+
+
 def test_the_real_changelog_reads_the_same_notes_after_the_stamp(monkeypatch, tmp_path):
     """This checkout's CHANGELOG, stamped by scripts/release.py: the notes
     the surface test reads are the same lines before and after the cut, and
-    every switch is still in them. At a release tip the stamp lands on an
-    already-empty [Unreleased], and the notes stay the release's."""
+    every switch is still in them."""
     before = CHANGELOG.read_text(encoding="utf-8")
     stamped = _stamp(monkeypatch, tmp_path, before, version="9.9.9")
-    want = _newest_notes(before).partition("\n")[2]
-    got = _newest_notes(stamped)
+    want = _switch_notes(before).partition("\n")[2]
+    got = _switch_notes(stamped)
     assert len(got) > 200, "the stamped CHANGELOG read as almost nothing"
     assert got.partition("\n")[2] == want
     for key in _settings.SWITCH_KEYS:
         assert key in got, f"the stamped CHANGELOG's notes do not name {key}"
+
+
+@pytest.mark.parametrize("entry", [UNRELATED, IN_PASSING], ids=["names-no-key", "names-one-key"])
+def test_the_real_changelog_reads_the_same_notes_under_a_later_entry(monkeypatch, tmp_path, entry):
+    """This checkout's CHANGELOG, stamped by scripts/release.py, with the
+    next change written under its [Unreleased]: the notes read are the same
+    lines as before.
+
+    The entry goes under the [Unreleased] the stamp empties, so it is the
+    only thing there: what the CHANGELOG's own [Unreleased] holds on the day
+    is in the stamped release, and cannot tie the entry with the notes."""
+    before = CHANGELOG.read_text(encoding="utf-8")
+    want = _switch_notes(before)
+    assert len(want) > 200, "the CHANGELOG read as almost nothing"
+    later = _under_unreleased(_stamp(monkeypatch, tmp_path, before, version="9.9.9"), entry)
+    alone = ("## [Unreleased]\n\n" + entry).rstrip()
+    assert _sections(later)[0].rstrip() == alone, "the entry is not alone there"
+    assert _switch_notes(later).partition("\n")[2] == want.partition("\n")[2]
+
+
+def test_the_switch_notes_name_every_switch_as_a_key():
+    """The CHANGELOG notes name each switch by its key, quoted, not only as
+    a word: "the birth" in prose is not `birth`."""
+    notes = _changelog_notes()
+    assert len(notes) > 200, "the CHANGELOG notes read as almost nothing"
+    assert _keys_named(notes) == list(_settings.SWITCH_KEYS)
+
+
+@pytest.mark.parametrize("key", _settings.SWITCH_KEYS)
+def test_a_key_dropped_from_the_switch_notes_is_missed(key):
+    """The check fails when a key is gone from the switches' notes, even
+    though it is named elsewhere: the same section is still read, and the
+    key is not in it.
+
+    The real notes are set under a new entry that names only the dropped
+    key, with nothing else around them, so what the CHANGELOG's own
+    [Unreleased] holds on the day cannot decide which section is read."""
+    notes = _switch_notes(CHANGELOG.read_text(encoding="utf-8"))
+    assert len(notes) > 200, "the CHANGELOG notes read as almost nothing"
+    dropped = re.sub(rf"[`\"]{re.escape(key)}[`\"]", "", notes)
+    mutated = (f"# Changelog\n\n## [Unreleased]\n\n### Fixed\n\n"
+               f"- `{key}` is named here only.\n\n{dropped}")
+    got = _switch_notes(mutated)
+    assert got.partition("\n")[0] == notes.partition("\n")[0], "another section was read"
+    assert key not in _keys_named(got)
 
 
 def test_the_guard_readme_teaches_its_switch():

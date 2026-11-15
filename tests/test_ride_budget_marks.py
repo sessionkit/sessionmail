@@ -1,7 +1,7 @@
 """pager-genie 3.2c, 3.2d and 3.4: the batch budget, the negative share, and
 the marks a view earns.
 
-openspec/changes/pager-genie, tasks.md:
+OpenSpec change pager-genie, tasks.md:
 
   - 3.2c the batch budget: 8,000 characters of bodies per ride-along;
     entries past it get the header view plus one counting line; a voice

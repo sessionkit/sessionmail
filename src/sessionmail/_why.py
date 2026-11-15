@@ -1,6 +1,6 @@
 """How a recorded verdict is said, and the one rule for a Message-ID.
 
-Moved out of `pager.py` (openspec/changes/message-receipt) so that `message` can say a
+Moved out of `pager.py` (OpenSpec change message-receipt) so that `message` can say a
 verdict the way `pager why` says
 it - one wording for one fact - without importing the pager. The pager
 re-exports every name here; `pager why` prints byte for byte what it

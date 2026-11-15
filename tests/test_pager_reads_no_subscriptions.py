@@ -1,6 +1,6 @@
 """The pager reads no subscription files (message-subscriptions 4.2, 4.3).
 
-`openspec/changes/message-subscriptions`, tasks 4.2 and 4.3, and the two
+OpenSpec change `message-subscriptions`, tasks 4.2 and 4.3, and the two
 REMOVED pager requirements *A subscription belongs to the seat* and *A
 subscription is a query*: `pager subscriptions`, `BORN`, `write_born` and
 `migrate_born` retire; `pager status` stops reading subscription files; and

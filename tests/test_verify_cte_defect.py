@@ -736,13 +736,31 @@ PRIVATE_KEY = "sessionmail-sig-TEST-VECTORS-ONLY"
 CANON_AT_BASE = "ba66f8a35a3e3e5cbf76213da6631a7d71ec33d94fa2ef5e99b7145321bc5674"
 
 
-def test_the_golden_vectors_are_untouched():
+def fixtures_digest(d: Path) -> str:
+    """FIXTURES_AT_BASE's sum over D. Names starting with `__` or `.` are by-products of
+    whatever ran near the vectors (a `__pycache__/` from importing make_vectors.py in place, a
+    `.DS_Store`), not vectors, so they are skipped like the private key; no fixture is named
+    that way (test_signed_text.py pins it). Any other entry is read, and fails if it can't be."""
     h = hashlib.sha256()
-    for f in sorted(FIXTURES.iterdir()):
-        if f.name == PRIVATE_KEY:
+    for f in sorted(d.iterdir()):
+        if f.name == PRIVATE_KEY or f.name.startswith(("__", ".")):
             continue
         h.update(f.name.encode() + b"\0" + hashlib.sha256(f.read_bytes()).digest())
-    assert h.hexdigest() == FIXTURES_AT_BASE
+    return h.hexdigest()
+
+
+def test_the_golden_vectors_are_untouched():
+    assert fixtures_digest(FIXTURES) == FIXTURES_AT_BASE
+
+
+def test_a_bytecode_cache_beside_the_golden_vectors_leaves_them_untouched(tmp_path):
+    """A `__pycache__/` (and a `.DS_Store`) in a copy of the vectors changes no vector."""
+    copy = tmp_path / "sig_v2"
+    shutil.copytree(FIXTURES, copy)
+    (copy / "__pycache__").mkdir(exist_ok=True)
+    (copy / "__pycache__" / "make_vectors.cpython-312.pyc").write_bytes(b"\xcb\r\r\n" + bytes(12))
+    (copy / ".DS_Store").write_bytes(b"\0\0\0\1Bud1")
+    assert fixtures_digest(copy) == FIXTURES_AT_BASE
 
 
 def test_digests_and_leaf_canon_are_byte_identical_and_never_call_the_check(monkeypatch):

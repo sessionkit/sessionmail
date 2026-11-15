@@ -19,8 +19,8 @@ Every string sessionmail puts into an agent's context gets one JSONL row, sized,
   holds only Message-IDs and sizes, and that repo may track it.
 - **Cost:** a row costs about 0.1-0.2 ms, and about 0.35 ms when captured. An empty tool batch writes no row; it adds
   one count, at about 0.05 ms.
-- **The contract:** the proposal, `openspec/changes/pager-inject-log/`, which is not yet ratified. It is in the git
-  repository; the release archive leaves `openspec/` out.
+- **The contract:** the proposal, the OpenSpec change `pager-inject-log`, which is not yet ratified. It is
+  kept in the project's OpenSpec store, outside this tree.
 
 ## The files
 
@@ -58,7 +58,7 @@ An **`inject` row** adds:
 | `hook_event_name` | from the hook's payload (`PostToolBatch`, `UserPromptSubmit`, `Stop`, `SessionStart`, `PreToolUse`); null for `monitor` and `listen` |
 | `tool_use_ids` | the batch's `tool_calls[].tool_use_id`, or the deny's `tool_use_id`; `[]` when there are none |
 | `chars` `lines` `tokens_est` `tok` | the size of the exact string emitted (`tokens_est` = max(1, chars // 4)) |
-| `items` | the mails behind the string, in order: `id` (Message-ID, or null), `kind` (`mail`/`heard`), `view` (`whole`/`text`/`header`/`count`), `given` (its chars in the string), `in_mail` (the body's chars, or null), `cut` |
+| `items` | the mails behind the string, in order: `id` (Message-ID, or null), `kind` (`mail`/`heard`), `view` (`whole`/`text`/`header`/`count`/`pointer`: [outside mail][outside-pointer], no words given), `given` (its chars in the string), `in_mail` (the body's chars, or null), `cut` |
 | `items` on a monitor page | the one mail the line names by sender and subject is `view: header`, its `given` the characters that naming cost in the line (a voice turn: its heard header); every other mail on the page stays `view: count`, `given: 0`. A hand page's items are all `count`. The row still holds the Message-ID and sizes, never the words |
 | `superseded` `held` `past_budget` | how many mails were replaced, held back for room, or refused past the 8,000-char ride budget; counted, never listed |
 | `capped` | the cap that bit, if any: `give_by`, `room`, `batch` or `text` |
@@ -142,3 +142,4 @@ sm+t.worker	2030-12-08	1	7
   would block the next hook until its timeout.
 
 [sum]: #sum-it-per-seat-per-day
+[outside-pointer]: outside-pointer.md

@@ -95,8 +95,8 @@ class InitError(Exception):
 
 # ── the mint half ───────────────────────────────────────────────
 #
-# Normative text: the change delta, `openspec/changes/memory-init/specs/
-# memory/spec.md` - "init prints the root a box has, or mints one with the
+# Normative text: the change delta, OpenSpec change `memory-init`,
+# `specs/memory/spec.md` - "init prints the root a box has, or mints one with the
 # standard labels", "init is additive and never duplicates", "The label set
 # is selectable within the ruled ten", "Canon is the box key, and init
 # consumes the key without owning it", "init refuses loudly and never forks"

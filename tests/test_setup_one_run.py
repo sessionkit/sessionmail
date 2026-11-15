@@ -11,8 +11,9 @@ Now (rca-001's design call: BOTH):
 
 - `notmuch-index` is a step of its own. It runs `notmuch --config=<profile>
   new --no-hooks` ONCE, and only on an EMPTY index of sessionmail's own
-  profile (guard i: notmuch reports no hook dir, or the profile is written
-  this run; guard ii: no `.notmuch` at the `database.path` notmuch reports).
+  profile (guard i: notmuch opens no database, `count '*'` exiting non-zero,
+  or the profile is written this run; guard ii: no `.notmuch/xapian` at the
+  `database.path` notmuch reports).
 - With no binary it is BLOCKED and still names that `new`, and the ONE
   `notmuch-hook` step says it waits on it: one run names every link.
 - The run ends with ONE numbered next-steps block, then the re-run line.
@@ -22,7 +23,8 @@ and mail root, the FAKE notmuch at `SESSIONMAIL_NOTMUCH`). A scratch HOME
 alone would not isolate the real host (SM-923); the fixtures set every
 override the code reads. No test here runs a real `notmuch`. "No binary" is
 `SESSIONMAIL_NOTMUCH` pointed at a path that is not there; "no database" is
-the fake's `FAKE_HOOK_DIR` empty, as notmuch answers before its first `new`.
+the fake's `FAKE_HOOK_DIR` empty and no `.notmuch/xapian`, so its `count`
+fails, as notmuch's does before its first `new`.
 """
 
 from __future__ import annotations
@@ -56,7 +58,7 @@ def _no_binary(env, tmp_path: Path) -> dict[str, str]:
 
 
 def _empty_index(env) -> dict[str, str]:
-    """notmuch reports no hook dir: it has opened no database yet."""
+    """notmuch opens no database yet, and reports no hook dir."""
     return {**env, "FAKE_HOOK_DIR": ""}
 
 
@@ -183,7 +185,7 @@ def test_an_existing_database_is_skipped(env, tmp_path, mailroot):
 def test_the_apply_asks_again_and_skips_a_database_that_appeared(env, tmp_path, mailroot):
     """The guard is asked at apply time too: a database that is there by
     then is `Left` (BLOCKED), and no `new` runs."""
-    (mailroot / ".notmuch").mkdir(parents=True)
+    (mailroot / ".notmuch" / "xapian").mkdir(parents=True)
     with pytest.raises(_setup.Left, match="over an existing database"):
         _setup.build_index(_empty_index(env))
     assert _news(tmp_path) == []
@@ -292,7 +294,7 @@ def test_a_blocked_apply_lands_in_the_block_with_its_measured_line(env, tmp_path
     not the plan's TODO text."""
     import io
     steps, notes = _setup.plan(_empty_index(env), [])
-    (mailroot / ".notmuch").mkdir(parents=True)          # appears after the plan was built
+    (mailroot / ".notmuch" / "xapian").mkdir(parents=True)   # appears after the plan was built
     out = io.StringIO()
     rc = _setup.run_plan(steps, _empty_index(env), out, dry_run=False, tty=False, notes=notes)
     text = out.getvalue()

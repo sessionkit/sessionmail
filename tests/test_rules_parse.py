@@ -1,4 +1,4 @@
-"""The rules grammar and its parser: `openspec/changes/pager-filters`, tasks 2.1.
+"""The rules grammar and its parser: OpenSpec change `pager-filters`, tasks 2.1.
 
 Design D3 (the grammar) and D2 (the conditions), as ruled (P1-P15). One rule per line, the VERB first (`start`, `wake`,
 `ride`, `wake!`), then conditions that must ALL match (AND on one line; two

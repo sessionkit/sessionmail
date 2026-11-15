@@ -28,7 +28,7 @@ runs the generator's print modes on every send and writes no postfix map.
 The callers that WRITE a live map (`_seat._run_generator`, and `_archive`,
 which regenerates through it) pass ``packaged=False`` and stop at step 3.
 Making the packaged copy the one that writes a live map is reserved to
-the project owner (`openspec/changes/vmailbox-gen-comes-home`), so the packaged copy is
+the project owner (OpenSpec change `vmailbox-gen-comes-home`), so the packaged copy is
 never a writer. The tests pin both orders.
 """
 from __future__ import annotations

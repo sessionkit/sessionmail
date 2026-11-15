@@ -1,6 +1,6 @@
 """Voice is recognised by `Ears-Kind`, and believed only when the keeper SIGNED it.
 
-openspec/changes/pager-genie, tasks.md 3.1 ("The kind: a header"), D14 and
+OpenSpec change pager-genie, tasks.md 3.1 ("The kind: a header"), D14 and
 "Trust", as amended when O22 (S) was built: heard voice is no longer
 believed on an unsigned `From:` alone, and its body is bounded. The
 spec requirement it proves is *Voice arrives as mail in the ears box, and

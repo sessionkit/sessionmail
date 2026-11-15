@@ -592,7 +592,7 @@ plus_rows() {
   fi
 }
 
-# ── SUBSCRIPTIONS (openspec/changes/message-subscriptions, tasks 2.2, D1, D2) ──
+# ── SUBSCRIPTIONS (OpenSpec change message-subscriptions, tasks 2.2, D1, D2) ──
 #
 # A subscription is a FILE whose NAME is a box (D1):
 #
@@ -803,7 +803,7 @@ sub_resolve() {
   rm -f "$names" "$bad" "$dirs"
 }
 
-# SEAT MAPS (sessiontools openspec/changes/session-settings, task 3.2): a
+# SEAT MAPS (sessiontools OpenSpec change session-settings, task 3.2): a
 # SEAT's subscriptions are the `subscriptions` map of
 #
 #     <seats leaf>/<seat>/settings/mail.json, then mail.d/*.json

@@ -563,7 +563,7 @@ def test_sm378_no_agent_id_behaves_as_before(seat, tmp_path, payload):
 # Review case 8: 53 of 57 refused stops said
 # "re-arm", among them to seats that had just run `pager stop` to stand
 # down. SM-410 answered with two things: the `off` stamp (kept, below) and a
-# role exemption, which SM-450 removes (openspec/changes/pager-settings-file,
+# role exemption, which SM-450 removes (OpenSpec change pager-settings-file,
 # tasks.md 4.1-4.2, design.md D8-D9: session mail knows nothing of workers
 # and reviewers). With the hooks on, every seat with no
 # listener is nagged, whatever it is called. `is_listening`'s parent-chain
@@ -966,7 +966,7 @@ def test_a_seat_known_only_by_its_session_id_is_still_nagged(seat, monkeypatch):
 
 # ── SM-450: a settings file decides whether the hooks speak ──────────────
 #
-# openspec/changes/pager-settings-file, tasks.md 3.1-3.3 (slice 2). One test
+# OpenSpec change pager-settings-file, tasks.md 3.1-3.3 (slice 2). One test
 # per scenario of "A settings file decides whether the hooks speak" and "A
 # missing settings file is written once, off, and said once" (the delta,
 # specs/pager/spec.md; design.md Traceability). The `seat` fixture wrote
@@ -2138,3 +2138,247 @@ def test_batch_on_a_drop_host_whose_tailscale_fails_still_warns_on_stderr(seat, 
     r = CliRunner().invoke(cli, ["hook", "batch"], input="{}")
     assert r.exit_code == 0
     assert r.stderr.count(_magicdns.UNKNOWN) == 1
+
+
+# ── a one-shot `claude -p`: the hooks never ask it to arm ────────────────
+#
+# A one-shot is a session whose claude runs with `-p`/`--print` (read off
+# its argv, `_seat.headless`) and that is not required. A Stop hook that
+# exits 2 keeps the turn going, and a one-shot that obeys it by
+# backgrounding `pager listen` never exits. For a `-p` seat, `pager_required`
+# counts only the variable and the session and seat layers, never the host
+# file. When `ps` cannot say how claude was launched, nothing changes.
+
+ONE_SHOT_PID = 7_000_002     # a claude that exists only in the injected `ps` table
+ONE_SHOT = f"claude -p --session-id {SESSION} do one thing"
+INTERACTIVE = f"claude --session-id {SESSION}"
+
+
+def claude_runs(monkeypatch, command: str | None) -> None:
+    """This session's claude runs COMMAND in the injected `ps` table; None:
+    no claude is found for the session, so `ps` cannot say. No sidecar
+    answers either, and the claude is past the deaf check's grace. The
+    conftest pins `claude_for` to "a claude runs, our pid", and
+    `claude_headless` to "not headless" (SM-1034); the real ones read the
+    table, so the argv in it is what is measured."""
+    from conftest import REAL_CLAUDE_FOR, REAL_CLAUDE_HEADLESS
+    cmd = {} if command is None else {ONE_SHOT_PID: command}
+    ppid = {p: 1 for p in cmd}
+    monkeypatch.setattr(_seat, "claude_for", REAL_CLAUDE_FOR)
+    monkeypatch.setattr(_seat, "claude_headless", REAL_CLAUDE_HEADLESS)
+    monkeypatch.setattr(_seat, "_ps_table", lambda: (dict(ppid), dict(cmd)))
+    monkeypatch.setattr(_seat, "_live_sidecars", list)
+    monkeypatch.setattr(_seat, "claude_age", lambda pid: 600.0)
+
+
+def host_required() -> None:
+    """The host file says `pager_required: true`, hooks on."""
+    write_settings('{"version": 1, "hooks": true, "pager_required": true}\n')
+
+
+def test_a_one_shot_stop_hook_exits_0_and_says_nothing(seat, monkeypatch):
+    """The regression: hooks on, nothing listening, `claude -p`. The Stop
+    hook used to say not-listening and exit 2, which keeps a one-shot's
+    turn going until it arms a listener that keeps it alive."""
+    claude_runs(monkeypatch, ONE_SHOT)
+    r = stop()
+    assert r.exit_code == 0, r.output
+    assert r.stderr == "" and r.stdout == ""
+
+
+@pytest.mark.parametrize("argv", [
+    f"claude -p --session-id {SESSION}",
+    f"claude --print --session-id {SESSION}",
+    f"claude --print=json --session-id {SESSION}",
+])
+def test_every_print_spelling_is_a_one_shot(seat, monkeypatch, argv):
+    claude_runs(monkeypatch, argv)
+    r = stop()
+    assert r.exit_code == 0 and r.stderr == "", r.output
+    assert context(batch()) == []
+
+
+def test_a_one_shot_batch_gives_no_not_listening_line(seat, monkeypatch):
+    claude_runs(monkeypatch, ONE_SHOT)
+    for _ in range(2):
+        r = batch()
+        assert r.exit_code == 0, r.output
+        assert pager.LINE_NOT_LISTENING not in context(r)
+        assert not any("DEAF" in ln for ln in context(r))
+        assert context(r) == []
+
+
+def test_a_one_shots_queued_mail_still_rides(seat, monkeypatch, tmp_path):
+    claude_runs(monkeypatch, ONE_SHOT)
+    _s, link, _mid = queued(seat, tmp_path)
+    r = batch()
+    assert r.exit_code == 0, r.output
+    lines = context(r)
+    assert lines, "the mail did not ride"
+    assert pager.LINE_NOT_LISTENING not in lines
+    assert any("speak" in ln for ln in lines), lines
+    assert not link.exists(), "the mail was not taken"
+
+
+def test_a_one_shot_that_listens_on_purpose_keeps_the_listening_line(seat, monkeypatch):
+    claude_runs(monkeypatch, ONE_SHOT)
+    arm(seat)
+    assert stop().exit_code == 0
+    assert context(batch()) == [pager.LINE_LISTENING]
+
+
+# The three host-layer cases the ruling pins.
+
+def test_host_required_and_print_is_a_one_shot(seat, monkeypatch):
+    host_required()
+    claude_runs(monkeypatch, ONE_SHOT)
+    r = stop()
+    assert r.exit_code == 0 and r.stderr == "", r.output
+    assert context(batch()) == []
+
+
+def test_host_required_and_print_with_the_hooks_off_says_no_deaf(seat, monkeypatch):
+    write_settings('{"version": 1, "hooks": false, "pager_required": true}\n')
+    claude_runs(monkeypatch, ONE_SHOT)
+    r = stop()
+    assert r.exit_code == 0 and r.stderr == "", r.output
+    r = batch()
+    assert r.exit_code == 0 and r.stdout == "", r.output
+
+
+def test_the_variable_and_print_is_required_deaf_as_today(seat, monkeypatch):
+    host_required()
+    monkeypatch.setenv(_seat.REQUIRED_VAR, "1")
+    claude_runs(monkeypatch, ONE_SHOT)
+    r = stop()
+    assert r.exit_code == 2, r.output
+    line = r.stderr.strip()
+    assert line.startswith("pager: DEAF") and line.endswith(pager.LINE_WAYS_OUT)
+    assert context(batch()) == [line]
+
+
+def test_host_required_without_print_is_unchanged(seat, monkeypatch):
+    host_required()
+    claude_runs(monkeypatch, INTERACTIVE)
+    r = stop()
+    assert r.exit_code == 2, r.output
+    line = r.stderr.strip()
+    assert line.startswith("pager: DEAF")
+    assert context(batch()) == [line]
+
+
+def test_the_session_layer_opts_a_print_seat_in(seat, monkeypatch):
+    """A long-lived headless seat may opt in in its own session layer."""
+    from sessionmail import _layer
+    host_required()
+    p = _layer.session_settings_dir(SESSION) / "mail.json"
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text('{"pager_required": true}\n')
+    claude_runs(monkeypatch, ONE_SHOT)
+    r = stop()
+    assert r.exit_code == 2 and r.stderr.startswith("pager: DEAF"), r.output
+
+
+# The seats the change must leave alone.
+
+def test_an_interactive_seat_is_still_nagged(seat, monkeypatch):
+    claude_runs(monkeypatch, INTERACTIVE)
+    r = stop()
+    assert r.exit_code == 2 and r.stderr.strip() == pager.LINE_NOT_LISTENING
+    assert context(batch()) == [pager.LINE_NOT_LISTENING]
+
+
+def test_no_claude_found_is_todays_nag(seat, monkeypatch):
+    claude_runs(monkeypatch, None)
+    r = stop()
+    assert r.exit_code == 2 and r.stderr.strip() == pager.LINE_NOT_LISTENING
+    assert context(batch()) == [pager.LINE_NOT_LISTENING]
+
+
+def test_a_claude_with_no_argv_is_todays_nag(seat, monkeypatch):
+    """A sidecar names the claude, but `ps` cannot read its command line."""
+    from types import SimpleNamespace
+    claude_runs(monkeypatch, None)
+    monkeypatch.setattr(_seat, "_live_sidecars",
+                        lambda: [SimpleNamespace(id=SESSION, pid=ONE_SHOT_PID)])
+    r = stop()
+    assert r.exit_code == 2 and r.stderr.strip() == pager.LINE_NOT_LISTENING
+    assert context(batch()) == [pager.LINE_NOT_LISTENING]
+
+
+def test_ps_cannot_say_and_host_required_is_todays_deaf(seat, monkeypatch):
+    host_required()
+    claude_runs(monkeypatch, None)
+    from types import SimpleNamespace
+    monkeypatch.setattr(_seat, "_live_sidecars",
+                        lambda: [SimpleNamespace(id=SESSION, pid=ONE_SHOT_PID)])
+    r = stop()
+    assert r.exit_code == 2 and r.stderr.startswith("pager: DEAF"), r.output
+
+
+# How pytest itself was launched never makes a test seat a one-shot (SM-1034
+# fix-002). The conftest pins `claude_for` to the runner's pid, so the real
+# `claude_headless` would read the RUNNER's argv, where pytest's own `-p`
+# (`-p no:cacheprovider`, `-p xdist`) reads as `claude -p`. The conftest pins
+# the measure to "not headless" beside it.
+
+def test_a_runner_launched_with_pytest_p_is_still_nagged(seat, monkeypatch):
+    runner = "python3 -m pytest -p no:cacheprovider -q"
+    me = os.getpid()
+    monkeypatch.setattr(_seat, "_ps_table", lambda: ({me: 1}, {me: runner}))
+    monkeypatch.setattr(_seat, "_ps_one", lambda pid: ({me: 1}, {me: runner}))
+    assert _seat.headless(runner), "the runner's argv must hold the bare -p this pins"
+    r = stop()
+    assert r.exit_code == 2 and r.stderr.strip() == pager.LINE_NOT_LISTENING
+    assert context(batch()) == [pager.LINE_NOT_LISTENING]
+
+
+# `monitor_expected` has no reading of "headless" of its own: it asks
+# `claude_headless`, the one the conftest pins, so the DEAF line's "which
+# runs no monitor" and the one-shot test always agree about one seat. It
+# once read the runner's argv by hand, and under `pytest -p` it called every
+# test seat headless while `claude_headless` said not.
+
+@pytest.mark.parametrize("real", [False, True], ids=["conftest-pin", "real-argv"])
+def test_monitor_expected_agrees_with_claude_headless(seat, monkeypatch, real):
+    runner = "python3 -m pytest -p no:cacheprovider -q"
+    me = os.getpid()
+    monkeypatch.setattr(_seat, "_ps_table", lambda: ({me: 1}, {me: runner}))
+    monkeypatch.setattr(_seat, "_ps_one", lambda pid: ({me: 1}, {me: runner}))
+    if real:
+        from conftest import REAL_CLAUDE_HEADLESS
+        monkeypatch.setattr(_seat, "claude_headless", REAL_CLAUDE_HEADLESS)
+    monkeypatch.delenv(_seat.PAGER_VAR, raising=False)
+    monkeypatch.delenv(_seat.MONITOR_VAR, raising=False)
+    monkeypatch.setattr(_seat, "plugin_monitors", lambda env=None: True)
+    assert _seat.monitor_switch().on, "the switch must be on, or the argv is never read"
+    assert _seat.claude_headless(SESSION) is real
+    expected = _seat.monitor_expected(SESSION)
+    assert expected.expected is not real
+    if real:
+        assert expected.why == ("this is a headless seat (`claude -p`), which runs "
+                                "no monitor")
+    else:
+        assert expected == _seat.MonitorExpected(True)
+
+
+# A KNOWN MISREAD, pinned as it stands (SM-1034 fix-002, measured in
+# evidence/fix-002/prompt-misread.txt): `ps` joins argv with spaces, so an
+# INTERACTIVE claude launched with a prompt that holds a bare `-p`/`--print`
+# word reads as headless, and with nothing listening it is a one-shot: no
+# nag at all. If `headless` learns to tell a prompt from a flag, this test
+# is the one to turn around.
+
+@pytest.mark.parametrize("prompt", ["explain the -p flag", "use --print to script it"])
+def test_an_interactive_claude_whose_prompt_holds_a_bare_p_reads_as_a_one_shot(
+        seat, monkeypatch, prompt):
+    claude_runs(monkeypatch, f"claude --session-id {SESSION} {prompt}")
+    r = stop()
+    assert r.exit_code == 0 and r.stderr == "", r.output
+    assert context(batch()) == []
+
+
+def test_a_prompt_with_no_bare_p_word_is_still_nagged(seat, monkeypatch):
+    claude_runs(monkeypatch, f"claude --session-id {SESSION} explain the -p/--print flags")
+    r = stop()
+    assert r.exit_code == 2 and r.stderr.strip() == pager.LINE_NOT_LISTENING

@@ -936,7 +936,7 @@ def test_a_timeout_returns_124_and_says_what_to_do_next(rig):
 #
 # An argument in the help is one agents will use, so both leave the help, and
 # the timeout argument goes at once (spine 10.34). BOX keeps one release of grace
-# (openspec/changes/message-subscriptions/specs/pager/spec.md:88); --timeout
+# (OpenSpec change message-subscriptions, specs/pager/spec.md:88); --timeout
 # keeps working until taskmaster stops calling it (tasks.md 4.8b / 5.2).
 # So the HELP loses both now and the BEHAVIOUR loses neither.
 
@@ -1961,7 +1961,7 @@ def test_sm450_the_commands_are_not_the_hooks_listen_pages_with_the_hooks_off(ri
 
 # ── message-subscriptions 4.5-4.7 (design D8, D9): no BOX; $MAIL; birth ──
 #
-# specs/pager "listen takes one box" (openspec/changes/message-subscriptions/
+# specs/pager "listen takes one box" (OpenSpec change message-subscriptions,
 # specs/pager/spec.md:64-92): the box is the session's, else $MAIL (a
 # maildir), else exit 2 naming both. EVERY session listen births the box
 # (/RULINGS/3160: 3 of 8 live sessions had none, all launched with
@@ -2182,7 +2182,7 @@ def test_the_banner_names_the_session_box_it_bore_not_the_BOX_it_watches(rig, mo
 
 def test_with_no_session_the_grace_line_names_MAIL_not_subscription_add(rig, monkeypatch):
     """A ruling on the do-010 review: `message subscription add` defaults to the SESSION, which a human at a
-    shell lacks. Design D8 (openspec/changes/message-subscriptions/design.md:
+    shell lacks. Design D8 (OpenSpec change message-subscriptions, design.md:
     270-272 @ aee394a) names the human's replacement: set MAIL to the maildir
     and run the bare verb. So with no session id the ONE line names
     `MAIL=<that box path> pager listen` instead. WATCHED RED at aee394a."""

@@ -12,10 +12,13 @@ LaunchAgent). It is opt-in: nothing runs it until you install it with
 `message setup --pull`.
 
 ```sh
-python -m sessionmail._puller --once --dry-run   # look; deliver nothing
-message setup --pull --dry-run                   # print the plan
-message setup --pull                             # install the LaunchAgent
+python -m sessionmail._puller --once --dry-run
+message setup --pull --dry-run
+message setup --pull
 ```
+
+The first line looks and delivers nothing. The second prints the plan, and
+the third installs the LaunchAgent.
 
 ## What it does
 
@@ -80,10 +83,11 @@ message setup --pull                             # install the LaunchAgent
   and must print the IMAP secret on stdout. While it prints nothing, the
   puller says so once and looks again every 60 seconds. One form that never
   dials out on its own, only reusing an ssh control master that is already
-  up:
+  up. `MAILHOST` is the mail host, as ssh knows it, and `SECRET_FILE` the
+  file on it that holds the secret:
 
   ```sh
-  ssh -o ProxyCommand=false -o BatchMode=yes <mailhost> cat <path>
+  ssh -o ProxyCommand=false -o BatchMode=yes MAILHOST cat SECRET_FILE
   ```
 
   Any password store's command works the same way.
@@ -176,8 +180,9 @@ step and does not read the pull config at all.
   and the system ones, so `postmap`, notmuch, `tailscale` and your secret
   command's tools are found.
 - **The check only reads.** The step is `DONE` when the plist on disk is
-  exactly what setup would write *and* the job is loaded. A second run on
-  an unchanged host writes nothing and calls no `launchctl` write.
+  exactly what setup would write, the job is loaded, *and* the service file
+  (below) is current. A second run on an unchanged host writes nothing and
+  calls no `launchctl` write.
 - **`BLOCKED`, with nothing written,** when:
   - this is not macOS;
   - a file at the plist's path is not a sessionmail puller's plist (it runs
@@ -200,6 +205,46 @@ step and does not read the pull config at all.
   job reads the new value when it next starts. Restart it with
   `launchctl kickstart -k gui/$(id -u)/<pull.label>`.
 
+### The service file
+
+Once the job is loaded, setup writes `~/.sessionkit/mail/services/puller.json`,
+so `sessionkit service list` finds the puller. The folder sits beside
+`~/.sessionkit/mail/settings/`, never inside it. With the default label the
+file is:
+
+```json
+{
+  "service": 1,
+  "name": "puller",
+  "label": "dev.sessionkit.mail.puller",
+  "enabled": true,
+  "install": "message setup --pull"
+}
+```
+
+- **Only for a label under `dev.sessionkit.mail.`.** `name` is the label after
+  that prefix: `pull.label` `dev.sessionkit.mail.puller.alt` gives
+  `puller.alt`, still in `puller.json`. A host that chose a label outside the
+  prefix runs a job the kit does not manage: setup installs it all the same,
+  says `no service file`, and writes nothing under `services/`. A
+  `puller.json` left from an earlier label is not touched then.
+- **Written whole, atomically:** a temporary file in the same folder, then a
+  rename, so a reader sees the old file or the new one. The file is
+  rewritten from scratch, never merged, so a hand edit is replaced.
+- **A puller installed before this file existed** gets it on the next
+  `message setup --pull`: the plist is current and the job loaded, so the
+  step is `TODO` for the file alone. It writes the file and makes no
+  `launchctl` write, and the listener is not asked.
+- **A write that fails** leaves the step `FAILED` with
+  `service could not write <path>: <reason>; the previous file is unchanged`,
+  and setup exits 3, its own code, never the 1 of a failed install. The job
+  is installed and loaded all the same, so a caller can use it. Fix the
+  cause and run `message setup --pull` again to write the file.
+- **There is no uninstall verb for the puller**, so nothing sets `enabled:
+  false` in this file. To remove the puller, boot it out and delete its
+  plist by hand (`launchctl bootout gui/$(id -u)/<pull.label>`), then delete
+  the file too, or edit `enabled` to `false` to keep the service known.
+
 ### The log
 
 The job's stdout and stderr go to one file,
@@ -218,10 +263,13 @@ longer want it.
 ## Running it by hand
 
 ```sh
-python -m sessionmail._puller --once --dry-run    # classify and log only
-python -m sessionmail._puller --once              # deliver what waits, then exit
-python -m sessionmail._puller --advance-cursors   # skip every box to now
+python -m sessionmail._puller --once --dry-run
+python -m sessionmail._puller --once
+python -m sessionmail._puller --advance-cursors
 ```
+
+The first line classifies and logs only. The second delivers what waits,
+then exits. The third skips every box to now.
 
 - `--dry-run` connects and logs what it would do for each mail. It
   delivers nothing, moves no cursor and takes no lock, so it can run beside

@@ -9,7 +9,8 @@ count of commands still exiting that code IS the burndown, and nobody
 maintains it by hand.
 
 `tests/test_scaffold.py` asserts every requirement named here exists
-verbatim in its spec file, so the link cannot rot in silence.
+verbatim in its spec file, read through the `openspec/config.yaml` pointer,
+so the link cannot rot in silence.
 """
 
 from __future__ import annotations
@@ -24,14 +25,16 @@ EX_UNIMPLEMENTED = 69
 def stub(capability: str, requirement: str, spec: str | None = None) -> None:
     """Report that this command is scaffolded but unbuilt, then exit 69.
 
-    SPEC defaults to the ratified `openspec/specs/<capability>/spec.md`. A verb
-    whose requirement is still a proposed change names that change's delta
-    instead (`openspec/changes/<change>/specs/<capability>/spec.md`), so the
-    link points at text that exists rather than at a file that lacks it.
+    SPEC is a path inside the project's OpenSpec root, which
+    `openspec/config.yaml` names: the specs are kept there, not in this tree.
+    It defaults to the ratified `specs/<capability>/spec.md`. A verb whose
+    requirement is still a proposed change names that change's delta instead
+    (`changes/<change>/specs/<capability>/spec.md`), so the link points at
+    text that exists rather than at a file that lacks it.
     """
     ctx = click.get_current_context()
-    spec = spec or f"openspec/specs/{capability}/spec.md"
+    spec = spec or f"specs/{capability}/spec.md"
     click.echo(f"{ctx.command_path}: NOT IMPLEMENTED", err=True)
-    click.echo(f"  spec:        {spec}", err=True)
+    click.echo(f"  spec:        OpenSpec {spec}", err=True)
     click.echo(f"  requirement: {requirement}", err=True)
     ctx.exit(EX_UNIMPLEMENTED)

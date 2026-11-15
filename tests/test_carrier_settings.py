@@ -1,6 +1,6 @@
 """The carrier: the mail drop by default, and an exact vocabulary.
 
-openspec/changes/infra-settings, design D3 and D11. `_settings.carrier(env)`
+OpenSpec change infra-settings, design D3 and D11. `_settings.carrier(env)`
 is the one resolver: the variable when set and not empty, else the
 `sendmail` key in the template and host layers, else the drop. A carrier is
 exactly `drop` or an absolute path; anything else is REFUSED by name, and a

@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "sessionmail"
-version = "0.3.3"
+version = "0.4.0"
 description = "sessionmail - mail for coding agents: message, pager and memory over one maildir."
 readme = "README.md"
 requires-python = ">=3.11,<3.15"
@@ -23,7 +23,7 @@ dependencies = [
     "sessiontools>=0.3.3",
 ]
 
-# One package, three commands (openspec/specs/package/spec.md):
+# One package, three commands (OpenSpec spec package):
 # no fourth top-level command, no umbrella the three hang off.
 #
 # ⚠️ DO NOT add `vmailbox-gen` here. Not as a console script, not as a private
@@ -75,7 +75,7 @@ Repository = "https://github.com/sessionkit/sessionmail"
 # send-in-python): the final fallback for who is owed a rendered part.
 # `src/sessionmail/postfix/vmailbox-gen` is the generator that writes
 # postfix's virtual_mailbox_maps. It ships as PACKAGE
-# DATA, NOT a fourth console script: openspec/specs/package/spec.md RATIFIES
+# DATA, NOT a fourth console script: OpenSpec spec package RATIFIES
 # "no fourth top-level command and no umbrella command the three hang off".
 # `packages` already sweeps it up; `artifacts` names it so a future exclude
 # or .gitignore rule cannot silently drop it out of the wheel — losing it
@@ -107,7 +107,7 @@ include = ["src/sessionmail", ".claude-plugin/plugin.json", "README.md"]
 artifacts = ["src/sessionmail/postfix/vmailbox-gen", "src/sessionmail/postfix/magicdns-suffix", "src/sessionmail/postfix/nm-deliver", "src/sessionmail/postfix/delivery-check", "src/sessionmail/arm.txt", "src/sessionmail/settings.template.json", "src/sessionmail/mail.schema.json", "src/sessionmail/humans", "src/sessionmail/mhs", "src/sessionmail/seat", "src/sessionmail/notmuch"]
 
 [dependency-groups]
-dev = ["pytest>=8"]
+dev = ["pytest>=8", "jsonschema>=4"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

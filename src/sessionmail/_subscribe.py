@@ -1,6 +1,6 @@
 """`message subscription add|remove`: who may write which folder, and the write.
 
-`openspec/changes/message-subscriptions`, tasks 3.2, designs D1, D3.1 and D5,
+OpenSpec change `message-subscriptions`, tasks 3.2, designs D1, D3.1 and D5,
 specs/message "Only the verbs write a subscription, and every write
 rebuilds" and "Seat subscriptions, and anyone else's, are for a privileged
 seat" (`operator.privileged` in `~/.sessionkit/tools/settings/session.json`, read by

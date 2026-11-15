@@ -1,6 +1,6 @@
 """The built-in renderer: one markdown body to a self-contained HTML page.
 
-Task 4b of openspec/changes/send-in-python (decision 2: built in,
+Task 4b of OpenSpec change send-in-python (decision 2: built in,
 overridable, switchable off, `--raw` per mail). COPIED from the earlier
 bash renderer, session-mail-render (551 lines): the CSS, the extension set and the o03 mail profile below were
 that file's lines 166-377 BYTE FOR BYTE, and `render_page` is its main()

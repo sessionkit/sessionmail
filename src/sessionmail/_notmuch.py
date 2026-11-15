@@ -1,4 +1,4 @@
-"""The one search engine. `openspec/specs/pager/spec.md`: "Search SHALL be
+"""The one search engine. OpenSpec spec `pager`: "Search SHALL be
 notmuch ... The package SHALL contain no second index, filter language or
 query planner."
 
@@ -167,7 +167,7 @@ def search(query: str, env: dict[str, str] | None = None) -> list[Message]:
     return messages
 
 
-#: `openspec/specs/pager/spec.md`, "A wake prints the message, never cats
+#: OpenSpec spec `pager`, "A wake prints the message, never cats
 #: the file": the headers and the text part, never the raw file, never a
 #: multipart wrapper, never the HTML part. notmuch already decodes parts,
 #: so this walks its answer rather than opening the maildir at all.
@@ -224,7 +224,11 @@ def _text_parts(part) -> list[str]:
 
 
 def wake_text(message_id: str, env: dict[str, str] | None = None) -> str:
-    """The header block and the text body of ONE message, and nothing else."""
+    """The header block and the text body of ONE message, and nothing else.
+
+    Not paged by pointer: it prints an outside mail's Subject and body
+    whole (`_outside`). Nothing in src calls it; a caller that pages or
+    injects its text must check `_outside.words` first."""
     env = os.environ if env is None else env
     exe = binary(env)
     prefix, child = _engine(exe, env)

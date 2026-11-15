@@ -16,6 +16,13 @@ and a job loaded under the label with no plist at the target is never booted
 out: the label is configurable, and a host may already run a puller of its
 own under it. OUR puller's plist is replaced; nobody else's.
 
+Once the job is loaded, the install declares it in its service file,
+`~/.sessionkit/mail/services/puller.json` (`_service_file`, the one writer),
+so `sessionkit service` finds it. Only for a label under the kit's
+`dev.sessionkit.mail.` prefix: a host that chose another label runs a job the
+kit does not manage, and gets no file. There is no uninstall verb for the
+puller, so nothing writes `enabled: false` here.
+
 Seams, each the same shape as `_launchd`'s: `launchctl` is
 `_launchd.launchctl` (`$SESSIONMAIL_LAUNCHCTL`), `plutil` is
 `$SESSIONMAIL_PLUTIL` (else /usr/bin/plutil). `on_macos`, `uid`,
@@ -35,7 +42,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
-from . import _launchd, _settings
+from . import _launchd, _service_file, _settings
 
 #: The job's PATH: generic install prefixes, so `postmap`, notmuch, the
 #: tailscale CLI and the secret command's tools are found under launchd.
@@ -55,6 +62,12 @@ PLUTIL_VAR = "SESSIONMAIL_PLUTIL"
 DEFAULT_PLUTIL = "/usr/bin/plutil"
 PLUTIL_TIMEOUT = 30.0
 
+#: The puller's service file, `services/puller.json`: one puller per host, so
+#: the file keeps this stem whatever its label's tail (the `name` in it).
+SERVICE_STEM = "puller"
+#: The command that installs the puller, as a user types it.
+SERVICE_INSTALL = "message setup --pull"
+
 #: How long a booted-out job has to go before the install is FAILED, and
 #: how long the listener has to answer. Module values a test shortens.
 GONE_SECONDS = 10.0
@@ -68,6 +81,11 @@ class Refused(Exception):
 
 class Failed(Exception):
     """A tool failed while installing; the message names what is left where."""
+
+
+class Undeclared(Failed):
+    """The job is installed and loaded, but its service file could not be
+    written: the launchd act stands, and a re-run writes the file."""
 
 
 @dataclass(frozen=True)
@@ -319,3 +337,48 @@ def install(job: Job, env: Mapping[str, str]) -> str:
                      f"{job.target} is not loaded; the plist is left in place")
     did.append(f"bootstrapped {job.target}")
     return ", ".join(did)
+
+
+# -- the service file --------------------------------------------------------------
+
+def service_target(job: Job) -> Path | None:
+    """`<home>/.sessionkit/mail/services/puller.json`, or None when the job's
+    label is not under `_service_file.LABEL_PREFIX` (no file for it)."""
+    try:
+        _service_file.name_of(job.label)
+    except ValueError:
+        return None
+    return _service_file.path(SERVICE_STEM, env={"HOME": str(job.home)})
+
+
+def service_record(job: Job) -> dict:
+    """The puller's service file: its label, its name (the label's tail) and
+    the verb that installs it. No `uninstall`: there is none. No `port`: the
+    puller listens on nothing; it hands mail to `pull.listener`."""
+    return _service_file.record(enabled=True, label=job.label, install=SERVICE_INSTALL)
+
+
+def service_current(job: Job) -> bool:
+    """Whether the service file needs no write: it holds exactly the bytes
+    the install would write, or the label gets no file. Reads only."""
+    target = service_target(job)
+    if target is None:
+        return True
+    want = _service_file.render(service_record(job)).encode()
+    try:
+        return not target.is_symlink() and target.read_bytes() == want
+    except OSError:
+        return False
+
+
+def declare(job: Job) -> str:
+    """Write the service file once the job is loaded. Returns the line to
+    print; raises Undeclared (the launchd act stands) when the write fails."""
+    target = service_target(job)
+    if target is None:
+        return (f"no service file: {job.label} is not under "
+                f"{_service_file.LABEL_PREFIX}, so the kit does not manage it")
+    line, ok = _service_file.declare(service_record(job), target)
+    if not ok:
+        raise Undeclared(f"{line}. {job.target} is installed and loaded")
+    return line

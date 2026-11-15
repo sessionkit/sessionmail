@@ -411,7 +411,7 @@ def hdr(block, name):
 
 # ── IDENTITY ────────────────────────────────────────────────────
 # The contract is sessiontools' identity block, agreed with this reader
-# (openspec/changes/wake-identity): `session identity <sid>` prints the block
+# (OpenSpec change wake-identity): `session identity <sid>` prints the block
 # the launcher wrote, exit 0; exit 3 = no block; any other exit is a fault.
 # Mail never reads identity.md itself (its home is tools' to move) and never
 # parses or re-words the block: it prints stdout as it came.

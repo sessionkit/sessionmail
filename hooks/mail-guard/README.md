@@ -169,8 +169,8 @@ with sessionmail's own reader.
 ## Wiring it — the plugin registers it
 
 This hook lived in the `session` repo until that project was retired
-(`openspec/changes/mail-leaves-session`, item 23, in the git repository;
-the release archive leaves `openspec/` out). There it was wired by hand
+(the OpenSpec change `mail-leaves-session`, item 23, kept in the project's OpenSpec store, outside this tree).
+There it was wired by hand
 into `~/.claude/settings.json` with `session hooks install`, and
 `make check-hooks` went red on an unwired box. Here the **plugin** registers
 it, like its other hooks:

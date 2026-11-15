@@ -6,7 +6,7 @@ stub until the requirement is built. That makes three things measurable
 before anything works, and this module measures them:
 
 - **Budget** - every rendered page is within the reader's 40 lines / 400
-  tokens (`openspec/specs/help/spec.md`, "A help page fits the reader's
+  tokens (OpenSpec spec `help`, "A help page fits the reader's
   budget").
 - **Link** - every stub names a requirement that really exists in the spec
   it cites, so the link-back cannot rot in silence.
@@ -32,13 +32,12 @@ import pytest
 from click.testing import CliRunner
 
 ROOT = Path(__file__).resolve().parents[1]
-SPECS = ROOT / "openspec" / "specs"
 
-#: `openspec/specs/package/spec.md`, "One package, three commands".
+#: OpenSpec spec `package`, "One package, three commands".
 COMMANDS = ("message", "pager", "memory")
 
-#: `openspec/specs/help/spec.md`, "A help page fits the reader's budget",
-#: AMENDED to the fold (`openspec/changes/above-the-fold`). The concept, and why 40/400:
+#: OpenSpec spec `help`, "A help page fits the reader's budget",
+#: AMENDED to the fold (OpenSpec change `above-the-fold`). The concept, and why 40/400:
 #: `slipbox/above-the-fold.md` - the first 40 lines of anything an agent
 #: reads are all it may get, so what is NEEDED goes there and the rest may
 #: follow below. A threshold, not a cutoff: fewer tokens, and the right
@@ -69,7 +68,7 @@ def fold_override(doc: str | None) -> str | None:
 #: `sessionmail._stub.EX_UNIMPLEMENTED` - sysexits.h EX_UNAVAILABLE.
 EX_UNIMPLEMENTED = 69
 
-from _export import export_ignored  # noqa: E402  (tests/ is on the path)
+from _openspec import spec_file  # noqa: E402  (tests/ is on the path)
 from invocations import INVOCATIONS, RESERVED_TLD  # noqa: E402  (tests/ is on the path)
 
 
@@ -185,8 +184,9 @@ def count_tokens(text: str) -> tuple[int, str] | tuple[None, str]:
 
 def requirement_titles(capability: str, spec: Path | None = None) -> set[str]:
     """The requirement titles in SPEC - by default the ratified spec of
-    CAPABILITY, or a proposed change's delta when a stub names one."""
-    spec = spec or SPECS / capability / "spec.md"
+    CAPABILITY, or a proposed change's delta when a stub names one. Both are
+    read through the `openspec/config.yaml` pointer, in the OpenSpec store."""
+    spec = spec or spec_file(f"specs/{capability}/spec.md")
     assert spec.is_file(), f"no spec at {spec}"
     titles = set(re.findall(r"^### Requirement: (.+)$", spec.read_text(), re.M))
     assert titles, f"{spec} parsed to zero requirements - the regex is wrong"
@@ -236,7 +236,7 @@ def test_three_groups_and_twenty_one_verbs():
     (Sun 2030-12-08, SM-726 do-003, design.md (l3)): `pager mute` and `pager unmute`, so 42. Plus one (Sun
     2030-12-08, SM-498 build-002, merged up at its land-prep): `pager hook
     start`, the SessionStart hook that births the session's box, so 43. Plus
-    one (Sun 2030-12-08, SM-748 do-002, openspec/changes/message-receipt D3):
+    one (Sun 2030-12-08, SM-748 do-002, OpenSpec change message-receipt D3):
     the HIDDEN verb `message receipt`, what another session recorded about
     one message - walked and fold-checked here, on no group page and no MCP
     tool, so `mcp` keeps line 20 of `message --help`; so 44 (SM-748
@@ -254,11 +254,16 @@ def test_three_groups_and_twenty_one_verbs():
     PROVISIONAL (`_setup.VERB`) - on no group page and no MCP tool, so 49. Plus
     one (Sun 2030-12-08, SM-983 do-001, its design as passed): `pager settings
     hooks [on|off]`, the one verb that writes the host's `"hooks"` - under the
-    HIDDEN noun `pager settings`, so on no group page and no MCP tool; so 50."""
+    HIDDEN noun `pager settings`, so on no group page and no MCP tool; so 50.
+    Plus one (Sun 2030-12-08, SM-1012, OpenSpec change message-address): the
+    HIDDEN verb `message address`, the From a send from this shell would
+    carry - on no group page and no MCP tool, so `mcp` keeps line 20 of
+    `message --help`; so 51."""
     groups = [label for label, argv, _ in PAGES if not argv]
     verbs = [label for label, argv, _ in PAGES if argv]
     assert len(groups) == 3, groups
-    assert len(verbs) == 50, verbs
+    assert len(verbs) == 51, verbs
+    assert "message address" in verbs, verbs
     assert "pager settings hooks" in verbs, verbs
     assert "message setup" in verbs, verbs
     assert "pager settings install" in verbs, verbs
@@ -330,7 +335,7 @@ def test_a_page_puts_what_is_needed_above_the_fold(label, text):
     tokens; examples and detail may follow below. No test can judge what is
     NEEDED, so a page that overruns is red until someone signs for it:
     `fold-override: <date> <name> - <reason>` in the source, below the form
-    feed. (`openspec/changes/above-the-fold`.)"""
+    feed. (OpenSpec change `above-the-fold`.)"""
     check_fold(label, text, DOCS.get(label))
 
 
@@ -347,7 +352,8 @@ HEAD = 20
 ABOVE_HEAD = {
     "message box": ["Usage: message box list|path", "Exit:"],
     "message box list": ["Usage: message box list", "--all", "Exit:"],
-    "message box path": ["Usage: message box path", "BOX defaults to your seat", "Exit:"],
+    "message box path": ["Usage: message box path", "With no BOX: this session's box",
+                         "Exit:"],
     "message subscription": ["Usage: message subscription", "your SESSION (the default",
                              "a privileged seat", "Exit:"],
     "message subscription add": ["Usage: message subscription add BOX", "your session",
@@ -362,12 +368,17 @@ ABOVE_HEAD = {
     # `seat init` to the minter. Their pages are fold-checked by the walk, and
     # tests/test_message_seat.py reads them from a child.
     "message seat": ["Usage: message seat init|agent", "launchctl", "neither blesses", "Exit:"],
-    # SM-748 do-002 (openspec/changes/message-receipt, "The page says it"): the
+    # SM-748 do-002 (OpenSpec change message-receipt, "The page says it"): the
     # hidden verb's usage, its RECORDED rule, the one line on seat files the
     # verb never reads (ruling H), and its exits. Never shortened
     # to let a page pass: cut the page.
     "message receipt": ["Usage: message receipt ID --session SID", "RECORDED",
                         "seats/*/marks", "Exit:"],
+    # SM-1012 (OpenSpec change message-address): the hidden verb's usage, the
+    # rule it prints by, that it only reads, the inherited-words line, and
+    # its exits.
+    "message address": ["Usage: message address [-r ID] [--json]", "$EMAIL",
+                        "Reads only", "Inherited identity words", "Exit:"],
     # SM-660 fix-003 (design-001 C): the hidden setup verb's usage, its
     # print-first rule, the dry run, and its exits.
     "message setup": ["Usage: message setup [--box NAME]... [--dry-run]", "WHOLE plan first",
@@ -699,32 +710,56 @@ def test_a_stub_names_a_requirement_that_really_exists(label):
     assert match, f"{label} exits {EX_UNIMPLEMENTED} without naming a spec:\n{text}"
     path, capability = match.group("path"), match.group("capability")
     requirement = match.group("requirement").strip()
-    # openspec/ is export-ignored: in the release export this skips (SM-849).
-    assert requirement in requirement_titles(capability, export_ignored(path)), (
+    # Read through the pointer: skips in the release export, or where the
+    # store cannot be resolved, naming why (tests/_openspec.py).
+    assert requirement in requirement_titles(capability, spec_file(path)), (
         f"{label} cites '{requirement}' in {path}, "
         f"which has no such requirement"
     )
 
 
 #: What a stub prints: the ratified spec, or - for a verb whose requirement is
-#: still a PROPOSED change (`memory init`, SM-186) - that change's delta.
+#: still a PROPOSED change (`memory init`, SM-186) - that change's delta. The
+#: path is inside the OpenSpec root the pointer names, not in this tree.
 STUB_SPEC = re.compile(
-    r"spec:\s+(?P<path>openspec/(?:specs|changes/[^/\s]+/specs)/"
+    r"spec:\s+OpenSpec\s+(?P<path>(?:specs|changes/[^/\s]+/specs)/"
     r"(?P<capability>[^/\s]+)/spec\.md)\s+requirement:\s+(?P<requirement>.+)"
 )
 
 
 def test_the_link_reads_a_ratified_spec_and_a_proposed_change():
     """Both spellings a stub may print parse, and nothing else does: the
-    widened pattern must not start accepting a path outside openspec/."""
-    ratified = "spec:        openspec/specs/memory/spec.md\n  requirement: R"
-    proposed = ("spec:        openspec/changes/memory-init/specs/memory/spec.md\n"
+    widened pattern must not start accepting a path outside the OpenSpec
+    root, nor the old in-tree `openspec/` spelling."""
+    ratified = "spec:        OpenSpec specs/memory/spec.md\n  requirement: R"
+    proposed = ("spec:        OpenSpec changes/memory-init/specs/memory/spec.md\n"
                 "  requirement: R")
     assert STUB_SPEC.search(ratified).group("capability") == "memory"
     m = STUB_SPEC.search(proposed)
     assert (m.group("path"), m.group("capability")) == (
-        "openspec/changes/memory-init/specs/memory/spec.md", "memory")
-    assert STUB_SPEC.search("spec:        docs/memory/spec.md\n  requirement: R") is None
+        "changes/memory-init/specs/memory/spec.md", "memory")
+    assert STUB_SPEC.search("spec:        OpenSpec docs/memory/spec.md\n  requirement: R") is None
+    assert STUB_SPEC.search("spec:        openspec/specs/memory/spec.md\n  requirement: R") is None
+
+
+def test_a_stub_prints_the_spelling_the_link_test_reads():
+    """The stub and the parser agree: a probe verb that is still a stub
+    prints a line STUB_SPEC reads, with the default (ratified) path and with
+    a proposed change's delta."""
+    from sessionmail._stub import stub
+
+    @click.command()
+    @click.option("--delta", is_flag=True)
+    def probe(delta):
+        stub("memory", "R", "changes/memory-init/specs/memory/spec.md" if delta else None)
+
+    for argv, path in (([], "specs/memory/spec.md"),
+                       (["--delta"], "changes/memory-init/specs/memory/spec.md")):
+        result = CliRunner().invoke(probe, argv, prog_name="probe")
+        assert result.exit_code == EX_UNIMPLEMENTED
+        m = STUB_SPEC.search(result.stderr)
+        assert m, result.stderr
+        assert (m.group("path"), m.group("capability"), m.group("requirement")) == (path, "memory", "R")
 
 
 # ── the table is RUN, so it must not name anyone ─────────────────────────
@@ -799,7 +834,7 @@ def test_a_group_page_lists_every_verb(name):
         assert verb in text, f"{name} --help does not list {verb}"
 
 
-#: RATIFIED but only two-thirds true. `openspec/specs/help/spec.md` says a
+#: RATIFIED but only two-thirds true. OpenSpec spec `help` says a
 #: verb's flags "SHALL live on the verb's own page and nowhere else", and its
 #: scenario says "no flag of any verb appears on it". pager's authored group
 #: page obeys. message's and memory's do NOT: they carry a usage sketch per

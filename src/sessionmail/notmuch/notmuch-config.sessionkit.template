@@ -10,8 +10,10 @@
 
 [database]
 path=${database_path}
-# No hook_dir: notmuch's default, <path>/.notmuch/hooks, where `message
-# setup` links sessionmail's post-new hook.
+# Pinned, where `message setup` links sessionmail's post-new hook. Unpinned,
+# notmuch would use $XDG_CONFIG_HOME/notmuch/default/hooks whenever that
+# folder exists: the hooks of your own notmuch, never sessionmail's.
+hook_dir=${database_path}/.notmuch/hooks
 
 [new]
 tags=unread;inbox;

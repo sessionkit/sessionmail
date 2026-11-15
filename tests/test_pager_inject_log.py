@@ -1,6 +1,6 @@
 """SM-518 do-002: the pager inject log's writer, and the hooks' rows.
 
-openspec/changes/pager-inject-log (PROPOSED, most of it RULED): every string
+OpenSpec change pager-inject-log (PROPOSED, most of it RULED): every string
 the hooks put into an agent's context gets ONE row in
 `<session-dir>/log/mail/pager.jsonl`, sized on the exact string
 emitted. Here: the writer (`_injectlog`: seq under flock, the 16 MB roll

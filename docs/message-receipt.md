@@ -7,8 +7,10 @@ like `tm kick --require-receipt`, or an audit. It is read-only and needs no
 seat of its own.
 
 ```sh
-message receipt '<2000000000.11111.11111@host.session-mail>' --session SID [--json]
+message receipt '<2000000000.11111.11111@host.session-mail>' --session SID
 ```
+
+Add `--json` for one object with every row (schema 1, below).
 
 The verb is **hidden**, like [`message seat`][message-seat]: it is not on
 `message --help` and is not an MCP tool. A visible verb would push `mcp`
@@ -95,7 +97,6 @@ four-field mark line has `stamp` `""` and `seat` `-`. `carry`, `promoted`
 and `bad` read `false`, `false` and `[]` when not recorded. `passed_over`
 counts lines that are not records. Within schema 1 keys are only added:
 ignore a key you do not know. Anything else raises `schema`. The full
-requirements are in `openspec/changes/message-receipt/`, in the git
-repository; the release archive leaves `openspec/` out.
+requirements are in the OpenSpec change `message-receipt`, kept in the project's OpenSpec store, outside this tree.
 
 [message-seat]: message-seat.md

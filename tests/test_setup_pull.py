@@ -556,8 +556,339 @@ def test_the_plan_with_pull_is_the_plan_without_it_plus_one_step(host):
     assert [s.id for s in with_pull] == [s.id for s in without] + ["pull-agent"]
 
 
+def test_the_help_page_names_exit_3():
+    page = CliRunner().invoke(message_cli, [_setup.VERB, "--help"], prog_name="message").stdout
+    flat = " ".join(page.split())
+    assert "3 the puller is loaded but its service file was not written (re-run to write it)" \
+        in flat, page
+    assert "4 done what it can, steps are left" in flat
+
+
 def test_the_help_page_names_pull():
     page = CliRunner().invoke(message_cli, [_setup.VERB, "--help"], prog_name="message").stdout
     assert any(line.lstrip().startswith("--pull") for line in page.splitlines()), page
     assert _setup.parser().parse_args(["--pull"]).pull is True
     assert _setup.parser().parse_args([]).pull is False
+
+
+# -- the service file: services/puller.json, beside settings/ ------------------------
+#
+# `sessionkit service` finds the puller by reading one file the install writes:
+# `~/.sessionkit/mail/services/puller.json`, under the job's HOME. Written only
+# once the job is bootstrapped and loaded, and only for a label under the kit's
+# `dev.sessionkit.mail.` prefix: a host that picked another label runs a job the
+# kit does not manage, so no file is written for it. Validated against a
+# vendored copy of the kit's schema, `tests/fixtures/service/service.schema.json`.
+
+SERVICE_SCHEMA = json.loads((Path(__file__).parent / "fixtures" / "service" /
+                             "service.schema.json").read_text())
+
+
+def service_file(host: Host) -> Path:
+    return host.home / ".sessionkit" / "mail" / "services" / "puller.json"
+
+
+def expected_service(label: str = LABEL, name: str = "puller") -> dict:
+    """The ask's record for the puller, key for key."""
+    return {"service": 1, "name": name, "label": label, "enabled": True,
+            "install": "message setup --pull"}
+
+
+def use_label(host: Host, label: str) -> Path:
+    """Set pull.label in the settings file; the plist path it gives."""
+    host.pull["label"] = label
+    host.write()
+    return host.home / "Library" / "LaunchAgents" / f"{label}.plist"
+
+
+def test_the_install_writes_a_schema_valid_puller_service_file(host):
+    rc, out, err = setup(host.env, "--pull")
+    assert "FAILED" not in out, out
+    assert err == "", err
+    target = service_file(host)
+    rec = json.loads(target.read_text())
+    assert rec == expected_service()
+    assert list(rec) == list(expected_service()), "the written key order"
+    import jsonschema
+    jsonschema.validate(rec, SERVICE_SCHEMA)
+    assert _service_file_faults(rec) == []
+    assert stat.S_IMODE(target.stat().st_mode) == 0o644
+    assert target.read_text().endswith("}\n")
+    # Beside settings/, never inside it.
+    assert target.parent.parent == host.home / ".sessionkit" / "mail"
+    assert f"service {target} (enabled: true)" in applied(out), out
+    assert applied(out).index("bootstrapped") < applied(out).index(f"service {target}")
+
+
+def _service_file_faults(rec: dict) -> list[str]:
+    from sessionmail import _service_file
+    return _service_file.check(rec)
+
+
+def test_the_install_command_in_the_file_is_the_verb_that_wrote_it(host):
+    setup(host.env, "--pull")
+    rec = json.loads(service_file(host).read_text())
+    assert rec["install"] == f"{_setup.COMMAND} {_setup.PULL}" == _pull_agent.SERVICE_INSTALL
+
+
+def test_another_label_under_the_kits_prefix_names_the_service_by_its_tail(host):
+    label = "dev.sessionkit.mail.puller.alt"
+    plist = use_label(host, label)
+    rc, out, _err = setup(host.env, "--pull")
+    assert "FAILED" not in out, out
+    assert plist.is_file()
+    rec = json.loads(service_file(host).read_text())
+    assert rec == expected_service(label, "puller.alt")
+    import jsonschema
+    jsonschema.validate(rec, SERVICE_SCHEMA)
+
+
+@pytest.mark.parametrize("label", ["org.example.puller", "dev.sessionkit.mailer.puller",
+                                   "dev.sessionkit.voice.puller", "dev.sessionkit.mail"])
+def test_a_label_outside_the_kits_prefix_writes_no_service_file(host, label):
+    plist = use_label(host, label)
+    rc, out, _err = setup(host.env, "--pull")
+    assert "FAILED" not in out, out
+    assert plist.is_file(), "the job is installed all the same"
+    assert label in host.launchctl.jobs()
+    assert not (host.home / ".sessionkit" / "mail" / "services").exists()
+    assert "no service file" in applied(out) and "dev.sessionkit.mail." in applied(out), out
+    # A second run is DONE: the missing file is not something to do.
+    rc2, out2, _ = setup(host.env, "--pull")
+    assert step(out2)[0] == _setup.DONE, out2
+    assert not (host.home / ".sessionkit" / "mail" / "services").exists()
+
+
+def test_a_label_outside_the_prefix_leaves_an_earlier_file_untouched(host):
+    """The file belongs to a label the kit manages; a host that moves the
+    puller off it gets no write at all, the old file included."""
+    old = service_file(host)
+    old.parent.mkdir(parents=True)
+    old.write_text('{"keep": "me"}\n')
+    use_label(host, "org.example.puller")
+    setup(host.env, "--pull")
+    assert old.read_text() == '{"keep": "me"}\n'
+
+
+def test_a_re_run_is_idempotent_and_writes_nothing(host):
+    setup(host.env, "--pull")
+    target = service_file(host)
+    before = target.read_bytes(), target.stat().st_ino, target.stat().st_mtime_ns
+    host.forget_calls()
+    rc, out, err = setup(host.env, "--pull")
+    assert "FAILED" not in out and err == ""
+    assert step(out)[0] == _setup.DONE, out
+    assert applied(out) == ""
+    assert (target.read_bytes(), target.stat().st_ino, target.stat().st_mtime_ns) == before
+    assert sorted(p.name for p in target.parent.iterdir()) == ["puller.json"]
+    assert set(host.launchctl.verbs()) == {"print"}
+
+
+def test_a_running_puller_with_no_file_gets_one_without_a_restart(host, monkeypatch):
+    """A puller installed before the file existed: the plist is current and
+    the job loaded, so the step writes the file alone. No bootout, no
+    bootstrap, no lint, and the listener is not asked: nothing launchd runs
+    changes."""
+    setup(host.env, "--pull")
+    service_file(host).unlink()
+    host.forget_calls()
+    asked = []
+    monkeypatch.setattr(_pull_agent, "listening", lambda h, p: asked.append((h, p)) or False)
+    rc, out, err = setup(host.env, "--pull", "--dry-run")
+    state, detail = step(out)
+    assert state == _setup.TODO and f"write {service_file(host)}" in detail, out
+    assert not service_file(host).exists(), "a dry run writes nothing"
+    rc, out, err = setup(host.env, "--pull")
+    assert "FAILED" not in out, out
+    assert json.loads(service_file(host).read_text()) == expected_service()
+    assert applied(out) == f"service {service_file(host)} (enabled: true)", out
+    assert set(host.launchctl.verbs()) == {"print"}, host.launchctl.calls()
+    assert host.plutil_calls() == []
+    assert asked == []
+    assert step(setup(host.env, "--pull")[1])[0] == _setup.DONE
+
+
+@pytest.mark.parametrize("old", [b'{"service": 1, "name": "x", "enabled": false}\n',
+                                 b"not json at all", b""])
+def test_a_stale_or_hand_edited_file_is_rewritten_whole(host, old):
+    setup(host.env, "--pull")
+    service_file(host).write_bytes(old)
+    host.forget_calls()
+    rc, out, _err = setup(host.env, "--pull")
+    assert "FAILED" not in out, out
+    assert json.loads(service_file(host).read_text()) == expected_service()
+    assert "bootstrap" not in host.launchctl.verbs()
+
+
+def test_the_write_is_a_temp_file_renamed_into_place(host, monkeypatch):
+    """Atomic: the bytes go to a temp file in the services folder, and one
+    rename puts it over the target."""
+    setup(host.env, "--pull")
+    service_file(host).unlink()
+    renames = []
+    real = os.replace
+
+    def spy(src, dst):
+        renames.append((Path(src), Path(dst)))
+        return real(src, dst)
+    monkeypatch.setattr(os, "replace", spy)
+    setup(host.env, "--pull")
+    assert len(renames) == 1, renames
+    src, dst = renames[0]
+    assert dst == service_file(host)
+    assert src.parent == dst.parent and src != dst and not src.exists()
+
+
+def test_a_failed_rename_leaves_the_old_file_byte_identical(host, monkeypatch):
+    setup(host.env, "--pull")
+    target = service_file(host)
+    target.write_bytes(b"old bytes")
+    real = os.replace
+
+    def refuse(src, dst):
+        if Path(dst) == target:
+            raise PermissionError(13, "Permission denied")
+        return real(src, dst)
+    monkeypatch.setattr(os, "replace", refuse)
+    rc, out, _err = setup(host.env, "--pull")
+    assert rc == _setup.EX_UNDECLARED == 3, out
+    assert target.read_bytes() == b"old bytes"
+    assert sorted(p.name for p in target.parent.iterdir()) == ["puller.json"], "no temp left"
+
+
+def block_services(host: Host) -> Path:
+    """Put a FILE where the services folder goes, so no service file can be
+    written under it; the blocker, to check it is left as it was."""
+    blocker = host.home / ".sessionkit" / "mail" / "services"
+    blocker.parent.mkdir(parents=True, exist_ok=True)
+    blocker.write_text("a file, not a folder")
+    return blocker
+
+
+def test_a_failed_write_names_the_job_as_installed_and_exits_3(host):
+    """The services path is a file, so the folder cannot be made: the job is
+    still installed and loaded (a failed write never undoes the launchd
+    act), the line says what to re-run, and the exit is 3, not a failed
+    install's 1."""
+    blocker = block_services(host)
+    rc, out, _err = setup(host.env, "--pull")
+    assert rc == _setup.EX_UNDECLARED == 3, out
+    assert "FAILED: service could not write" in out
+    assert "the previous file is unchanged" in out
+    assert f"{LABEL} is installed and loaded" in out
+    assert f"Re-run {_setup.COMMAND} {_setup.PULL}" in out
+    assert host.plist.is_file() and LABEL in host.launchctl.jobs()
+    assert blocker.read_text() == "a file, not a folder"
+    assert out.rstrip("\n").splitlines()[-1] == (
+        f"{_setup.COMMAND}: pull-agent installed and loaded, but its service file was not "
+        f"written; re-run {_setup.COMMAND} with the same options to write it")
+    assert "stopped at" not in out, "the run is not stopped: the job is up"
+
+
+def test_exit_3_wins_over_4_and_still_lists_the_steps_left(host):
+    """This host has no notmuch, so a clean run here is 4 (steps left). With
+    the file unwritten it is 3, and the block of steps left still prints,
+    before the line that says to re-run."""
+    clean_rc = setup(host.env, "--pull", "--dry-run")[0]
+    assert clean_rc == _setup.EX_REMAINS, "the premise: steps are left on this host"
+    block_services(host)
+    rc, out, _err = setup(host.env, "--pull")
+    assert rc == _setup.EX_UNDECLARED, out
+    assert "step(s) left for you:" in out and "notmuch-index (BLOCKED)" in out
+    block = out.split("step(s) left for you:\n", 1)[1].split("then run", 1)[0]
+    assert "pull-agent" not in block, "the puller is not a step left for the human"
+    assert out.index("step(s) left for you:") < out.index("pull-agent installed and loaded, but")
+
+
+def test_a_running_puller_whose_file_cannot_be_written_is_3_with_no_launchctl_write(host):
+    """The file-alone path: the job runs from a current plist, the file is
+    missing and cannot be written. 3, and launchd is only read."""
+    setup(host.env, "--pull")
+    service_file(host).unlink()
+    service_file(host).parent.rmdir()
+    block_services(host)
+    host.forget_calls()
+    rc, out, _err = setup(host.env, "--pull")
+    assert rc == _setup.EX_UNDECLARED, out
+    assert "FAILED: service could not write" in applied(out), out
+    assert set(host.launchctl.verbs()) == {"print"}, host.launchctl.calls()
+    assert LABEL in host.launchctl.jobs()
+
+
+def test_a_bootstrap_failure_is_1_even_with_the_services_folder_blocked(host):
+    """1 keeps its meaning: a failed install is 1, and its file is never tried."""
+    host.launchctl.knob("fail-bootstrap")
+    block_services(host)
+    rc, out, _err = setup(host.env, "--pull")
+    assert rc == _setup.EX_FAILED == 1, out
+    assert "service could not write" not in out
+    assert "stopped at pull-agent" in out
+
+
+def _plan_step(sid: str, kind: str) -> "_setup.Step":
+    """A step whose apply does KIND: "ok", or raises "undeclared", "failed"
+    or "left". Built at run time, so the file collects on any sha."""
+    raises = {"undeclared": "Undeclared", "failed": "Failed", "left": "Left"}
+
+    def apply() -> str:
+        if kind == "ok":
+            return f"did {sid}"
+        raise getattr(_setup, raises[kind])(f"{sid} {kind}")
+    return _setup.Step(sid, sid, check=lambda: (_setup.TODO, sid), apply=apply)
+
+
+@pytest.mark.parametrize("kinds, want", [
+    (("ok", "undeclared"), 3),
+    (("undeclared", "ok"), 3),
+    (("undeclared", "failed"), 1),
+    (("undeclared", "left"), 3),
+    (("ok", "left"), 4),
+    (("ok", "ok"), 0),
+])
+def test_run_plan_exit_precedence_is_1_then_3_then_4_then_0(kinds, want):
+    """An Undeclared step does not stop the run (nothing later reads its
+    file); a later Failed still stops it with 1."""
+    plan = [_plan_step(sid, kind) for sid, kind in zip("ab", kinds)]
+    out = io.StringIO()
+    rc = _setup.run_plan(plan, {}, out, dry_run=False, tty=False)
+    assert rc == want, out.getvalue()
+    if want == 3:
+        assert "FAILED: " in out.getvalue()
+    if kinds == ("undeclared", "ok"):
+        assert "did b" in out.getvalue(), "the run goes on past an undeclared step"
+
+
+def test_the_exit_codes_are_distinct_and_3_is_undeclared():
+    assert (_setup.EX_OK, _setup.EX_FAILED, _setup.EX_USAGE, _setup.EX_UNDECLARED,
+            _setup.EX_REMAINS) == (0, 1, 2, 3, 4)
+    assert issubclass(_setup.Undeclared, _setup.Failed)
+    assert issubclass(_pull_agent.Undeclared, _pull_agent.Failed)
+
+
+def test_a_failed_install_writes_no_service_file(host):
+    host.launchctl.knob("fail-bootstrap")
+    rc, _out, _err = setup(host.env, "--pull")
+    assert rc == _setup.EX_FAILED
+    assert not service_file(host).exists()
+
+
+def test_a_lint_failure_writes_no_service_file(host):
+    (host.plutil.parent / "plutil.fail").write_text("")
+    setup(host.env, "--pull")
+    assert not service_file(host).exists()
+
+
+def test_a_blocked_step_writes_no_service_file(host, monkeypatch):
+    monkeypatch.setattr(_pull_agent, "listening", lambda h, p: False)
+    setup(host.env, "--pull")
+    assert not service_file(host).exists()
+    monkeypatch.setattr(_pull_agent, "listening", lambda h, p: True)
+    _foreign_plist(host.plist)
+    setup(host.env, "--pull")
+    assert not service_file(host).exists()
+
+
+def test_a_dry_run_writes_no_service_file(host):
+    setup(host.env, "--pull", "--dry-run")
+    assert not (host.home / ".sessionkit").exists()
+

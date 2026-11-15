@@ -1,6 +1,6 @@
 """SM-771: a script-mail's SUBJECT never executes.
 
-The memory spec (openspec/specs/memory/spec.md, "A script-mail's subject never
+The memory spec (OpenSpec spec memory, "A script-mail's subject never
 executes"): "the subject after the number is documentation of one shell line;
 the body is the program", and its scenario: GIVEN a [WAKE] item whose subject
 is `rm -rf ~` and whose body is a placeholder, WHEN `memory run` reaches it,

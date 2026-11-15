@@ -201,7 +201,8 @@ def main():
         return
     print("\nTagged %s. Not pushed - when you are ready:" % tag)
     print("  git push && git push --tags")
-    print("Then: uv build && uv publish   (PyPI), and refresh the installed plugin.")
+    print("Then: make pypi-dist   (the wheel + sdist PyPI gets; the tag must be on the public repo)")
+    print("      uv publish dist/sessionmail-%s*   (PyPI), and refresh the installed plugin." % version)
 
 
 if __name__ == "__main__":

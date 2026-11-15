@@ -1,4 +1,4 @@
-"""message box list|path (openspec/changes/message-subscriptions, tasks 3.1,
+"""message box list|path (OpenSpec change message-subscriptions, tasks 3.1,
 design D6, specs/message "Boxes are listed by kind, and session boxes only on
 request").
 

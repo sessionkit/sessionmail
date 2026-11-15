@@ -1,7 +1,7 @@
 """`memory init`'s READ half: find BOX's canonical root before anything is sent.
 
 The normative text is the change delta,
-`openspec/changes/memory-init/specs/memory/spec.md`:
+OpenSpec change `memory-init`, `specs/memory/spec.md`:
 
 - "The root hint comes from the environment" (MODIFIED) scopes the scan. It
   reads BOX's OWN maildir, a `[ROOT]` To BOX at any plus-tag, never a

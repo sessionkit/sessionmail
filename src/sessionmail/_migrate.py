@@ -1,6 +1,6 @@
 """`pager settings migrate`: carry what the old tree still holds into the new.
 
-sessiontools `openspec/changes/session-settings`, task 3.2 (part 2). Part 1
+sessiontools OpenSpec change `session-settings`, task 3.2 (part 2). Part 1
 made a SEAT's subscriptions the `subscriptions` map of
 `~/.session/seats/<seat>/settings/mail.json` (`_layer`), and since then a
 box file left in a seat's OLD folder routes nothing: `_subscription.scan`

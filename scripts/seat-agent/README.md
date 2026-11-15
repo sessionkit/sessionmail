@@ -58,8 +58,10 @@ seat --help` answers when typed.
 
 `message seat agent --install ADDRESS [SOCKET]` renders it, writes it into
 `~/Library/LaunchAgents`, loads it with `launchctl bootstrap`, and checks that the agent
-answers. `--uninstall ADDRESS` boots it out and removes the plist. Their contract
-(output, exits, the `Capability: install` marker) is in
+answers; then it writes the job's service file under `~/.sessionkit/mail/services/`.
+`--uninstall ADDRESS` boots it out, removes the plist and keeps the service file, switched
+off. A hand render writes no service file. Their contract (output, exits, the service
+file, the `Capability: install` marker) is in
 [`docs/message-seat.md`](../../docs/message-seat.md).
 
 `message seat agent --template` prints it, and nothing else: it never renders it, loads

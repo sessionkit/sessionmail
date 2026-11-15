@@ -11,8 +11,8 @@ TRUSTED turn whose `Ears-Kind` is `spoken` gets ONE header line,
 
     [heard 12:00:00 airpods judy] (ride)
 
-then the whole view. This amends D4's header row (openspec/changes/
-pager-genie/design.md:484); the amendment is recorded beside the row.
+then the whole view. This amends D4's header row (OpenSpec change
+pager-genie, design.md:484); the amendment is recorded beside the row.
 Every other mail's line is unchanged, byte for byte (pinned below).
 
 SM-782: TRUSTED means the keeper SIGNED it (the `KEEPER_SIGNED` stand-in

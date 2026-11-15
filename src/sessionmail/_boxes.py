@@ -1,6 +1,6 @@
 """The boxes on this host, by kind, each with who else receives its mail.
 
-`openspec/changes/message-subscriptions`, tasks 3.1: `message
+OpenSpec change `message-subscriptions`, tasks 3.1: `message
 box list` lists seat, project and store boxes, each row naming its
 subscribers; session-id boxes only on request (they were 2,007 of 2,845
 under the boxes root on one measured host, and 2,202 of 2,993 later).

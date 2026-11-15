@@ -1,6 +1,6 @@
 """This host's NAME, and the set of names that ARE this host.
 
-The rule is `openspec/changes/host-rule/proposal.md` (its table of cases,
+The rule is OpenSpec change `host-rule`, `proposal.md` (its table of cases,
 rows N1-N12 and I1-I14, is what `tests/test_host_rule.py` checks). Two
 questions, two answers, never mixed:
 

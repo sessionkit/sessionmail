@@ -2,7 +2,7 @@
 
 Help-driven development (slipbox `help-driven-development`): the page is the
 artefact under review, so what it PROMISES is pinned here against the spec
-it was authored from - `openspec/changes/memory-init/specs/memory/spec.md`,
+it was authored from - OpenSpec change `memory-init`, `specs/memory/spec.md`,
 a PROPOSED change. The body is built by do-004/do-005 (`tests/test_root.py`,
 `tests/test_init_mint.py`), and `--supersede` on a box with a root by do-007:
 no stub is left on `init`.
@@ -18,7 +18,7 @@ import re
 import click
 from click.testing import CliRunner
 
-from _export import export_ignored
+from _openspec import spec_file
 from sessionmail.memory import INIT_REQUIREMENT, INIT_SPEC, cli
 
 
@@ -132,8 +132,9 @@ def test_supersede_is_built_and_no_stub_is_left_on_init(tmp_path, monkeypatch):
 
 
 def test_the_cited_requirement_is_in_the_change_delta():
-    """The requirement the page cites still exists in the change's delta.
-    openspec/ is export-ignored, so in the release export this SKIPS (SM-849);
-    the CLI half above still runs there."""
-    delta = export_ignored(INIT_SPEC).read_text()
+    """The requirement the page cites still exists in the change's delta,
+    read through the `openspec/config.yaml` pointer. In the release export,
+    or where the store cannot be resolved, this SKIPS, naming why
+    (tests/_openspec.py); the CLI half above still runs there."""
+    delta = spec_file(INIT_SPEC).read_text()
     assert f"### Requirement: {INIT_REQUIREMENT}\n" in delta

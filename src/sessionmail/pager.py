@@ -712,18 +712,30 @@ def monitor_status_line(seat, session: str, ps=None,
 
 
 def required_status_line(seat, session: str,
-                         required: "_seat.Required | None" = None) -> str:
+                         required: "_seat.Required | None" = None, ps=None) -> str:
     """`pager status`'s `required:` line:
     yes or no, the source that decided it, a contradiction with
     SESSIONMAIL_PAGER=off named (the pager off beats required), and every
-    setting that was there and was ignored."""
-    required = _seat.pager_required(seat, session) if required is None else required
+    setting that was there and was ignored. On a headless seat (`claude -p`
+    on this session's claude's argv) the host layer is not counted
+    (`_seat.pager_required`), and the line says so; a headless seat that is
+    not required is a one-shot, and the line says the hooks ask it to arm
+    nothing. When `ps` cannot say, every layer counts, as before; with the
+    pager off nothing is asked of `ps` (the off beats required either way)."""
+    headless = None
+    if required is None:
+        headless = (_seat.claude_headless(session, ps=ps)
+                    if session not in ("", "-") and _seat.pager_enabled() else None)
+        required = _seat.pager_required(seat, session, headless=headless)
     line = f"required: {'yes' if required.on else 'no'} ({required.source})"
     if required.on and not _seat.pager_enabled():
         line += (f" - but {_seat.PAGER_VAR}={(os.environ.get(_seat.PAGER_VAR) or '').strip()} "
                  "turns the pager off, which beats it: the deaf check says nothing")
     elif required.on:
         line += " - the Stop and PostToolBatch hooks say DEAF when nothing listens"
+    elif headless:
+        line += (" - a one-shot (`claude -p`): the Stop and PostToolBatch hooks never ask "
+                 "it to arm")
     for why in required.ignored:
         line += f"; {why}"
     return line
@@ -776,7 +788,7 @@ def status_readings(seat, session: str, ps=None) -> list[str]:
     `today:` line (this session's inject log, summed), then - when
     nothing at all listens for this session and the pager is on - the (l5)
     sentence: the monitor can only start at launch, and the two ways out."""
-    out = [monitor_status_line(seat, session, ps=ps), required_status_line(seat, session),
+    out = [monitor_status_line(seat, session, ps=ps), required_status_line(seat, session, ps=ps),
            frozen_status_line(session)]
     today = today_status_line(seat, session)
     if today:
@@ -1304,6 +1316,20 @@ def _voice_pointer_line(chars: int, pointer: str) -> str:
             f"not given: `message read {pointer}` to read it whole")
 
 
+def _subject_shown(parsed) -> str:
+    """What a line prints where PARSED's subject goes: the pointer words for
+    outside mail (`Entry.outside`, a mail with a `Source` header), else its
+    subject, `(no subject)` when there is none. Read by getattr: this reads
+    any entry-shaped PARSED (the tests' stand-ins carry no `outside`).
+
+    THE one source. Every line that names a mail - the ride-along's header
+    line, the monitor's, `pager status`, the listing form, the not-given
+    banner and its file - calls this, so no page gives a word a stranger
+    wrote and the next renderer cannot forget."""
+    return (getattr(parsed, "outside", "") or getattr(parsed, "subject", "")
+            or "(no subject)")
+
+
 def _record_unlined(seat: "_seat.Seat", session: str, stamp: str, unlined: list) -> None:
     """Append each (entry, parsed, mid) the scoop filed with no
     line to this session's `UNLINED_FILE`. Never raises: a record that
@@ -1315,7 +1341,7 @@ def _record_unlined(seat: "_seat.Seat", session: str, stamp: str, unlined: list)
                 fh.write(json.dumps({
                     "stamp": stamp, "id": mid, "name": e.name,
                     "from": getattr(parsed, "sender_local", "") or "",
-                    "subject": getattr(parsed, "subject", "") or ""}) + "\n")
+                    "subject": _subject_shown(parsed)}) + "\n")
     except (OSError, _seat.NoIdentity):
         pass
 
@@ -1371,7 +1397,7 @@ def _named_mail(paths, wanted: set[str]) -> dict[str, tuple[str, str]]:
             parsed = _maildir.parse(path, 0, True)
         except Exception:  # noqa: BLE001 - see the docstring
             continue
-        found[mid] = (parsed.sender_local or "?", parsed.subject or "(no subject)")
+        found[mid] = (parsed.sender_local or "?", _subject_shown(parsed))
     return found
 
 
@@ -1499,7 +1525,7 @@ def _who_what(parsed) -> tuple[str, str, str]:
     entry-shaped PARSED (the tests' stand-ins carry none). ONE source for
     these pieces, so a second renderer never re-spells them."""
     return (_flat(parsed.sender_local or "?"),
-            _flat(parsed.subject or "(no subject)"),
+            _flat(_subject_shown(parsed)),
             _flat(getattr(parsed, "unreadable_mark", "")))
 
 
@@ -1815,7 +1841,7 @@ def _box_line(entry: "_maildir.Entry") -> str:
     from . import _maildir, _views
     tag = _maildir.original_to_key(entry.delivered_to) or RIDE_TAG
     when = entry.date.astimezone().strftime("%H:%M") if entry.date else "--:--"
-    line = (f"[{tag}] {when}  {entry.sender_local or '?'}  {entry.subject or '(no subject)'}"
+    line = (f"[{tag}] {when}  {entry.sender_local or '?'}  {_subject_shown(entry)}"
             f"{entry.unreadable_mark}")
     line = " ".join(_views.without_controls(line, keep=_views.SPACING).split())
     return line if len(line) <= LINE_WIDTH else line[: LINE_WIDTH - 1] + "…"
@@ -2105,6 +2131,10 @@ def _notice_heard(entry, parsed, signed: "Callable[[Path], object] | None"):
     `_Unheard` when the file cannot be read: the notice then names the next
     one, never a voice turn's subject as if it were mail's."""
     if not getattr(parsed, "voice_marked", False):
+        return None
+    if getattr(parsed, "outside", ""):
+        # `Source` wins over `Ears-Kind`: an imported mail is named by its
+        # pointer words (`_subject_shown`), never by a heard header's fields.
         return None
     from email.parser import BytesHeaderParser
     from email.policy import default as default_policy
@@ -4382,7 +4412,7 @@ def _arrival_line(box: str, arrival, _maildir) -> str:
     """
     try:
         entry = _maildir.parse(arrival.path, 0, True)
-        line = (f"[{box}] {entry.sender_local or '?'}  {entry.subject or '(no subject)'}"
+        line = (f"[{box}] {entry.sender_local or '?'}  {_subject_shown(entry)}"
                 f"{entry.unreadable_mark}")
     except Exception:
         line = f"[{box}] {arrival.name}"
@@ -5342,6 +5372,8 @@ def hook_stop() -> None:
         # in the grace). It REPLACES the plain not-listening nag, hooks on or
         # off. Asked before the `off` stamp below, because the check reads
         # that stamp itself: after `pager stop --kill` it says "ended".
+        # A one-shot `claude -p` is silence too: the check counts no host
+        # layer for a headless seat (`_seat.one_shot`).
         line = deaf_check(seat, session, required=required)
         if line:
             click.echo(line, err=True)
@@ -5358,6 +5390,11 @@ def hook_stop() -> None:
         ctx.exit(0)
         return
     if _seat.pager_enabled() and _seat.is_listening(seat, session) is None:
+        if _seat.one_shot(seat, session):
+            # A one-shot `claude -p`: an exit 2 keeps its turn going, and the
+            # listener it would start keeps it alive. Silent, exit 0.
+            ctx.exit(0)
+            return
         click.echo(LINE_NOT_LISTENING, err=True)
         _log_hook(_injectlog.VIA_STOP, LINE_NOT_LISTENING, seat=seat, payload=payload,
                   event=str(payload.get("hook_event_name") or "Stop"), started=started)
@@ -5385,6 +5422,10 @@ def deaf_check(seat, session: str, ps=None, env: dict[str, str] | None = None,
     4. grace? claude not running yet for this session, or younger than
        `_seat.GRACE_SECONDS`: None. (Asked after 3 only because it costs a
        `ps`; every one of 2-4 answers None, so the order changes no answer.)
+    4a. a one-shot? claude runs with `-p`/`--print` and is not required
+       once the host layer is not counted (`_seat.one_shot`): None. A
+       DEAF line ends with an arm, and a one-shot that obeys never exits.
+       When `ps` cannot say how claude was launched, it is not one.
     4b. a platform with no kqueue, where no listener can run: the
        platform line (`cannot_listen_line`), never DEAF - there is no way
        out to name;
@@ -5416,6 +5457,8 @@ def deaf_check(seat, session: str, ps=None, env: dict[str, str] | None = None,
     claude = _seat.claude_for(session, ps=ps)
     if claude is None:
         return None
+    if _seat.one_shot(seat, session, ps=ps, env=env, claude=claude):
+        return None
     age = _seat.claude_age(claude)
     if age is not None and age < _seat.GRACE_SECONDS:
         return None
@@ -5444,7 +5487,8 @@ def _state_lines(seat, session: str, required: "_seat.Required | None" = None) -
     never says `pager stop`; no `ps` answer keeps the plain line.
     On a REQUIRED seat (REQUIRED.on) the not-listening line is
     the deaf check's answer instead - DEAF with its reason, or nothing while
-    claude is in its grace."""
+    claude is in its grace. A one-shot (`_seat.one_shot`) that is not
+    listening gets no line at all."""
     table: list = []
 
     def ps():
@@ -5479,6 +5523,10 @@ def _state_lines(seat, session: str, required: "_seat.Required | None" = None) -
     if required is not None and required.on:
         line = deaf_check(seat, session, ps=ps, required=required)
         return [line] if line else []
+    if _seat.one_shot(seat, session, ps=ps):
+        # A one-shot `claude -p` runs no listener, and an order to arm one
+        # would keep it alive: no state line at all. Its mail still rides.
+        return []
     # Where no listener can run, "not listening - re-arm" is an order that
     # cannot be obeyed: the platform line instead.
     return [LINE_NOT_LISTENING if can_listen() else cannot_listen_line()]
@@ -6215,6 +6263,8 @@ def _hooks_refusal(result) -> str:
         return line.removeprefix("sessionmail: ")
     if kind == _settings.REFUSED_UNCHECKED:
         return result.why
+    if kind == _settings.REFUSED_SPLIT:
+        return f"{result.why}. Nothing written"
     if kind == _settings.REFUSED_READBACK:
         return (f'wrote "{result.key}": {json.dumps(result.want)} in {result.path}, but it reads as '
                 f"{result.state}{': ' + result.why if result.why else ''}; a race or a bug: look at the file")
@@ -6433,7 +6483,7 @@ attach(cli, CAPABILITY)
 
 # `python -m sessionmail.pager` IS `pager`. Without this the module imports,
 # does nothing and exits 0 (measured), and the MCP send
-# door starts its child exactly this way (openspec/changes/agents-send-door,
+# door starts its child exactly this way (OpenSpec change agents-send-door,
 # "Running the module sends, or says why not - it never does nothing").
 # `prog_name`, or the page says `Usage: pager.py ...`.
 if __name__ == "__main__":

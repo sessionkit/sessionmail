@@ -29,6 +29,7 @@ from pathlib import Path
 
 import pytest
 
+import _export
 from sessionmail import _sender, _sig
 
 HERE = Path(__file__).parent
@@ -230,16 +231,50 @@ def test_every_golden_vector_reads_its_first_text_plain_leaf(name):
     assert text == _sig.leaf_data(first).decode("utf-8", "replace")
 
 
-def test_the_golden_vector_files_are_unmoved():
-    """A change to a vector is a change to the wire format (fixtures/sig_v2/README.md).
+GOLDEN_AT_BASE = "df29c8831f3fe95fbefd77d658e23c104950a419d8c9c017048b37f27eb5526c"
+
+
+def golden_digest(d: Path) -> str:
+    """sha256 over the name and bytes of every vector file in D.
     The TEST key's private half is not hashed: the release export leaves it out
-    (.gitattributes), and tests/test_sig_v2_key_export.py pins it in a checkout."""
+    (.gitattributes), and tests/test_sig_v2_key_export.py pins it in a checkout.
+    Names starting with `__` or `.` are not vectors but by-products of whatever ran
+    near them (a `__pycache__/` left when pytest is handed make_vectors.py by name and
+    imports it, a `.DS_Store`), so
+    they are not hashed either; no fixture is named that way (pinned below). Any other
+    entry, a directory included, is read and hashed, and fails loudly if it can't be."""
     h = hashlib.sha256()
-    for f in sorted(GOLDEN.iterdir()):
-        if f.name == "sessionmail-sig-TEST-VECTORS-ONLY":
+    for f in sorted(d.iterdir()):
+        if f.name == "sessionmail-sig-TEST-VECTORS-ONLY" or f.name.startswith(("__", ".")):
             continue
         h.update(f.name.encode() + b"\0" + f.read_bytes() + b"\0")
-    assert h.hexdigest() == "df29c8831f3fe95fbefd77d658e23c104950a419d8c9c017048b37f27eb5526c"
+    return h.hexdigest()
+
+
+def test_the_golden_vector_files_are_unmoved():
+    """A change to a vector is a change to the wire format (fixtures/sig_v2/README.md)."""
+    assert golden_digest(GOLDEN) == GOLDEN_AT_BASE
+
+
+def test_a_bytecode_cache_beside_the_vectors_does_not_move_the_pin(tmp_path):
+    """Importing make_vectors.py in place leaves a `__pycache__/` among the vectors.
+    It changes no vector, so the pin holds in a copy that has one (and a `.DS_Store`)."""
+    copy = tmp_path / "sig_v2"
+    shutil.copytree(GOLDEN, copy)
+    (copy / "__pycache__").mkdir(exist_ok=True)
+    (copy / "__pycache__" / "make_vectors.cpython-312.pyc").write_bytes(b"\xcb\r\r\n" + bytes(12))
+    (copy / ".DS_Store").write_bytes(b"\0\0\0\1Bud1")
+    assert golden_digest(copy) == GOLDEN_AT_BASE
+
+
+def test_no_tracked_vector_file_is_named_like_a_by_product():
+    """The by-product rule above skips `__*` and `.*` names: none may be a real fixture."""
+    if not _export.in_checkout() or shutil.which("git") is None:
+        pytest.skip("no git: the tarball export has no index to ask")
+    names = subprocess.run(["git", "-C", str(GOLDEN), "ls-files", "--", "."],
+                           check=True, capture_output=True, text=True).stdout.split()
+    assert names and "vectors.json" in names
+    assert [n for n in names if n.startswith(("__", "."))] == []
 
 
 # ── both interpreters ────────────────────────────────────────────────────────

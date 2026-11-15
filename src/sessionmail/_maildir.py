@@ -8,7 +8,9 @@ before the move). This
 module ENUMERATES a box the way session-mail-list does - every file in
 new/ and cur/, sorted by the maildir unique name (epoch-prefixed, so
 chronological), 1-based over ALL of them so an index means the same
-thing to `list` and `read` - and parses HEADERS only. It never renames,
+thing to `list` and `read` - and parses HEADERS only (and, for a row a
+verb does not print, only the header block and the ids it needs: `scan`,
+`row_ids`). It never renames,
 flags, or claims anything: reading here is harmless by construction.
 
 A DRAFT is not among them (pager-genie 3.28): a file whose
@@ -36,6 +38,7 @@ from email.parser import BytesHeaderParser
 from email.policy import default as default_policy
 from pathlib import Path
 
+from . import _outside
 from ._headers import UNREADABLE, Unreadable, as_written, read_header, safe_header
 
 #: The MAIL ROOT's default: the tree postfix serves (`virtual_mailbox_base`),
@@ -99,6 +102,18 @@ class Entry:
     #: must treat a voice turn apart (the monitor's line) parses no plain
     #: mail a second time to find out.
     voice_marked: bool = False
+    #: The pointer words for a mail an importer brought in (`_outside.words`:
+    #: it carries a `Source` header), ready to print; "" for ordinary mail.
+    #: A surface that lists or pages the entry prints `shown_subject`, never
+    #: `subject`, so no listing gives a word a stranger wrote.
+    outside: str = ""
+
+    @property
+    def shown_subject(self) -> str:
+        """What a page, a status line or a listing prints where the subject
+        goes: the pointer words for outside mail, else the subject. `subject`
+        itself is unchanged: threading, labels and `message read` need it."""
+        return self.outside or self.subject
 
     @property
     def original_to(self) -> str:
@@ -563,6 +578,7 @@ def parse(path: Path, index: int, unread: bool) -> Entry:
         cc=text("Cc"),
         unreadable=tuple(bad),
         voice_marked=_voice_marked(headers),
+        outside=_outside.words(headers),
     )
 
 
@@ -677,19 +693,102 @@ def is_draft(path: Path) -> bool:
     return m is not None and "D" in m.group(0)[3:]
 
 
-def enumerate_with_drafts(box: str, env: dict[str, str] | None = None
-                          ) -> tuple[list[Entry], list[Path]]:
-    """(every MESSAGE in BOX, oldest first, indexed 1..N over new/ and cur/;
-    the paths of its DRAFTS, oldest first). A draft is never indexed and
-    never parsed here: `list` only counts them, and `read` parses the one it
-    is asked for (`find_draft`)."""
+@dataclass(frozen=True)
+class Row:
+    """A message in a box known by its NAME only: the index `parse` would
+    give it, its path, and whether it sits in new/. Nothing is opened to make
+    one: `scan` sorts names, and a caller parses the rows it prints."""
+    index: int
+    path: Path
+    unread: bool
+
+
+def scan(box: str, env: dict[str, str] | None = None) -> tuple[list[Row], list[Path]]:
+    """(every MESSAGE in BOX as a `Row`, oldest first, indexed 1..N over new/
+    and cur/; the paths of its DRAFTS, oldest first), by NAME only: no file
+    is opened. The index is the one `enumerate_with_drafts` gives, because
+    that is this plus a `parse` of each row."""
     d = box_dir(box, env)
     files = [(p, True) for p in (d / "new").iterdir() if p.is_file()]
     files += [(p, False) for p in (d / "cur").iterdir() if p.is_file()]
     files.sort(key=lambda t: _key(t[0]))
     mail = [(p, unread) for p, unread in files if not is_draft(p)]
     drafts = [p for p, _unread in files if is_draft(p)]
-    return [parse(p, i, unread) for i, (p, unread) in enumerate(mail, start=1)], drafts
+    return [Row(i, p, unread) for i, (p, unread) in enumerate(mail, start=1)], drafts
+
+
+def enumerate_with_drafts(box: str, env: dict[str, str] | None = None
+                          ) -> tuple[list[Entry], list[Path]]:
+    """(every MESSAGE in BOX, oldest first, indexed 1..N over new/ and cur/;
+    the paths of its DRAFTS, oldest first). A draft is never indexed and
+    never parsed here: `list` only counts them, and `read` parses the one it
+    is asked for (`find_draft`). Parses EVERY row: a verb that needs only a
+    few (`list`, `read N`) takes `scan` and `row_ids` instead."""
+    rows, drafts = scan(box, env)
+    return [parse(r.path, r.index, r.unread) for r in rows], drafts
+
+
+#: The end of a header block: a line break, then an empty line. The same
+#: pattern `parse` splits the body at.
+_HEAD_END = re.compile(rb"\r?\n\r?\n")
+#: The first read of a file `header_block` makes; it doubles until the block ends.
+_HEAD_CHUNK = 8192
+
+
+def header_block(path: Path) -> bytes:
+    """PATH's header block: its bytes up to and including the first empty
+    line (`_HEAD_END`), or the whole file when it has none. The body past
+    that line is not read.
+
+    Why `BytesHeaderParser` reads the SAME headers from this as from the
+    whole file: the parser splits lines at `\\r\\n`, `\\r` or `\\n`, and stops
+    at the first line that is not a header (an empty line among them). Any
+    `_HEAD_END` match ends in `\\n` and holds an empty line, so every line up
+    to the cut is split exactly as in the whole file and the parser stops at
+    or before the cut. Pinned by tests/test_message_list_cost.py."""
+    with path.open("rb") as f:
+        raw = f.read(_HEAD_CHUNK)
+        while True:
+            split = _HEAD_END.search(raw)
+            if split:
+                return raw[:split.end()]
+            more = f.read(max(len(raw), _HEAD_CHUNK))
+            if not more:
+                return raw
+            raw += more
+
+
+def row_ids(path: Path) -> tuple[str, str]:
+    """(Message-ID, Supersedes) of PATH: exactly the `message_id` and
+    `supersedes` `parse` gives it (the same accessor, `_bare(as_written(
+    safe_header(...)))`, unreadable case included), from the header block
+    alone and with no other header read. What `list` needs of a row it does
+    not print: the superseded set, and the marks key for --unread."""
+    headers = BytesHeaderParser(policy=default_policy).parsebytes(header_block(path))
+    return (_bare(as_written(safe_header(headers, "Message-ID"))),
+            _bare(as_written(safe_header(headers, "Supersedes"))))
+
+
+def find_row(rows: list[Row], which: str,
+             known: dict[int, str] | None = None) -> Entry | None:
+    """`find(<every row parsed>, WHICH)`, parsing only the entry it returns:
+    a number is its row; an ID is the first row whose `row_ids` Message-ID is
+    WHICH's bare id, read in index order. KNOWN (row index -> Message-ID)
+    keeps the ids read so far, so many ids in one call read each file once."""
+    if which.isdigit():
+        n = int(which)
+        if not 1 <= n <= len(rows):
+            return None
+        r = rows[n - 1]
+        return parse(r.path, r.index, r.unread)
+    wanted = _bare(which)
+    known = {} if known is None else known
+    for r in rows:
+        if r.index not in known:
+            known[r.index] = row_ids(r.path)[0]
+        if known[r.index] == wanted:
+            return parse(r.path, r.index, r.unread)
+    return None
 
 
 def enumerate_box(box: str, env: dict[str, str] | None = None) -> list[Entry]:

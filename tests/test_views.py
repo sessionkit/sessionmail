@@ -1,6 +1,6 @@
 """pager-genie 3.2a and 3.2b: the ride-along carries a VIEW of each message.
 
-openspec/changes/pager-genie, tasks.md 3.2a (the text view for mail) and
+OpenSpec change pager-genie, tasks.md 3.2a (the text view for mail) and
 3.2b (the whole view for voice, and the header line's additions). The spec
 requirement proven here: *The ride-along carries a view of each message, by
 kind* (its scenarios "A short mail, whole", "A long mail, capped with a

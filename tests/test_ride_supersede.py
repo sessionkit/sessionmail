@@ -1,6 +1,6 @@
 """pager-genie 3.3: supersede in the pager (design D3, O6 RULED).
 
-openspec/changes/pager-genie, tasks.md 3.3: a superseding mail stands alone
+OpenSpec change pager-genie, tasks.md 3.3: a superseding mail stands alone
 and is given whole; a superseded one not yet given is not given and is
 marked `seen`, reason `superseded`. Both orders. *(A superseding mail stands
 alone, and a superseded one is not given twice)*

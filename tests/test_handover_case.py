@@ -5,7 +5,7 @@ Why this file exists. message-subscriptions 4.2 (do-009) made plain `pager
 status` read THIS SESSION'S BOX, because the retired subscription files no
 longer name anything to read. The base pager spec's *Read is not terminal*
 scenario **"Read, not dealt with, new session"**
-(`openspec/specs/pager/spec.md:486`) says a message session A read and never
+(OpenSpec spec `pager`, `spec.md:486`) says a message session A read and never
 marked done "is in B's return-now status". B's own box cannot hold mail
 delivered before B existed, so that no longer holds for the resident view
 (do-009 review). The rule this file follows: name the route a successor

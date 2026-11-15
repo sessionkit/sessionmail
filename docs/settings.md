@@ -353,6 +353,9 @@ Whether this seat's pager is required to be listening.
 - `SESSIONMAIL_PAGER_REQUIRED` (`1`, `true`, `on` or `0`, `false`, `off`)
   wins over every layer, both ways. `SESSIONMAIL_PAGER=off` turns the check
   off.
+- For a `claude -p` seat the host layer is not counted, so a host-wide
+  `true` reaches interactive seats only, and a long-lived headless seat opts
+  in by the variable or its own seat or session layer.
 - Without sessiontools' settings reader installed, only the host `mail.json`
   is read, and that is said.
 

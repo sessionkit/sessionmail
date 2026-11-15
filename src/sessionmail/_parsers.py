@@ -1,6 +1,6 @@
 """The parsers `pager-filters` consumes: parse here, judge there.
 
-openspec/changes/pager-genie, tasks.md 3.13 and 3.21 (design: "Order:
+OpenSpec change pager-genie, tasks.md 3.13 and 3.21 (design: "Order:
 the parse here, the judgement in the rules"), D14 ("Only hey wakes") and
 "Trust" (the calls/trust interface agreed with the rules).
 

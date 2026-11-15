@@ -1,7 +1,7 @@
 """The pager inject log: one JSONL row per string sessionmail puts into an
 agent's context, sized on the exact string emitted.
 
-openspec/changes/pager-inject-log (PROPOSED). The rows live in the SESSION dir:
+OpenSpec change pager-inject-log (PROPOSED). The rows live in the SESSION dir:
 
     <session-dir>/log/mail/pager.jsonl     the rows (0600)
     <session-dir>/log/mail/pager.1.jsonl   the one rolled generation

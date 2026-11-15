@@ -1,4 +1,4 @@
-"""message subscription add|remove (openspec/changes/message-subscriptions,
+"""message subscription add|remove (OpenSpec change message-subscriptions,
 tasks 3.2, designs D1, D3.1 and D5; specs/message "Only the verbs write a
 subscription, and every write rebuilds" and "Seat subscriptions, and anyone
 else's, are for Ivan and Judy").
@@ -700,7 +700,7 @@ def test_an_address_has_no_refusal(box):
 
 
 # ── session-settings 3.2: a SEAT's subscriptions are its map ───────────────
-# sessiontools openspec/changes/session-settings, task 3.2; read per owner
+# sessiontools OpenSpec change session-settings, task 3.2; read per owner
 # (call 1 (A)); an agent's bare name keeps its old
 # folder until 3.8 (call 3 (b)).
 

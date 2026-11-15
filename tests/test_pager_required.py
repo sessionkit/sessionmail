@@ -89,7 +89,11 @@ class Seat:
         host(HOOKS_OFF)
 
     def claude(self, command: str | None, extra: dict[int, str] | None = None) -> None:
-        """This session's claude runs COMMAND (None: claude is not running)."""
+        """This session's claude runs COMMAND (None: claude is not running).
+        The argv is measured: the real `claude_headless` reads it, not the
+        conftest's interactive pin (SM-1034)."""
+        from conftest import REAL_CLAUDE_HEADLESS
+        self.mp.setattr(_seat, "claude_headless", REAL_CLAUDE_HEADLESS)
         cmd = {} if command is None else {CLAUDE: command}
         cmd.update(extra or {})
         ppid = {p: (CLAUDE if p != CLAUDE else 1) for p in cmd}
@@ -686,6 +690,130 @@ def test_status_quiet_says_none_of_it(s):
         (box / d).mkdir(parents=True, exist_ok=True)
     r = CliRunner().invoke(cli, ["status", "--quiet"], prog_name="pager")
     assert "required:" not in r.stderr
+
+
+# ── a headless (`-p`) seat: the host layer is not counted ────────────────
+
+ONE_SHOT = f"claude -p --session-id {SESSION}"
+NOT_COUNTED = ("for a headless seat (`claude -p`) only SESSIONMAIL_PAGER_REQUIRED and the "
+               "seat and session layers decide")
+
+
+def test_a_headless_seat_skips_a_host_that_says_required(s):
+    p = host({"pager_required": True})
+    r = _seat.pager_required(_seat.resolve(), SESSION, headless=True)
+    assert not r.on and r.source == "the default: no setting says required"
+    assert r.ignored == (f'"pager_required": true in {p} is not counted: {NOT_COUNTED}',)
+
+
+def test_a_headless_seat_with_nothing_on_the_host_still_says_the_host_was_not_counted(s):
+    r = _seat.pager_required(_seat.resolve(), SESSION, headless=True)
+    assert not r.on
+    assert r.ignored == (f"the host layer is not counted: {NOT_COUNTED}",)
+
+
+@pytest.mark.parametrize("layer", ["seat", "session"])
+def test_a_headless_seat_still_counts_its_seat_and_session_layers(s, layer):
+    host({"pager_required": False})
+    p = (seat_layer if layer == "seat" else session_layer)({"pager_required": True})
+    r = _seat.pager_required(_seat.resolve(), SESSION, headless=True)
+    assert r.on and r.source == f'"pager_required": true in {p}'
+
+
+@pytest.mark.parametrize("headless", [None, False])
+def test_unmeasured_or_interactive_counts_the_host_as_before(s, headless):
+    p = host({"pager_required": True})
+    r = _seat.pager_required(_seat.resolve(), SESSION, headless=headless)
+    assert r.on and r.source == f'"pager_required": true in {p}' and r.ignored == ()
+
+
+def test_without_the_layered_reader_a_headless_seat_skips_the_host_file(s, monkeypatch):
+    p = host({"version": 1, "hooks": False, "pager_required": True})
+
+    def gone():
+        raise _layer.LayerError("sessiontools.settings is not installed (it ships in "
+                                "sessiontools 0.0.4), so the seat and session files under "
+                                "~/.session cannot be read")
+
+    monkeypatch.setattr(_layer, "_st", gone)
+    r = _seat.pager_required(_seat.resolve(), SESSION, headless=True)
+    assert not r.on
+    assert f'"pager_required": true in {p} is not counted: {NOT_COUNTED}' in r.ignored
+
+
+@pytest.mark.parametrize("command,expected", [
+    (ONE_SHOT, True),
+    (f"claude --print --session-id {SESSION}", True),
+    (INTERACTIVE, False),
+])
+def test_claude_headless_reads_this_sessions_argv(s, command, expected):
+    s.claude(command)
+    assert _seat.claude_headless(SESSION) is expected
+
+
+def test_claude_headless_is_unknown_when_ps_cannot_say(s):
+    s.claude(None)
+    assert _seat.claude_headless(SESSION) is None
+    s.claude(INTERACTIVE)
+    s.mp.setattr(_seat, "_ps_table", lambda: ({}, {}))      # found, but no argv
+    assert _seat.claude_headless(SESSION) is None
+    assert not _seat.one_shot(_seat.resolve(), SESSION)
+
+
+def test_one_shot_is_headless_and_not_required(s):
+    s.claude(ONE_SHOT)
+    host({"pager_required": True})
+    assert _seat.one_shot(_seat.resolve(), SESSION)
+    s.required()
+    assert not _seat.one_shot(_seat.resolve(), SESSION), "the variable opts it in"
+    s.required(None)
+    s.claude(INTERACTIVE)
+    assert not _seat.one_shot(_seat.resolve(), SESSION)
+
+
+def test_a_headless_seat_required_by_the_host_alone_is_silent_from_both_hooks(s):
+    host({"pager_required": True})
+    s.claude(ONE_SHOT)
+    assert_silent_from_both()
+
+
+def test_a_headless_seat_required_by_the_host_alone_is_silent_with_hooks_on(s):
+    host({"hooks": True, "pager_required": True})
+    s.claude(ONE_SHOT)
+    assert_silent_from_both()
+
+
+def test_status_on_a_one_shot_says_the_host_layer_was_not_counted(s):
+    p = host({"pager_required": True})
+    s.claude(ONE_SHOT)
+    (line,) = status_lines("required:")
+    assert line == ("required: no (the default: no setting says required) - a one-shot "
+                    "(`claude -p`): the Stop and PostToolBatch hooks never ask it to arm; "
+                    f'"pager_required": true in {p} is not counted: {NOT_COUNTED}')
+
+
+def test_status_on_a_headless_seat_opted_in_by_the_variable_says_required(s):
+    host({"pager_required": True})
+    s.claude(ONE_SHOT)
+    s.required("1")
+    assert status_lines("required:") == [
+        (f"required: yes ({_seat.REQUIRED_VAR}=1) - the Stop and PostToolBatch hooks say "
+         "DEAF when nothing listens")]
+
+
+def test_status_on_an_interactive_seat_counts_the_host_as_before(s):
+    p = host({"pager_required": True})
+    (line,) = status_lines("required:")
+    assert line == (f'required: yes ("pager_required": true in {p}) - the Stop and '
+                    "PostToolBatch hooks say DEAF when nothing listens")
+
+
+def test_status_when_ps_cannot_say_counts_the_host_as_before(s):
+    p = host({"pager_required": True})
+    s.claude(None)
+    (line,) = status_lines("required:")
+    assert line.startswith(f'required: yes ("pager_required": true in {p})')
+    assert "not counted" not in line
 
 
 # ── the schema ───────────────────────────────────────────────────────────

@@ -44,6 +44,9 @@ INVOCATIONS = {
     # session - built, and read-only, so the burndown can run it anywhere.
     "message receipt": ["receipt", "id@host", "--session",
                         "00000000-0000-4000-8000-000000000000"],
+    # SM-1012: read-only. In the sandbox nothing names a seat, so it exits 2
+    # (no address) - built, and it sends and writes nothing anywhere.
+    "message address": ["address"],
     "pager status": ["status"],
     "pager listen": ["listen", "--timeout", "0"],
     "pager mcp": ["mcp"],

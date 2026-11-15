@@ -1,6 +1,6 @@
 """SM-518 do-003: the listener's rows, and the empty-run counter.
 
-openspec/changes/pager-inject-log (PROPOSED; these requirements RULED, each
+OpenSpec change pager-inject-log (PROPOSED; these requirements RULED, each
 says by whom). Here:
 
 - `via: monitor`, one `inject` row per line `MonitorOut.say` prints - the

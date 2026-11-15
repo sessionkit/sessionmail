@@ -6,11 +6,17 @@ It is not an MCP tool: it changes this host, which is the host owner's act,
 so it runs from a shell. The kit's installer calls it by its argv.
 
 ```sh
-message setup --dry-run              # print the plan; change nothing
-message setup --box NAME [--box ..]  # apply it, making box NAME too
-message setup --write-maps           # on a postfix host with no maps: write them
-message setup --pull                 # also install the mail puller's LaunchAgent
+message setup --dry-run
+message setup --box NAME
+message setup --write-maps
+message setup --pull
 ```
+
+- `--dry-run` prints the plan and changes nothing.
+- `--box NAME` applies it, making box `NAME` too. Give `--box` again for
+  each further box.
+- `--write-maps`, on a postfix host with no maps, writes them.
+- `--pull` also installs the mail puller's LaunchAgent.
 
 - **It prints first.** The whole plan is printed before anything is
   applied: the sudo steps first, each with its exact command (or `none`),
@@ -23,8 +29,12 @@ message setup --pull                 # also install the mail puller's LaunchAgen
 - **It is safe to re-run.** Every check only reads. A second run reports
   every step it finished as `DONE` and writes nothing.
 - **Exit:** 0 every step is DONE · 1 a step failed (what ran before it
-  stays; re-run) · 2 usage, or refused before anything was applied · 4
-  what setup can do is done, and steps are left for you.
+  stays; re-run) · 2 usage, or refused before anything was applied · 3
+  the puller's job is installed and loaded, but its service file could not
+  be written (the job is up; re-run `message setup --pull` to write it) · 4
+  what setup can do is done, and steps are left for you. When two apply, 1
+  wins, then 3, then 4: a run that exits 3 still prints its block of steps
+  left for you.
 - **It ends with one list of what is left.** When steps are left, the
   last lines are one numbered block, every step that is not `DONE`, in
   order, each with its state and why. A step that waits on another names
@@ -75,11 +85,14 @@ message setup --pull                 # also install the mail puller's LaunchAgen
   once. When the profile has no database yet, setup runs
   `notmuch --config=<profile> new --no-hooks` once, in the same run that
   writes the profile, and the dry run prints that line. It runs it only on
-  an EMPTY index: notmuch reports no hook folder for the profile, and no
-  `.notmuch` is at the `database.path` it reports. If a database is already
-  there, it runs nothing and the step is `BLOCKED`, saying what it found. If
-  notmuch is not found, the step is `BLOCKED` and names the line it will
-  run once notmuch is found. A `new` that fails stops the run (exit 1).
+  an EMPTY index: notmuch opens no database for the profile
+  (`notmuch --config=<profile> count '*'` fails), and no `.notmuch/xapian`
+  is at the `database.path` it reports. A hook folder alone proves nothing:
+  a profile that sets `hook_dir` reports it before any database exists. If
+  a database is already there, it runs nothing and the step is `BLOCKED`,
+  saying what it found. If notmuch is not found, the step is `BLOCKED` and
+  names the line it will run once notmuch is found. A `new` that fails
+  stops the run (exit 1).
 - **The notmuch hook.** It links `post-new` and `post-insert` to the
   packaged [post-new hook][post-new-hook], in the folder notmuch reports
   for the profile (`notmuch --config=<profile> config get
@@ -87,8 +100,24 @@ message setup --pull                 # also install the mail puller's LaunchAgen
   index exists it is one `notmuch-hook` step that waits on
   `notmuch-index`. With no profile nothing is linked anywhere. It never
   replaces a different file. A link to another sessionmail copy of the
-  hook is left as is. A link to our own hook that now points nowhere (a
+  hook is left as is, and so is a chain of links that ends at one (a
+  relative `post-insert -> post-new`, say): the chain is judged by where
+  it ends, not by its first link's text. A link to our own hook that now points nowhere (a
   rebuilt tool venv) is repaired.
+- **Only sessionmail's own hook folder.** Unless a profile sets
+  `hook_dir`, notmuch runs the hooks in
+  `$XDG_CONFIG_HOME/notmuch/default/hooks` whenever that folder exists,
+  whichever config it read: the folder your own notmuch uses. So the
+  profile setup writes sets `hook_dir=<mail root>/.notmuch/hooks`. On an
+  older profile that sets none, when notmuch reports a folder outside the
+  profile's `database.path`, the hook step is `BLOCKED`: setup links
+  nothing there, and never edits the profile. Its line names the folder and
+  the one setting to add, by `notmuch --config=<profile> config set
+  database.hook_dir <mail root>/.notmuch/hooks` or by hand under
+  `[database]`, then run setup again. Sessionmail links already in that
+  folder are named with the `rm` that removes them; setup removes nothing
+  there itself. A `hook_dir` your profile sets is yours: setup links there,
+  wherever it is.
 - **The delivery wrapper** (`delivery`), on a host that indexes at
   delivery: postfix's `master.cf` has an `nminsert` service
   ([index at delivery][index-at-delivery]). Setup installs or refreshes
@@ -106,7 +135,16 @@ message setup --pull                 # also install the mail puller's LaunchAgen
   a wrapper baking in a missing file would defer every delivery, so the
   copy the service runs is left as it is. If the installed copy already
   bakes in a file that has gone, the `BLOCKED` line says so: every
-  delivery through it defers until the file is back. A host with
+  delivery through it defers until the file is back. Before it writes
+  over a wrapper the service runs, setup looks every address in
+  `virtual_mailbox_maps` up the way the kit's wrapper will (the maps in
+  postconf order, the first hit). If an address that delivers today (some
+  map holds an `agents/` or `stores/` maildir for it) would defer under the
+  new copy, the step is `BLOCKED`, naming each address, the value it would
+  take and the map it is in; the wrapper is left as it is. Fix the maps or
+  their order (setup never edits postfix), then run setup again. A map
+  that `postmap -s` cannot list is `BLOCKED` too: the swap cannot be proven
+  safe. A host with
   no `nminsert` service, or no `postconf`, gets no wrapper: the step is
   `DONE`.
 - **What sends your mail** (`carrier`). It reports the carrier and where
@@ -122,19 +160,26 @@ message setup --pull                 # also install the mail puller's LaunchAgen
   host's postfix (macOS only). With the pull config incomplete, the plan is
   refused (exit 2) before any step is read, naming each missing key and its
   variable. The step writes the plist, lints it with `plutil -lint`, boots
-  out the old job and bootstraps the new one. A second run on an unchanged
+  out the old job and bootstraps the new one. Then it writes the puller's
+  service file, `~/.sessionkit/mail/services/puller.json`, so `sessionkit
+  service` finds the job. If that file cannot be written, the step says
+  `FAILED`, the job stays loaded, and setup exits 3. A second run on an unchanged
   host reports it `DONE` and writes nothing. It never replaces a job that
   is not a sessionmail puller. Without `--pull`, setup has no pull step and
   never reads the pull config. More: [the pull][pull].
 
 ## What it does not do
 
-- **It writes no settings key.** Each `MANUAL` line names the key to write
-  in `~/.sessionkit/mail/settings/mail.json`, and the variable that would
-  win over it: [settings][settings].
+- **It writes one settings key, `host`, and no other.** It adds `host`
+  only to a `~/.sessionkit/mail/settings/mail.json` that has none, and
+  never changes one that is set. For every other key, a `MANUAL` line
+  names the key to write and the variable that would win over it:
+  [settings][settings].
 - **It never reads or writes your own notmuch config.** `~/.notmuch-config`
   and any other profile are left exactly as they are, and no hook is linked
   into their folders.
+- **It never edits a profile that exists.** A setting it needs and the
+  profile lacks is a line for you to run, never a write.
 - **It runs `notmuch new` once, while no index exists.** That one run builds
   the empty index the hook folder needs. Setup schedules nothing.
 - **The readers keep the index fresh.** `memory` refreshes it before it

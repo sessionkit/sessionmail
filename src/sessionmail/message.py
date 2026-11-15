@@ -195,7 +195,7 @@ def send(to: tuple[str, ...], subject: str, body_file: str | None, no_body: bool
     \f
     fold-override: 2030-06-09 maintainer - the send form, its flags and exit codes are above the fold; the page grew with the subject shortener
     """
-    # `--json` (openspec/changes/agents-send-door): ONE object on stdout and
+    # `--json` (OpenSpec change agents-send-door): ONE object on stdout and
     # nothing on stderr; a program reads one key, `sent`. A refusal carries
     # its KIND. And it means the PYTHON sender, in-process: the
     # bash oracle has no kinds. WITHOUT the flag every line below does exactly
@@ -632,7 +632,11 @@ def _default_box() -> str:
     usage="[BOX] [--unread] [--from M] [--subject RE] [--to ADDR] [-n N]",
     short_help="[BOX] [filters]                       a line per message, no bodies",
     epilog=unwrapped(
-        """Never opens a body; costs a few tokens per row. The index it prints is
+        """With no BOX: this session's box once it exists (the session-start hook
+or `pager listen` makes it), else the seat's box (stderr says so if the
+session has none yet). Name a BOX to list another - the one you sent to.
+
+Never opens a body; costs a few tokens per row. The index it prints is
 what `read` takes - the box's own, oldest first over new/ and cur/, so a cut
 listing and a full one number a row the same. Without -n you get the newest
 40; the last line says how many rows it hid. A draft (a `D` file: a turn
@@ -671,10 +675,23 @@ def list_(box: str | None, unread: bool, from_: str | None, subject: str | None,
         # as mail, and says how many it hid"): a `D` file is neither listed
         # nor counted, not even in "index spans all", and the footer says
         # how many drafts it left out.
-        entries, drafts = _maildir.enumerate_with_drafts(box)
+        #
+        # Rows by NAME (`scan`), and of each row only what a count
+        # needs - its Message-ID and Supersedes from the header block
+        # (`row_ids`, the values `parse` gives). The full `parse` is for a
+        # row a filter reads (--from/--subject/--to, when given) and a row
+        # that is printed. Every count stays the count it was.
+        box_rows, drafts = _maildir.scan(box)
+        heads = [_maildir.row_ids(r.path) for r in box_rows]
     except _maildir.NoSuchBox as exc:
         click.echo(f"message list: {exc}", err=True)
         raise SystemExit(EX_REFUSED)
+    parsed: dict[int, "_maildir.Entry"] = {}
+
+    def entry(r: "_maildir.Row") -> "_maildir.Entry":
+        if r.index not in parsed:
+            parsed[r.index] = _maildir.parse(r.path, r.index, r.unread)
+        return parsed[r.index]
 
     # --unread is THIS SESSION's marks. They key on the session id, so the
     # reader is the session doing
@@ -687,31 +704,34 @@ def list_(box: str | None, unread: bool, from_: str | None, subject: str | None,
             marks = _seat.read_marks(_seat.resolve(), _seat.session_id())
         except _seat.NoIdentity:
             marks = {}
-    superseded = {e.supersedes for e in entries if e.supersedes}
+    superseded = {supersedes for _mid, supersedes in heads if supersedes}
     hidden: dict[str, int] = {}
 
     def hide(why: str) -> None:
         hidden[why] = hidden.get(why, 0) + 1
 
+    filtered = bool(from_) or pattern is not None or to is not None
     shown = []
-    for e in entries:
-        if e.message_id and e.message_id in superseded:
+    for r, (message_id, _supersedes) in zip(box_rows, heads):
+        if message_id and message_id in superseded:
             hide("superseded"); continue
         # One definition of unread (`_maildir.is_unread`, shared with the
         # page's count): a `done` ends it as a `read` does. The reason
         # names `read` whenever a read is among the marks; `done` only
         # when the mail was dealt with unopened.
-        own = marks.get(e.message_id, set())
+        own = marks.get(message_id, set())
         if unread and not _maildir.is_unread(own):
             hide("marked read (--unread)" if "read" in own
                  else "marked done (--unread)"); continue
-        if from_ and from_.lower() not in e.sender.lower():
-            hide("--from"); continue
-        if pattern and not pattern.search(e.subject):
-            hide("--subject"); continue
-        if to is not None and e.delivered_to != (to if to != "" else box):
-            hide("--to"); continue
-        shown.append(e)
+        if filtered:
+            e = entry(r)
+            if from_ and from_.lower() not in e.sender.lower():
+                hide("--from"); continue
+            if pattern and not pattern.search(e.shown_subject):
+                hide("--subject"); continue
+            if to is not None and e.delivered_to != (to if to != "" else box):
+                hide("--to"); continue
+        shown.append(r)
     if rows is not None and len(shown) > rows:
         # The cut is the LAST thing done, over the box's own index, so the
         # rows it keeps carry the numbers they had - a number pasted into
@@ -727,10 +747,11 @@ def list_(box: str | None, unread: bool, from_: str | None, subject: str | None,
         hide_n = len(drafts)
         hidden["draft" if hide_n == 1 else "drafts"] = hide_n
 
-    for e in shown:
+    for r in shown:
+        e = entry(r)
         flag = "N" if e.unread else "."
         tail = "" if e.has_body else "  (no body)"
-        click.echo(f"{e.index:>4} {flag} {e.sender_local[:12]:<12} {e.subject}{tail}"
+        click.echo(f"{e.index:>4} {flag} {e.sender_local[:12]:<12} {e.shown_subject}{tail}"
                    f"{e.unreadable_mark}")
     total_hidden = sum(hidden.values())
     why = ", ".join(f"{n:,} {reason}" for reason, n in hidden.items())
@@ -738,7 +759,7 @@ def list_(box: str | None, unread: bool, from_: str | None, subject: str | None,
     # the index column above is NOT, because that number is pasted into
     # `read` and a comma would not survive the paste.
     click.echo(f"-- {box}: {len(shown):,} shown, {total_hidden:,} hidden"
-               + (f" ({why})" if why else "") + f"; index spans all {len(entries):,}")
+               + (f" ({why})" if why else "") + f"; index spans all {len(box_rows):,}")
 
 
 @cli.command(
@@ -791,7 +812,7 @@ def tree(id: str, depth: int | None, show_all: bool, dates: bool) -> None:
     children: dict[str, list] = {}
     root = entry
     if above:
-        click.echo(f"(under: {above[-1].subject}; {len(above)} above)")
+        click.echo(f"(under: {above[-1].shown_subject}; {len(above)} above)")
     for e in members:
         parent = e.in_reply_to if e.in_reply_to in by_id else (e.references[-1] if e.references and e.references[-1] in by_id else None)
         if e is root or parent is None:
@@ -804,7 +825,7 @@ def tree(id: str, depth: int | None, show_all: bool, dates: bool) -> None:
         who = e.sender_local
         if dates and e.date:
             who = f"{who} {e.date.strftime('%a %d %b %H:%M')}"
-        return f"{e.subject}  [{who}]{e.unreadable_mark}"
+        return f"{e.shown_subject}  [{who}]{e.unreadable_mark}"
 
     def walk(e, level: int) -> None:
         nonlocal hidden
@@ -836,7 +857,12 @@ DRAFT_NOTE = ("(a DRAFT: an open turn its keeper is still writing, not mail; "
     usage="[BOX] N|ID [N|ID...] [--peek] [--thread] [--full] [--raw]",
     short_help="[BOX] N|ID... [--peek] [--thread]     open messages; marks each read",
     epilog=unwrapped(
-        """Several ids in one call: each is printed in order and ONE receipt
+        """With no BOX: the box a bare `list` reads - this session's box once it
+exists (the session-start hook or `pager listen` makes it), else the
+seat's box (stderr says so if the session has none yet). Name a BOX to
+read another.
+
+Several ids in one call: each is printed in order and ONE receipt
 lists them. A bad id is named and does not stop the others; the exit
 says so. A leading BOX is a name - digits or an `@` make an id - or a
 short session id (its first 8 or more characters, even all digits),
@@ -887,10 +913,22 @@ def read(args: tuple[str, ...], peek: bool, thread: bool, full: bool, raw: bool)
     # DIFFERENT message: worse than either box on its own.
     box = box or _default_box()
     try:
-        entries, drafts = _maildir.enumerate_with_drafts(box)
+        # Without --thread nothing but the asked-for rows is
+        # parsed - a number by its row (`scan`, names only), an ID by each
+        # row's Message-ID from its header block, in index order (`find_row`).
+        # --thread walks the whole box's In-Reply-To/References, so it
+        # parses every row, as it always did.
+        if thread:
+            entries, drafts = _maildir.enumerate_with_drafts(box)
+            box_rows = None
+        else:
+            box_rows, drafts = _maildir.scan(box)
+            entries = []
     except _maildir.NoSuchBox as exc:
         click.echo(f"message read: {exc}", err=True)
         raise SystemExit(EX_REFUSED)
+    span = len(entries) if box_rows is None else len(box_rows)
+    known_ids: dict[int, str] = {}
     found: list["_maildir.Entry"] = []
     missing: list[str] = []
     # pager-genie 3.28 (specs/message, "A listing does not count a draft as
@@ -900,7 +938,8 @@ def read(args: tuple[str, ...], peek: bool, thread: bool, full: bool, raw: bool)
     # says it is a draft; it is never marked, and nothing here moves it.
     draft_found: set[int] = set()
     for which in wanted:
-        entry = _maildir.find(entries, which)
+        entry = (_maildir.find(entries, which) if box_rows is None
+                 else _maildir.find_row(box_rows, which, known_ids))
         if entry is None:
             entry = _maildir.find_draft(drafts, which)
             if entry is not None:
@@ -908,7 +947,7 @@ def read(args: tuple[str, ...], peek: bool, thread: bool, full: bool, raw: bool)
         if entry is None:
             # Named, in the place it was asked for, and the others go on.
             click.echo(f"message read: no message {which!r} in {box} "
-                       f"(index spans 1..{len(entries)})", err=True)
+                       f"(index spans 1..{span})", err=True)
             missing.append(which)
             continue
         found.append(entry)
@@ -1396,19 +1435,21 @@ def where_of(flags: dict[str, bool]) -> str | None:
     usage="[BOX|--root|--boxes|--generator|--notmuch-config] [--why]",
     short_help="[BOX] [--why] | --root | --boxes      the maildir BOX resolves to",
     epilog=unwrapped(
-        """Prints the folder and nothing else - for a human at a shell, or a tool
-that needs a folder for neomutt (SessionView's Messages tab). The SAME
-resolution `list` and `read` use: a maildir path, `<root>/<name>`, or the
-box postfix delivers `<name>@<host>` to - which is where a project box
-lives, nested under its store. BOX defaults to your seat.
+        """With no BOX: this session's box once it exists (the session-start hook
+or `pager listen` makes it), else the seat's box (stderr says so if the
+session has none yet). Name a BOX to resolve another.
 
-With a flag, a place, not a box, so no tool spells one: `--root` the mail
+Prints the folder and nothing else, for a shell or a tool that needs one
+(neomutt). The SAME resolution `list` and `read` use: a maildir path,
+`<root>/<name>`, or the box postfix delivers `<name>@<host>` to - where a
+project box lives, nested under its store.
+
+A flag names a place, not a box, so no tool spells one: `--root` the mail
 root ($SESSIONMAIL_ROOT, else mail.json's `root`, else the default) and
-`--boxes` the folder under it, exit 0 always; `--generator` this host's
-vmailbox-gen and `--notmuch-config` the FILE of sessionmail's notmuch
-profile, exit 2 when none exists (stderr says what was expected). `--why`
-says on stderr how it resolved, and names a retired root variable that is
-still set: ignored, never read.
+`--boxes` the folder under it, exit 0 always; `--generator` and
+`--notmuch-config` exit 2 when none exists (stderr says what was expected).
+`--why` also names a retired root variable that is still set: ignored,
+never read.
 
 Exit: 0 ok · 1 usage · 2 no such box, generator or profile (stderr says)"""
     ),
@@ -1771,11 +1812,11 @@ def box_list(pattern: str | None, all_: bool, count: str | None) -> None:
     usage="[BOX] [--why]",
     short_help="[BOX] [--why]              the maildir a box name resolves to",
     epilog=unwrapped(
-        """Prints the folder and nothing else. The SAME resolution `list` and
-`read` use: a maildir path, `<root>/<name>`, or the box postfix delivers
-`<name>@<host>` to - where a project box lives, nested under its store.
-BOX defaults to your seat. `message path` is this verb's old name and
-answers exactly the same.
+        """With no BOX: this session's box once it exists (the session-start hook
+or `pager listen` makes it), else the seat's box (stderr says so if the
+session has none yet). Name a BOX to resolve another. Prints the folder
+and nothing else, by the SAME resolution `list` and `read` use. Its old
+name, `message path`, answers the same, and that page says more.
 
 Exit: 0 ok · 2 usage, or no such box (stderr names what was tried)"""
     ),
@@ -2192,7 +2233,7 @@ def _session_seat(sid: str) -> str:
 #
 # sessionmail keeps exactly three commands, so seat-init and seat-agent
 # ship as `message seat init` and `message seat agent`. The rest is the
-# design in openspec/changes/message-seat:
+# design in OpenSpec change message-seat:
 #
 # - HIDDEN: on no group page and no MCP tool, as
 #   `pager settings` is. `seat agent` execs, and the MCP server runs a tool
@@ -2292,9 +2333,13 @@ checks it against seat.pub. SOCKET defaults to agent.sock beside the key.
 the agent answers. stdout is SEAT_LABEL, SEAT_PLIST, SEAT_SOCKET, SEAT_PUB
 and SEAT_LOG, shell-quoted. A re-run checks; another job is refused.
 --uninstall boots it out. --template prints the plist, for a hand render.
-launchctl is $SESSIONMAIL_LAUNCHCTL, else /bin/launchctl."""
+launchctl is $SESSIONMAIL_LAUNCHCTL, else /bin/launchctl.
+
+Once the agent answers, --install writes its service file for
+`sessionkit service`, ~/.sessionkit/mail/services/seat-agents/ADDRESS.json,
+"enabled": true; --uninstall keeps it, "enabled": false."""
     ),
-    sections="""Exit: 0 done, or stopped by a signal · 1 the agent or launchctl failed (--install rolls back) · 2 usage or refused, nothing started or written
+    sections="""Exit: 0 done, or stopped by a signal · 1 the agent or launchctl failed (--install rolls back) · 2 usage or refused, nothing started or written · 3 done (--install's report printed) but its service file was not written: re-run
 
 Capability: install""",
 )
@@ -2359,7 +2404,7 @@ def _exec_seat_agent(args: list[str]) -> None:
 
 # ── receipt: what ANOTHER session recorded about one message ───────────────
 #
-# openspec/changes/message-receipt (PROPOSED; design.md D1-D12). Hidden, as
+# OpenSpec change message-receipt (PROPOSED; design.md D1-D12). Hidden, as
 # the `seat` noun is (D3): on no `message --help` page and no MCP tool, so
 # `mcp` keeps line 20 of `message --help`. Read-only: it reads ONE root,
 # `<session dir>/mail/`, and only LOOKS at the old root (`lstat`, and
@@ -2648,6 +2693,122 @@ def receipt(message_id: str, session: str, as_json: bool) -> None:
     ctx.exit(code)
 
 
+# ── address: the From a send from this shell would carry ─────────────────
+#
+# changes/message-address. `send` takes no --from: it works its From out.
+# This prints that answer by the functions `send` calls, and changes none
+# of them, so a tool that needs it asks here and keeps no copy of the rule.
+
+#: `message address --json`: the object's schema. Keys are only ever added.
+ADDRESS_SCHEMA = 1
+#: The `kind` of an address: a declared plus address, a seat word, the
+#: session id.
+ADDRESS_PLUS, ADDRESS_SEAT, ADDRESS_SESSION = "plus", "seat", "session"
+#: `source` when `-r` chose the address the parent was mailed at.
+ADDRESS_FROM_PARENT = "X-Original-To"
+
+
+class _NoAddress(Exception):
+    """A send from this shell would have no From; the text says why."""
+
+
+def _mail_origin() -> tuple[str, list[str]]:
+    """(the domain a bare From gains on its way, what to say about it).
+    With the mail drop it is the origin the drop writes (`_drop.origin`); on
+    an MTA host, the origin the signer signs a bare address with
+    (`_sig.origin_of`), "" when none is known. No carrier: _NoAddress."""
+    from . import _drop, _sig
+
+    carrier = _settings.carrier(os.environ)
+    if carrier.kind == "refused":
+        raise _NoAddress(f"no MTA: {carrier.why}")
+    notes: list[str] = []
+    if carrier.kind == _settings.CARRIER_DROP:
+        return _drop.origin(os.environ, _drop.short_host(os.environ), notes), notes
+    origin = _sig.origin_of(os.environ)
+    if not origin:
+        notes.append("the domain is not known: no mail origin ($SESSIONMAIL_ORIGIN unset, "
+                     "no `postconf -xh myorigin`), so the address is bare")
+    return origin, notes
+
+
+def _address(in_reply_to: str | None) -> dict:
+    """The `--json` object: the address a send would carry, and where it
+    came from. _NoAddress when a send would have no From."""
+    from . import _sender
+
+    try:
+        seat = _seat.resolve()
+    except _seat.NoIdentity:
+        # `send`'s own words, and its inherited-pane clause.
+        raise _NoAddress("no seat in the environment to send From - there is no --from; "
+                         "set an identity" + _seat.inherited_note()) from None
+    declared = _seat.declared_address()
+    if declared:
+        kind, source = ADDRESS_PLUS, declared[1]
+    elif seat.source in _seat.SEAT_VARS:
+        kind, source = ADDRESS_SEAT, seat.source
+    else:
+        kind, source = ADDRESS_SESSION, seat.source
+    sid = _seat.session_id()
+    session = "" if sid in ("", "-") else sid
+    local, notes = seat.address, []
+    if in_reply_to:
+        # The ratified reply rule, by its one function: the address the
+        # parent was mailed at, when that is one of this session's own.
+        answered, why = _reply_from(_maildir.bare_id(in_reply_to), local)
+        if why:
+            notes.append(why)
+        if answered != local:
+            local, source = answered, ADDRESS_FROM_PARENT
+            kind = (ADDRESS_SESSION if session and answered == _seat.fold_address(session)
+                    else ADDRESS_PLUS if _seat.split_plus(answered) else ADDRESS_SEAT)
+    origin, said = _mail_origin()
+    return {"schema": ADDRESS_SCHEMA, "address": _sender.qualify_bare(local, origin),
+            "kind": kind, "source": source, "session": session, "notes": [*notes, *said]}
+
+
+@cli.command(
+    "address",
+    cls=PageCommand,
+    context_settings=CONTEXT_SETTINGS,
+    usage="[-r ID] [--json]",
+    hidden=True,
+    short_help="the From address a send from this shell would carry",
+    epilog=unwrapped(
+        """Prints the address `send` would write From here, and nothing else: the
+declared plus address ($EMAIL, else $TM_AGENT_ADDRESS), else the seat
+word, else the session id, at the domain the mail will carry. A tool
+asks here and keeps no copy of the rule. Reads only; sends nothing.
+
+Inherited identity words are dropped first, as for `send`: a shell that
+is no seat has no address. No mail origin known: bare, and stderr says.
+
+Exit: 0 ok · 2 usage, or no address: no seat or session, or no carrier
+(stderr says why, in `send`'s words; stdout is empty)
+
+kind: plus (a declared plus address) · seat (a seat word) · session (the
+session id: a session with no seat, or a reply to a DM)"""
+    ),
+)
+@click.option("-r", "--in-reply-to", "in_reply_to", metavar="ID",
+              help="for a reply to ID: a DM answers as the session")
+@click.option("--json", "as_json", is_flag=True,
+              help="JSON: schema, address, kind, source, session, notes")
+def address(in_reply_to: str | None, as_json: bool) -> None:
+    """message address - the From address a send from this shell would carry"""
+    ctx = click.get_current_context()
+    try:
+        found = _address(in_reply_to)
+    except _NoAddress as none:
+        click.echo(f"message address: {none}", err=True)
+        ctx.exit(EX_REFUSED)
+        return
+    for note in found["notes"]:
+        click.echo(f"message address: {note}", err=True)
+    click.echo(json.dumps(found, ensure_ascii=False) if as_json else found["address"])
+
+
 # The setup verb. Its name lives in ONE constant, `_setup.VERB`. It is on the
 # group page, and it is not an MCP tool (`_mcp.NOT_A_TOOL`: it changes this
 # host). The logic is `_setup.main(argv)`.
@@ -2672,7 +2833,9 @@ an empty index once (notmuch new --no-hooks); never over a file or database.
 Never edits postfix, a settings key, your notmuch config or a session box.
 
 Exit: 0 every step DONE · 1 a step failed (what ran stays) · 2 usage
-or refused, nothing applied · 4 done what it can, steps are left"""
+or refused, nothing applied · 3 the puller is loaded but its service
+file was not written (re-run to write it) · 4 done what it can, steps
+are left"""
     ),
 )
 @click.argument("args", nargs=-1, type=click.UNPROCESSED, metavar="")
@@ -2689,7 +2852,7 @@ attach(cli, CAPABILITY)
 
 # `python -m sessionmail.message` IS `message`. Without this the module imports,
 # does nothing and exits 0, and the MCP send
-# door starts its child exactly this way (openspec/changes/agents-send-door,
+# door starts its child exactly this way (OpenSpec change agents-send-door,
 # "Running the module sends, or says why not - it never does nothing").
 # `prog_name`, or the page says `Usage: message.py ...`.
 if __name__ == "__main__":

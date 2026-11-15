@@ -1,6 +1,6 @@
 """The Python sender - the six jobs the bash oracle did, in the package.
 
-RED ON PURPOSE (step 4 of openspec/changes/send-in-python, written before a
+RED ON PURPOSE (step 4 of OpenSpec change send-in-python, written before a
 line of sender exists): every test imports `sessionmail._sender` lazily, so
 each one errors on its own until the module lands, and turns green one job
 at a time. Nothing here depends on one of the nine read-back decisions:
@@ -460,7 +460,7 @@ def test_a_parent_not_findable_gives_one_hop_and_a_notice_and_still_sends(sender
     assert "<gone@other.session-mail>" in err and "NOT in the local index" in err   # send:1050-1071
 
 
-def test_parent_check_off_silences_the_notice_only(sender, env, tmp_path, fake_sendmail):
+def test_parent_check_off_sends_with_no_notice(sender, env, tmp_path, fake_sendmail):
     env["SESSION_MAIL_PARENT_CHECK"] = env["SESSIONMAIL_PARENT_CHECK"] = "off"
     rc, _, err = send(sender, env, tmp_path, "--in-reply-to", "<gone@other.session-mail>")
     assert rc == EX_OK and "NOT in the local index" not in err
@@ -948,7 +948,7 @@ def test_the_roots_humans_file_overrides_the_shipped_one(sender, env, tmp_path, 
     assert rc == EX_OK and dict(headers_of(fake_sendmail.wire))["Content-Type"].startswith("text/plain")
 
 
-# ── the order of complaints (openspec/changes/agents-send-door) ──────────────
+# ── the order of complaints (OpenSpec change agents-send-door) ──────────────
 #
 # RULED Q03: three two-faults-at-once tests that lock TODAY's order, plus a
 # fourth (the
@@ -1063,7 +1063,7 @@ def test_a_line_break_keeps_its_own_words_ahead_of_the_control_refusal(sender, e
 
 # ── SM-538 do-002: X-Original-Subject, and the core guards every header ──────
 #
-# openspec/changes/subject-shorten: "X-Original-Subject carries the exact
+# OpenSpec change subject-shorten: "X-Original-Subject carries the exact
 # original" and "The core guards every header value" (SM-342 DOOR 2). The
 # shortener (do-003) and the door (do-005) are not here: these tests hand the
 # CORE a structured request, the road a structured caller such as the pager

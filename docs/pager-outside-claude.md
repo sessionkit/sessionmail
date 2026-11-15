@@ -15,9 +15,12 @@ Nothing is lost; it is late, or it waits for your next `pager listen`. Turn
 both waits off in that client's environment:
 
 ```sh
-export SESSIONMAIL_PAGE_AGE_SECONDS=0   # ring on arrival
-export SESSIONMAIL_BURST_SECONDS=0      # ring for every message
+export SESSIONMAIL_PAGE_AGE_SECONDS=0
+export SESSIONMAIL_BURST_SECONDS=0
 ```
+
+The first makes a page ring on arrival; the second makes it ring for every
+message.
 
 `pager listen` says the same thing in its banner when nothing can tell it
 whether you are busy.

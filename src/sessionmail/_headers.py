@@ -1,6 +1,6 @@
 """The header reader: one function for the headers this change mints.
 
-openspec/changes/pager-genie, tasks.md 3.22 (the migration
+OpenSpec change pager-genie, tasks.md 3.22 (the migration
 decision: no header this package mints starts with `X-`). The spec requirement it proves
 is *A header this change
 mints carries no X-, and the reader takes both spellings*.

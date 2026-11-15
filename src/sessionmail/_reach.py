@@ -1,6 +1,6 @@
 """`message subscription list [BOX]`: what reaches me, and who hears this box.
 
-`openspec/changes/message-subscriptions`, tasks 3.3, specs/message
+OpenSpec change `message-subscriptions`, tasks 3.3, specs/message
 "What reaches me, and who hears this box".
 
 - **No BOX: a TREE rooted at the session, seat first** (the seat is always

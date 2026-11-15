@@ -1,7 +1,7 @@
 """`memory init --record FILE`: the RECORD half. One front-matter line, one commit.
 
 The normative text is the change delta,
-`openspec/changes/memory-init/specs/memory/spec.md`, requirement "The record
+OpenSpec change `memory-init`, `specs/memory/spec.md`, requirement "The record
 is a front-matter line in a file the caller names":
 
 - write the root's Message-ID as `mail_root: "<id>"` into FILE's YAML front

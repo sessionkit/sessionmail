@@ -19,6 +19,7 @@ import io
 import json
 import os
 import shutil
+import subprocess
 import sys
 from pathlib import Path
 
@@ -38,7 +39,9 @@ HOST = "testhost"
 #:   `<path>/.notmuch/hooks` once a database is there (as notmuch answers
 #:   after its first `new`), else empty. $FAKE_OLD_NOTMUCH: always empty
 #:   (a notmuch older than 0.32 has no such key).
-#: - `new --no-hooks`: makes `<path>/.notmuch/`, or exits $FAKE_NEW_EXIT.
+#: - `count *`: exits 0 when a database opens: $FAKE_HOOK_DIR set (a database
+#:   notmuch opened) or `<path>/.notmuch/xapian` there; else exits 1.
+#: - `new --no-hooks`: makes `<path>/.notmuch/xapian/`, or exits $FAKE_NEW_EXIT.
 FAKE_NOTMUCH = """#!{python}
 import os, sys
 with open(os.environ["FAKE_NOTMUCH_LOG"], "a") as log:
@@ -52,12 +55,19 @@ if args and args[0].startswith("--config="):
             if line.startswith("path="):
                 path = line.strip()[len("path="):]
 database = os.path.join(path, ".notmuch") if path else ""
+xapian = os.path.join(database, "xapian") if database else ""
+if args == ["count", "*"]:
+    if os.environ.get("FAKE_HOOK_DIR") or (xapian and os.path.isdir(xapian)):
+        sys.stdout.write("0\\n")
+        sys.exit(0)
+    sys.stderr.write("Error: Cannot open database\\n")
+    sys.exit(1)
 if args == ["config", "get", "database.path"]:
     sys.stdout.write(path + ("\\n" if path else ""))
     sys.exit(0)
 if args == ["config", "get", "database.hook_dir"]:
     value = os.environ.get("FAKE_HOOK_DIR", "")
-    if not value and database and os.path.isdir(database) and not os.environ.get("FAKE_OLD_NOTMUCH"):
+    if not value and xapian and os.path.isdir(xapian) and not os.environ.get("FAKE_OLD_NOTMUCH"):
         value = os.path.join(database, "hooks")
     sys.stdout.write(value + ("\\n" if value else ""))
     sys.exit(0)
@@ -66,7 +76,7 @@ if args == ["new", "--no-hooks"] and database:
     if code:
         sys.stderr.write("fake notmuch: new failed\\n")
         sys.exit(code)
-    os.makedirs(database, exist_ok=True)
+    os.makedirs(xapian, exist_ok=True)
     sys.exit(0)
 sys.exit(1)
 """
@@ -90,9 +100,12 @@ def env(tmp_path: Path, mailroot: Path, hooks: Path, stranger) -> dict[str, str]
     bin_dir.mkdir()
     notmuch = write_fake(bin_dir / "notmuch", FAKE_NOTMUCH.format(python=sys.executable))
     # The host's notmuch profile (`_index`): setup asks it, and no other.
+    # Its database is the mail root; $FAKE_HOOK_DIR's folder lies outside
+    # it, so the profile PINS it: setup links outside the database only into
+    # a hook dir the profile itself names.
     profile = tmp_path / ".config" / "notmuch" / "sessionkit" / "config"
     profile.parent.mkdir(parents=True)
-    profile.write_text(f"[database]\npath={mailroot}\n")
+    profile.write_text(f"[database]\npath={mailroot}\nhook_dir={hooks}\n")
     return {
         "HOME": str(tmp_path),
         "PATH": f"{bin_dir}{os.pathsep}/usr/bin{os.pathsep}/bin",
@@ -577,7 +590,9 @@ def test_setup_only_reads_notmuch(env, tmp_path):
     setup(env)
     calls = (tmp_path / "notmuch.log").read_text().splitlines()
     profile = _index.profile_config(env=env)
-    assert calls and set(calls) == {f"--config={profile} config get database.hook_dir"}
+    assert calls and set(calls) == {f"--config={profile} count *",
+                                     f"--config={profile} config get database.hook_dir",
+                                     f"--config={profile} config get database.path"}
 
 
 def test_a_foreign_file_is_never_replaced(env, hooks):
@@ -615,6 +630,94 @@ def test_a_checkout_or_other_wheel_hook_is_done_and_left_as_is(env, hooks, tmp_p
     assert state(out, "notmuch-hook:post-new") == "DONE" and "left as is" in out
     assert os.readlink(hooks / "post-new") == str(checkout)
     assert os.readlink(hooks / "post-insert") == str(wheel)
+
+
+def _links(hooks: Path) -> dict[str, str]:
+    """Every link in HOOKS with its own literal text (one hop, unresolved)."""
+    return {p.name: os.readlink(p) for p in sorted(hooks.iterdir()) if p.is_symlink()}
+
+
+def _chain(hooks: Path, case: str, tmp_path: Path) -> None:
+    """The repro shapes, B to E: a hook link whose chain ENDS at a
+    sessionmail hook, though its first hop's text names none."""
+    pk = str(_setup.PACKAGED_HOOK)
+    hooks.mkdir(parents=True)
+    if case == "relative":                   # B: post-insert -> post-new -> PKG
+        os.symlink(pk, hooks / "post-new")
+        os.symlink("post-new", hooks / "post-insert")
+    elif case == "absolute-link-to-link":    # C: post-insert -> /abs/post-new -> PKG
+        os.symlink(pk, hooks / "post-new")
+        os.symlink(str(hooks / "post-new"), hooks / "post-insert")
+    elif case == "link-to-checkout-link":    # D: post-new -> checkout hook; post-insert -> post-new
+        checkout = tmp_path / "checkout" / "hooks" / "notmuch-post-new"
+        checkout.parent.mkdir(parents=True)
+        os.symlink(pk, checkout)
+        os.symlink(str(checkout), hooks / "post-new")
+        os.symlink("post-new", hooks / "post-insert")
+    elif case == "via-another-name":         # E: post-new -> my-hook -> PKG
+        os.symlink(pk, hooks / "my-hook")
+        os.symlink("my-hook", hooks / "post-new")
+        os.symlink("post-new", hooks / "post-insert")
+    else:
+        raise AssertionError(case)
+
+
+@pytest.mark.parametrize("case", ["relative", "absolute-link-to-link", "link-to-checkout-link",
+                                  "via-another-name"])
+def test_a_chain_of_links_ending_at_our_hook_is_done_and_left_as_is(env, hooks, tmp_path,
+                                                                    case):
+    _chain(hooks, case, tmp_path)
+    before = _links(hooks)
+    for name in _setup.HOOK_NAMES:
+        got, said = _setup.hook_step(hooks, name).check()
+        assert got == _setup.DONE, said
+        assert "left as is" in said or said == f"{hooks / name} -> {_setup.PACKAGED_HOOK}"
+    rc, out, _ = setup(env)
+    assert rc == _setup.EX_OK, out
+    for name in _setup.HOOK_NAMES:
+        assert state(out, f"notmuch-hook:{name}") == "DONE", out
+    assert _links(hooks) == before          # byte for byte: setup wrote no link
+
+
+def test_a_chained_link_says_where_it_resolves(hooks):
+    hooks.mkdir(parents=True)
+    os.symlink(str(_setup.PACKAGED_HOOK), hooks / "post-new")
+    os.symlink("post-new", hooks / "post-insert")
+    got, said = _setup.hook_step(hooks, "post-insert").check()
+    assert got == _setup.DONE
+    assert said == (f"{hooks / 'post-insert'} -> post-new (resolves to "
+                    f"{_setup.PACKAGED_HOOK.resolve()}; a sessionmail hook; left as is)")
+
+
+def test_a_chain_of_links_ending_at_a_foreign_file_is_blocked(env, hooks, tmp_path):
+    other = tmp_path / "theirs"
+    other.write_text("#!/bin/sh\n")
+    hooks.mkdir(parents=True)
+    os.symlink(str(other), hooks / "post-new")
+    os.symlink("post-new", hooks / "post-insert")
+    before = _links(hooks)
+    rc, out, _ = setup(env)
+    assert rc == _setup.EX_REMAINS
+    assert state(out, "notmuch-hook:post-new") == "BLOCKED"
+    assert state(out, "notmuch-hook:post-insert") == "BLOCKED"
+    assert _links(hooks) == before
+
+
+def test_a_dangling_chain_whose_end_is_ours_is_still_blocked_and_kept(env, hooks, tmp_path):
+    """Only a link whose OWN text ends in REPAIRABLE_TAIL is repaired; the
+    resolved end of a dangling chain is never judged."""
+    gone = tmp_path / "old-venv" / "lib" / "python3.12" / "sessionmail" / "notmuch" / "post-new"
+    hooks.mkdir(parents=True)
+    os.symlink(str(gone), hooks / "mid")
+    os.symlink("mid", hooks / "post-insert")
+    assert str(Path(hooks / "post-insert").resolve()).endswith(_setup.REPAIRABLE_TAIL)
+    got, _ = _setup.hook_step(hooks, "post-insert").check()
+    assert got == _setup.BLOCKED
+    rc, out, _ = setup(env)
+    assert rc == _setup.EX_REMAINS, out
+    assert state(out, "notmuch-hook:post-insert") == "BLOCKED"
+    assert os.readlink(hooks / "post-insert") == "mid"       # not unlinked, not relinked
+    assert os.readlink(hooks / "mid") == str(gone)
 
 
 def test_a_dangling_link_to_our_own_hook_is_repaired(env, hooks, tmp_path):
@@ -780,12 +883,54 @@ def test_the_carrier_row_is_byte_for_byte(env, tmp_path, carrier, argv):
 
 # ── the delivery step: nm-deliver with the kit profile baked in (SM-1025) ────
 
-#: postconf, as far as the delivery step asks it: `-M nminsert/unix` prints
-#: $FAKE_MASTER's text (none: no such service), then exits $FAKE_POSTCONF_EXIT.
+#: postconf, as far as the delivery step (and nm-deliver) asks it:
+#: `-M nminsert/unix` prints $FAKE_MASTER's text (none: no such service), then
+#: exits $FAKE_POSTCONF_EXIT; `-xh virtual_mailbox_maps` prints $FAKE_VMAPS
+#: (empty: no maps) and `-xh recipient_delimiter` prints `+` (SM-1039).
 FAKE_POSTCONF = """#!/bin/sh
+if [ "$1" = "-xh" ]; then
+  case $2 in
+    virtual_mailbox_maps) printf '%s\\n' "$FAKE_VMAPS"; exit 0 ;;
+    recipient_delimiter) printf '+\\n'; exit 0 ;;
+  esac
+  exit 64
+fi
 [ "$1" = "-M" ] && [ "$2" = "nminsert/unix" ] || exit 64
 [ -n "$FAKE_MASTER" ] && [ -f "$FAKE_MASTER" ] && cat "$FAKE_MASTER"
 exit "${{FAKE_POSTCONF_EXIT:-0}}"
+"""
+
+#: postmap over plain-text maps (one `key value` per line; a map is named
+#: `type:path`, the type ignored): `-q KEY MAP...` prints the FIRST map's
+#: value for KEY and exits 0, else exits 1, as postfix's postmap does over a
+#: map list; `-s MAP` prints every `key<TAB>value`. A map that is not there
+#: is fatal: a `fatal` line on stderr, exit 1 (SM-1039).
+FAKE_POSTMAP = """#!{python}
+import sys
+
+def read(spec):
+    path = spec.split(":", 1)[-1]
+    try:
+        with open(path) as f:
+            return [ln.split(None, 1) for ln in f.read().splitlines() if ln.strip()]
+    except OSError as exc:
+        sys.stderr.write("postmap: fatal: open " + path + ": " + str(exc) + "\\n")
+        sys.exit(1)
+
+args = sys.argv[1:]
+if args[:1] == ["-s"] and len(args) == 2:
+    for key, value in read(args[1]):
+        sys.stdout.write(key + "\\t" + value.strip() + "\\n")
+    sys.exit(0)
+if args[:1] == ["-q"] and len(args) >= 3:
+    for spec in args[2:]:
+        for key, value in read(spec):
+            if key == args[1]:
+                sys.stdout.write(value.strip() + "\\n")
+                sys.exit(0)
+    sys.exit(1)
+sys.stderr.write("postmap: fatal: fake: unexpected argv " + repr(args) + "\\n")
+sys.exit(64)
 """
 ME = __import__("pwd").getpwuid(os.getuid()).pw_name
 
@@ -861,6 +1006,146 @@ def test_a_stale_installed_copy_is_refreshed(env, tmp_path):
     assert detail(out, "delivery").startswith(f"refresh (it is not what setup would write) {target}")
     _rc, out, _ = setup(run)
     assert target.read_bytes() == _setup.render_nm_deliver(kit_profile(run))
+
+
+# ── SM-1039: a swap that would defer an address that delivers today ──────────
+#
+# The incident: setup replaced a hand-made wrapper that asked the agents map
+# first with the kit's, which asks virtual_mailbox_maps in postconf order. The
+# first hit for one address was `alice/` (not agents/ or stores/), so the kit's
+# wrapper deferred that address 4.3.5 for 23 h. Fakes and tmp roots only.
+
+#: A hand-made wrapper the service runs today: any bytes but the render.
+HAND_MADE = b"#!/bin/sh\n# hand-made nm-deliver: asks the agents map first\nexit 0\n"
+
+
+def with_maps(run: dict[str, str], tmp_path: Path, *maps: dict[str, str]
+              ) -> dict[str, str]:
+    """RUN with a fake postmap and virtual_mailbox_maps listing MAPS in order
+    (map A, map B, ...), each written as a plain-text `hash:` map."""
+    postmap = write_fake(tmp_path / "postfix-tools" / "postmap", FAKE_POSTMAP)
+    specs = []
+    for i, entries in enumerate(maps):
+        path = tmp_path / f"vmap-{chr(ord('a') + i)}"
+        path.write_text("".join(f"{k} {v}\n" for k, v in entries.items()))
+        specs.append(f"hash:{path}")
+    return {**run, "NM_DELIVER_POSTMAP": str(postmap), "FAKE_VMAPS": ", ".join(specs)}
+
+
+#: The incident's maps, in postconf order: A (/etc/postfix/virtual_mailboxes)
+#: holds an old maildir; B (the agents map) holds the one that delivers.
+MAP_A = {"alice@host": "alice/"}
+MAP_B = {"alice@host": "agents/alice/"}
+
+
+def test_the_fakes_reproduce_the_kits_wrapper_deferring_the_address(env, tmp_path):
+    """The fixture is the incident: the kit's own nm-deliver, over maps A then
+    B, takes A's `alice/` and defers 4.3.5. (Green before and after the fix;
+    it proves the fakes mean what the swap test says they mean.)"""
+    run, _target = insert_host(env, tmp_path)
+    run = with_maps(run, tmp_path, MAP_A, MAP_B)
+    proc = subprocess.run([str(_setup.PACKAGED_NM_DELIVER), "alice@host"], input=b"",
+                          capture_output=True, timeout=30, check=False,
+                          env={**run, "NM_DELIVER_NOTMUCH": shutil.which("true") or "/usr/bin/true"})
+    assert proc.returncode == 75, proc
+    assert b"4.3.5 nm-deliver: <alice@host> maps to 'alice/'" in proc.stdout, proc
+
+
+def test_a_swap_that_would_defer_an_address_that_delivers_today_is_blocked(env, tmp_path):
+    """SM-1039 regression. A hand-made wrapper is installed where nminsert/unix
+    runs; alice@host delivers today (map B holds a safe value), but the kit's
+    wrapper would take map A's `alice/` first and defer that address. Setup's delivery
+    step refuses the swap, naming alice@host, and writes nothing."""
+    run, target = insert_host(env, tmp_path)
+    run = with_maps(run, tmp_path, MAP_A, MAP_B)
+    target.write_bytes(HAND_MADE)
+    _rc, out, _ = setup(run, "--dry-run")
+    assert state(out, "delivery") == "BLOCKED", out
+    assert "alice@host" in detail(out, "delivery"), out
+    rc, out, _ = setup(run)
+    assert state(out, "delivery") == "BLOCKED", out
+    assert "alice@host" in detail(out, "delivery"), out
+    assert rc == _setup.EX_REMAINS, out
+    assert target.read_bytes() == HAND_MADE
+
+
+def test_a_swap_whose_first_hits_are_all_safe_still_installs(env, tmp_path):
+    """SM-1039 control: every address's first hit over the maps is safe
+    (agents/ or stores/; B's `alice/` is shadowed by A), so the refresh goes
+    ahead exactly as before."""
+    run, target = insert_host(env, tmp_path)
+    run = with_maps(run, tmp_path, {"alice@host": "agents/alice/", "alpha@host": "stores/alpha/"},
+                    {"alice@host": "alice/"})
+    target.write_bytes(HAND_MADE)
+    _rc, out, _ = setup(run, "--dry-run")
+    assert state(out, "delivery") == "TODO", out
+    assert detail(out, "delivery").startswith(f"refresh (it is not what setup would write) {target}")
+    rc, out, err = setup(run)
+    assert rc == _setup.EX_OK, out + err
+    assert target.read_bytes() == _setup.render_nm_deliver(kit_profile(run))
+
+
+def test_an_address_that_defers_today_too_does_not_block_the_swap(env, tmp_path):
+    """SM-1039: an address no map holds a safe value for defers under any
+    wrapper today, so the swap changes nothing for it: the refresh installs.
+    (`old@host` -> `alice/` in A only; alice@host's first hit is safe.)"""
+    run, target = insert_host(env, tmp_path)
+    run = with_maps(run, tmp_path, {"old@host": "alice/", "alice@host": "agents/alice/"},
+                    {"old@host": "../escape/"})
+    target.write_bytes(HAND_MADE)
+    _rc, out, _ = setup(run, "--dry-run")
+    assert state(out, "delivery") == "TODO", out
+    rc, out, err = setup(run)
+    assert rc == _setup.EX_OK, out + err
+    assert target.read_bytes() == _setup.render_nm_deliver(kit_profile(run))
+
+
+def test_a_map_postmap_cannot_list_blocks_the_swap(env, tmp_path):
+    """SM-1039: a map `postmap -s` cannot list cannot be proven safe, so the
+    swap is BLOCKED, naming the map, and the wrapper is left as it is."""
+    run, target = insert_host(env, tmp_path)
+    run = with_maps(run, tmp_path, {"alice@host": "agents/alice/"})
+    gone = tmp_path / "vmap-gone"
+    run["FAKE_VMAPS"] += f", hash:{gone}"
+    target.write_bytes(HAND_MADE)
+    _rc, out, _ = setup(run, "--dry-run")
+    assert state(out, "delivery") == "BLOCKED", out
+    assert f"hash:{gone} cannot be listed" in detail(out, "delivery"), out
+    rc, out, _ = setup(run)
+    assert state(out, "delivery") == "BLOCKED", out
+    assert rc == _setup.EX_REMAINS, out
+    assert target.read_bytes() == HAND_MADE
+
+
+def test_the_guard_runs_again_at_apply(env, tmp_path):
+    """SM-1039: the guard is asked again inside apply (the step's pattern), so
+    maps that changed after the plan was read still stop the write."""
+    run, target = insert_host(env, tmp_path)
+    run = with_maps(run, tmp_path, {"alice@host": "agents/alice/"})
+    target.write_bytes(HAND_MADE)
+    kit_profile(run).parent.mkdir(parents=True, exist_ok=True)
+    kit_profile(run).write_text("[database]\n")
+    profile = _setup.Step("notmuch-profile", "p", check=lambda: (_setup.DONE, "p"))
+    profile.read()
+    step = _setup.delivery_step(run, profile)
+    step.read()
+    assert step.state == _setup.TODO, step.detail
+    run["FAKE_VMAPS"] = with_maps(run, tmp_path, MAP_A, MAP_B)["FAKE_VMAPS"]
+    assert step.apply is not None
+    with pytest.raises(_setup.Left, match="alice@host"):
+        step.apply()
+    assert target.read_bytes() == HAND_MADE
+
+
+@pytest.mark.parametrize("value, safe", [
+    ("agents/alice/", True), ("stores/acme/widget/", True), ("alice/", False),
+    ("agents/", False), ("agents/alice", False), ("/agents/alice/", False),
+    ("agents//alice/", False), ("agents/../alice/", False), ("agents/mi ke/", False),
+    ("./agents/alice/", False), ("agents/alice/\nstores/x/", True),
+])
+def test_the_safe_value_rule_mirrors_nm_deliver(value, safe):
+    """SM-1039: `nm_deliver_safe` is the wrapper's own value test."""
+    assert _setup.nm_deliver_safe(value) is safe
 
 
 def test_a_service_that_runs_another_path_is_reported_never_edited(env, tmp_path):

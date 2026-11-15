@@ -1,6 +1,6 @@
 """pager-genie 3.28: `message` and drafts (design D13, "`message` and drafts").
 
-openspec/changes/pager-genie, tasks.md 3.28: `message list` neither lists nor
+OpenSpec change pager-genie, tasks.md 3.28: `message list` neither lists nor
 counts a `D` file, and says in its disclosure line how many drafts it hid;
 `message read` of a draft's Message-ID prints it and says it is a draft; no
 `message` verb marks, claims, moves or removes a draft. *(specs/message: A

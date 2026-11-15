@@ -1,6 +1,6 @@
 """The mail tool's settings-file keys, and the ONE reader every key is read by.
 
-openspec/changes/infra-settings, design D2 (the keys), D3 (the carrier's
+OpenSpec change infra-settings, design D2 (the keys), D3 (the carrier's
 names) and D4 (the reader): a variable that is set and not empty wins; else
 the value merged from the TEMPLATE and HOST layers (`_operator.host_values`,
 under the settings home); else the key's default. The seat and session

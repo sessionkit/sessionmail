@@ -1,6 +1,6 @@
 """The subscription file: its name, and the reader that turns files into pairs.
 
-`openspec/changes/message-subscriptions`, tasks 2.1 and D4:
+OpenSpec change `message-subscriptions`, tasks 2.1 and D4:
 
 - **Name = the box**, exactly as `message path` takes it: `atomnote`,
   `voicemode+inbox`, or `work/demo`, which is STORED as

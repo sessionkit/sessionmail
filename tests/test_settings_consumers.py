@@ -1,6 +1,6 @@
 """Each key's CONSUMERS read the settings file, whatever their environment.
 
-openspec/changes/infra-settings, design D4: a reader takes its variables, in
+OpenSpec change infra-settings, design D4: a reader takes its variables, in
 today's order, and only where it would have fallen back to its HARD DEFAULT
 does it take the file's value (the template and host layers, `_settings.
 setting`). A set variable of the key's own still beats the file:

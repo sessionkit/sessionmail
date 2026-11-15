@@ -1,7 +1,7 @@
 """pager-genie 3.8: a second `pager listen` in one session refuses (D10, O17
 RULED).
 
-openspec/changes/pager-genie, tasks.md 3.8: exit 3, naming the live pid,
+OpenSpec change pager-genie, tasks.md 3.8: exit 3, naming the live pid,
 changing no stamp and no mark; another session's listener is not a second
 arm. *(A second listener in one session refuses)*
 

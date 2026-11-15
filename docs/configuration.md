@@ -56,8 +56,8 @@ settings][notmuch-settings].
     `.notmuch`.
 - `~/.notmuch-config.<store>`: a store's profile, in store mode only.
 - `post-new` and `post-insert` in the profile's `database.hook_dir`
-  (`<mail root>/.notmuch/hooks` by default): links to the packaged post-new
-  hook.
+  (`<mail root>/.notmuch/hooks`, pinned in the profile setup writes): links
+  to the packaged post-new hook.
 
 Its settings, the `notmuch` keys in `mail.json` ([settings][settings]); each
 one's variable, when set and not empty, wins over the file:

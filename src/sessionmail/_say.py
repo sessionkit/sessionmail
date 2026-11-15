@@ -1,7 +1,7 @@
 """`pager say`'s two reads of this session's own record: the latest turn it
 heard (N9) and the operator's unread words (N7). PURE functions, no CLI.
 
-openspec/changes/pager-genie, tasks.md 3.9a and 3.9b.
+OpenSpec change pager-genie, tasks.md 3.9a and 3.9b.
 The spec requirements they prove: *A reply to a turn is a mail To the
 mouth, threaded on the latest turn heard* (3.9a) and *the operator's unread words
 hold a line* (3.9b). `pager say` itself, the exec of `mouth say` (3.9c),

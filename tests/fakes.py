@@ -126,3 +126,19 @@ def fake_scutil_only(env=None):
     if found is None or os.path.realpath(found) == os.path.realpath(_host.SCUTIL):
         return None
     return found
+
+
+def claude_interactive(session, ps=None, claude=None):
+    """`_seat.claude_headless` for the suite (SM-1034 fix-002): this
+    session's claude runs WITHOUT `-p`/`--print`, whatever argv launched the
+    runner. The real one reads the argv of the pid the conftest pins
+    `claude_for` to, which is the runner's own, and a bare `-p` there
+    (pytest's plugin flag) reads as `claude -p`. Shaped like the real one:
+    it asks `claude_for` as the real one does, and says None (cannot say)
+    when no claude is found. Here, not in tests/conftest.py, so a tool's
+    child can import it by reference (this module imports no command
+    module, and `_seat` only when called)."""
+    from sessionmail import _seat
+
+    pid = _seat.claude_for(session, ps=ps) if claude is None else claude
+    return None if pid is None else False

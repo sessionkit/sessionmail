@@ -609,7 +609,7 @@ def test_the_hook_names_no_notmuch_path_as_the_one_it_runs():
 
 # ---------------------------------------------------------------------------
 # SM-731 do-006: the hook is package data, and its two path queries are keys
-# (design §4; openspec/changes/store-index/specs/notmuch-hook). Every DB here
+# (design §4; OpenSpec change store-index, specs/notmuch-hook). Every DB here
 # is a scratch one, its env built by Db (MAILDIR, NOTMUCH_DATABASE and
 # NOTMUCH_PROFILE dropped, NOTMUCH_CONFIG and HOME moved to tmp_path).
 

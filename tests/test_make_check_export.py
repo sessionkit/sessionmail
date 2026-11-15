@@ -6,8 +6,15 @@ tracked). In a checkout that TRACKS openspec/ it stays strict: openspec/
 missing there fails, and openspec/ present is validated. `.git` alone decides
 nothing; every shape below is a REAL repo planted in tmp_path.
 
+openspec/ in the private checkout is a POINTER: one file, config.yaml,
+`store: <id>`, and the CLI validates the store it names. Where that store is
+not registered on the machine (its id is not in `openspec store list --json`)
+the leg SKIPS, naming the store; registered, it is validated strictly.
+
 The Makefile runs in a temp tree with a fake `openspec` and `skill` on PATH,
-each logging its argv, so no real validator runs and none is needed.
+each logging its argv, so no real validator runs and none is needed. The
+fake's `store list --json` lists the one store $FAKE_STORE_ID names
+(default `sessionmail`: registered).
 """
 
 from __future__ import annotations
@@ -19,11 +26,17 @@ from pathlib import Path
 
 import pytest
 
+from _export import export_ignored
+
 ROOT = Path(__file__).resolve().parent.parent
 
 pytestmark = pytest.mark.skipif(shutil.which("make") is None, reason="make is not installed")
 
 SKIPPED = "openspec/ not in this tree (release archive): skipped"
+#: The pointer the private checkout carries, and what an unregistered store says.
+POINTER = "store: sessionmail\n"
+UNREGISTERED = "openspec/ points at store sessionmail, not registered here: skipped"
+LISTED = "openspec store list --json"
 
 
 @pytest.fixture
@@ -37,7 +50,10 @@ def tree(tmp_path):
     log = tmp_path / "calls.log"
     for tool in ("openspec", "skill"):
         fake = bin_ / tool
-        fake.write_text(f'#!/bin/sh\necho "{tool} $*" >> "{log}"\n')
+        fake.write_text(f'#!/bin/sh\necho "{tool} $*" >> "{log}"\n'
+                        'if [ "$1 $2" = "store list" ]; then\n'
+                        '  echo "{\\"stores\\": [{\\"id\\": \\"${FAKE_STORE_ID:-sessionmail}\\"}]}"\n'
+                        'fi\n')
         fake.chmod(0o755)
     return work, bin_, log
 
@@ -46,11 +62,14 @@ def tree(tmp_path):
 GIT_ENV = {"GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_NOSYSTEM": "1"}
 
 
-def check(work: Path, bin_: Path, path: str | None = None) -> subprocess.CompletedProcess:
+def check(work: Path, bin_: Path, path: str | None = None,
+          registered: bool = True) -> subprocess.CompletedProcess:
     """`make check` in WORK, with BIN_ first on PATH (or PATH itself, when
-    given: the no-git shape)."""
+    given: the no-git shape). REGISTERED: whether the fake `store list
+    --json` lists the pointer's store."""
     env = {**os.environ, **GIT_ENV, "GIT_CEILING_DIRECTORIES": str(work.parent),
-           "PATH": path or f"{bin_}{os.pathsep}{os.environ['PATH']}"}
+           "PATH": path or f"{bin_}{os.pathsep}{os.environ['PATH']}",
+           "FAKE_STORE_ID": "sessionmail" if registered else "some-other-store"}
     for var in ("MAKEFLAGS", "GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE"):
         env.pop(var, None)
     return subprocess.run([shutil.which("make"), "--no-print-directory", "check"], cwd=work,
@@ -76,9 +95,10 @@ def committed(repo: Path) -> Path:
 
 
 def private_checkout(work: Path) -> Path:
-    """WORK as the private checkout: openspec/ committed, so tracked."""
+    """WORK as the private checkout: the openspec/ pointer committed, so
+    tracked."""
     (work / "openspec").mkdir()
-    (work / "openspec" / "project.md").write_text("p\n")
+    (work / "openspec" / "config.yaml").write_text(POINTER)
     return committed(work)
 
 
@@ -146,15 +166,40 @@ def test_in_a_worktree_that_tracks_it_a_missing_openspec_fails(tree, tmp_path):
 
 @pytest.mark.parametrize("shape", ["checkout", "tarball"])
 def test_a_present_openspec_is_validated_strictly(tree, shape):
+    """A pointer whose store is registered is validated through it; an
+    openspec/ that names no store is validated as it stands."""
     work, bin_, log = tree
     if shape == "checkout":
         private_checkout(work)
+        expected = [LISTED, "openspec validate --all --strict", "skill plugin validate ."]
     else:
         (work / "openspec").mkdir()
+        expected = ["openspec validate --all --strict", "skill plugin validate ."]
     run = check(work, bin_)
     assert run.returncode == 0, run.stderr
-    assert SKIPPED not in run.stdout
-    assert calls(log) == ["openspec validate --all --strict", "skill plugin validate ."]
+    assert SKIPPED not in run.stdout and UNREGISTERED not in run.stdout
+    assert calls(log) == expected
+
+
+@pytest.mark.parametrize("shape", ["checkout", "worktree"])
+def test_a_pointer_to_an_unregistered_store_skips_naming_it(tree, tmp_path, shape):
+    """A clone on a machine that never registered the store: the pointer is
+    there, the store is not, and the leg says which store and skips."""
+    work, bin_, log = tree
+    private_checkout(work)
+    if shape == "worktree":
+        git(work, "worktree", "add", "-q", str(tmp_path / "wt"))
+        work = tmp_path / "wt"
+    run = check(work, bin_, registered=False)
+    assert run.returncode == 0, run.stderr
+    assert UNREGISTERED in run.stdout
+    assert calls(log) == [LISTED, "skill plugin validate ."]   # no validate, the other leg runs
+
+
+def test_this_repos_pointer_is_the_one_the_leg_reads():
+    """The real openspec/config.yaml is the shape the fixture plants, so the
+    leg's `sed` reads a store id from it."""
+    assert export_ignored("openspec/config.yaml").read_text() == POINTER
 
 
 def test_test_export_runs_make_check_inside_the_export():

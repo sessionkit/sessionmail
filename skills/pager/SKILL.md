@@ -52,14 +52,28 @@ notification. **A seat its monitor hears for arms nothing.**
 - **No monitor running?** `pager unmute` and `pager status` say so: it can
   only start when the seat launches. Two ways out: run `pager listen` in
   the background (the hand arm), or restart the seat.
-- **Headless seats (`claude -p`) run no monitor: arm by hand, as before.**
-  So does a seat where Claude Code's monitor gate is off, or the switch is.
+- **Headless seats (`claude -p`) run no monitor.** Nor does a seat where
+  Claude Code's monitor gate is off, or the switch is. A headless seat is
+  one of two kinds:
+  - **A one-shot `claude -p` arms nothing**, and the hooks never ask it to:
+    Stop exits 0 in silence, and the ride-along gives no not-listening
+    line and no DEAF (its mail still rides). A listener would keep it
+    running, so it would never exit.
+  - **A long-lived headless seat opts in, then arms by hand, as before**:
+    `SESSIONMAIL_PAGER_REQUIRED=1` in its launch environment, or
+    `"pager_required": true` in its seat or session layer (for a `-p` seat
+    the host layer is not counted), then `pager listen` in the background.
+
+  The hooks read `-p`/`--print` off claude's command line; when `ps`
+  cannot say, a seat is not a one-shot. On a one-shot, `pager status`
+  says so on its `required:` line.
 - **The switch, off only.** `"monitor": false` in
   `~/.sessionkit/mail/settings/mail.json` (the host), `SESSIONMAIL_MONITOR=off` in
   claude's launch environment (one seat; it never turns it back on), or
   `SESSIONMAIL_PAGER=off`. `pager status` shows the `monitor:` line and
   what decided it.
-- **`pager_required`** (a boolean at the host, seat or session layer;
+- **`pager_required`** (a boolean at the host, seat or session layer, the
+  host not counted for a `claude -p` seat;
   `SESSIONMAIL_PAGER_REQUIRED=1`/`0` wins both ways). On a required seat
   that nothing hears for, past a ~10 s grace, the Stop and PostToolBatch
   hooks say `pager: DEAF` with the reason and the two ways out, even with
@@ -87,7 +101,7 @@ seat it says the monitor hears for you and `pager mute` silences it); or
 *pager is muted* after `pager mute`, or after a `pager stop` of a hand
 listener. The ride-along gives it after the mail,
 once, then only on change. Every seat with no listener is nagged unless
-it is muted.
+it is muted or a one-shot `claude -p`.
 `pager stop` is `pager off`.
 
 One switch per hook, in the same file: `ride_along`, `stop_nag`,
@@ -129,5 +143,4 @@ once. A 124 alone writes no stamp; the `pager off` is the stand-down. A
 seat its monitor hears for never gets a 124, and never runs `pager off`.
 
 References (flat, 40 lines / 400 tokens each): `references/`.
-Specs: `openspec/specs/pager/spec.md`, in the git repository; the release
-archive leaves `openspec/` out.
+Specs: the OpenSpec spec `pager`, kept in the project's OpenSpec store, outside this tree.

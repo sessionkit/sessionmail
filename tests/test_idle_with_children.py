@@ -6,7 +6,7 @@ states: `busy`, `idle with children` or `idle`. A seat whose turn has ended
 while a background agent runs is `idle with children`: Claude Code keeps its
 sidecar `busy`, and a turn-ended mark (`sessiontools.turn`, written by the
 Stop hook) says the turn is over. The ruling drops stopped-means-idle's "SHALL
-NOT infer idleness from the Stop hook" (openspec/changes/idle-with-children).
+NOT infer idleness from the Stop hook" (OpenSpec change idle-with-children).
 
 The two rules this file pins (the task's design note,
 designs/2030-12-08-idle-with-children-consumer.md in the store):

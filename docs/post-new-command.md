@@ -2,11 +2,12 @@
 
 The notmuch [post-new hook][post-new-hook] can run one command of yours
 after its tagging, for anything that should follow new mail (a dashboard
-redraw, say). It is off unless a notmuch config key names it:
+redraw, say). It is off unless a notmuch config key names it. The first
+line turns it on; the second, with no value, turns it off:
 
 ```sh
-notmuch config set sessionmail.post_new_command /abs/path/to/command   # on
-notmuch config set sessionmail.post_new_command                        # off
+notmuch config set sessionmail.post_new_command /abs/path/to/command
+notmuch config set sessionmail.post_new_command
 ```
 
 The value is an absolute path to an executable, run with no arguments and no

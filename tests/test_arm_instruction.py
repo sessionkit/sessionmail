@@ -11,7 +11,7 @@ copy 3.5 exists to remove, and the scan below would fail on this file.
 What is a HIT and what is not
 -----------------------------
 The scan looks for the instruction VERBATIM, the whole line, the words a
-teller would print. `openspec/specs/pager/spec.md` is not a hit and is not
+teller would print. OpenSpec spec `pager` is not a hit and is not
 meant to be: it STATES THE REQUIREMENT ("the instruction SHALL name the
 command and SHALL say that it runs backgrounded by the harness
 (`run_in_background: true`), never with a trailing `&`") in its own words,
@@ -86,7 +86,7 @@ def test_the_scan_can_fail(tmp_path):
 def test_the_scan_reaches_past_the_package(tmp_path):
     """The guard is only worth having if it walks the WHOLE tree - a second
     copy in a help page, a skill or a test is the copy that bites."""
-    for where in ("tests", "skills/pager", "openspec/specs/pager"):
+    for where in ("tests", "skills/pager", "docs"):
         (tmp_path / where).mkdir(parents=True)
         (tmp_path / where / "f.md").write_text(_arm.instruction())
     assert len(files_carrying(_arm.instruction(), tmp_path)) == 3

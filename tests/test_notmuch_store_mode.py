@@ -231,9 +231,9 @@ def box(tmp_path, monkeypatch):
     walked: list[set[str]] = []
     real_walk = _sender.find_messages
 
-    def watched(r, ids):
+    def watched(r, ids, **kw):
         walked.append(set(ids))
-        return real_walk(r, ids)
+        return real_walk(r, ids, **kw)
 
     monkeypatch.setattr(_sender, "find_messages", watched)
     return fake, root, parent, walked

@@ -1,6 +1,6 @@
 """`message send --json`: one object on stdout, and the PYTHON sender behind it.
 
-openspec/changes/agents-send-door. RULED Q05: a refusal says what KIND it
+OpenSpec change agents-send-door. RULED Q05: a refusal says what KIND it
 is. RULED option A, amending send-in-python decision 8: WITH `--json` the
 door calls the package's own `send()` in-process, because the bash oracle has
 no kinds; WITHOUT it nothing changes - `tests/test_message_send.py` is that

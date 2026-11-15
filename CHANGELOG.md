@@ -9,6 +9,197 @@ writer and mirrors it into `.claude-plugin/plugin.json` and `marketplace.json`.
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-11-15
+### Fixed: a reply to an unknown Message-ID no longer waits on a walk of the whole mail root
+
+- **The parent lookup has a 1 s budget.** To build `References:`, a reply
+  or a supersede looks its target up: notmuch, then a walk that reads the
+  head of every message under the mail root. For an id this host does not
+  hold, nothing short of the whole walk ended that lookup, and it ran before
+  the send could deliver: 16-18 s on a root of about 121,000 messages. A
+  caller with a shorter limit, the MCP `message_send` door included, then
+  stopped the send before anything was delivered. Now notmuch and the walk
+  share one budget, `PARENT_BUDGET_SECONDS = 1.0`. When it runs out, the
+  send stops looking.
+- **When the budget runs out, the reply is threaded one hop.** The message
+  is still delivered, with its `In-Reply-To:` (and `Supersedes:`) exactly as
+  given. `References:` holds the target alone, as it already did for a
+  parent this host cannot see. The send prints one line, which names the
+  target and the number of files read and says `threaded one hop`. That
+  line replaces the "NOT in the local index" warning, which would be a guess
+  when the lookup did not finish.
+- **`SESSIONMAIL_PARENT_CHECK=off` skips the lookup entirely.** It used to
+  silence the warning and still pay for the walk. Off now threads one hop
+  without looking, even when the parent is on this host, and prints nothing.
+- **A parent found within the budget threads as before**, with the full
+  ancestor chain. notmuch answers a parent it has indexed in milliseconds.
+- **Not changed:** the `From:` lookup for a reply. It searches only the
+  session's and the seat's own boxes, and it keeps no budget.
+
+### Fixed: `message setup` no longer links its hooks into your own notmuch hooks folder
+
+- **The profile setup writes pins `hook_dir`.** Unless a profile sets
+  `hook_dir`, notmuch runs its hooks from
+  `$XDG_CONFIG_HOME/notmuch/default/hooks` whenever that folder exists, for
+  any config. sessionmail drops `NOTMUCH_PROFILE`, so on a host whose user
+  had that folder, setup linked `post-new` and `post-insert` there, and they
+  ran for the user's own notmuch database too. The template now sets
+  `hook_dir=<mail root>/.notmuch/hooks`.
+- **A profile that pins none is refused, never edited.** When notmuch
+  reports a hook folder outside the profile's `database.path` and the
+  profile file sets no `hook_dir`, the hook step is `BLOCKED` and links
+  nothing. Its line names the folder, the setting to add, and an `rm` for
+  any sessionmail link already there; setup removes nothing itself. A
+  `hook_dir` the profile sets is honoured, wherever it points.
+- **The index step asks whether a database opens.** A pinned profile
+  reports its hook folder before any database exists, so that answer no
+  longer marks the index built: setup asks `notmuch count '*'`, and treats
+  only `.notmuch/xapian` at `database.path` as a database. A profile
+  written while notmuch was missing gets its index on the next run.
+### Changed: the specs moved to the project's OpenSpec store
+
+- **`openspec/` is now a pointer.** The specs, the open changes and
+  RATIFICATION.md moved out of this repository into the project's OpenSpec
+  store. `openspec/` keeps one file, `config.yaml`, reading
+  `store: sessionmail`, and the openspec CLI resolves the store from it:
+  `openspec list --specs` run in the tree lists the same five specs. Docs,
+  skills and source comments name a spec or change by its OpenSpec name
+  (`OpenSpec change send-in-python`) instead of a path. The release archive
+  still leaves `openspec/` out. `make check` validates through the pointer
+  and skips, naming the store, on a machine that has not registered it. The
+  tests that read a spec file read it through the pointer and skip, saying
+  why, where the store cannot be resolved. A stub verb now prints its spec
+  as a path inside the OpenSpec root (`OpenSpec specs/<area>/spec.md`)
+  (SM-1064).
+
+### Fixed: the PyPI page's README links no longer 404
+
+- **`make pypi-dist` builds the wheel and sdist PyPI gets.** The README's
+  relative links (`docs/pager.md` and the rest) went onto PyPI as written,
+  where every one of them 404s. The new target builds from the release tag
+  `v<version>` in a scratch copy, never the checkout. sessionkit's
+  `scripts/pypi_readme.py` (`KIT_DIR`, default `../sessionkit`) pins that
+  copy's README links to the tag on the public repo, then checks the wheel
+  and the sdist and fails if any relative link is left. It refuses unless
+  the tag is already on the public repo. The README in git keeps its
+  relative links. `scripts/release.py` now names `make pypi-dist` as the
+  step after the push.
+### Added: service files, so `sessionkit service` finds sessionmail's jobs
+
+- **`message seat agent --install ADDRESS` declares the seat agent** in
+  `~/.sessionkit/mail/services/seat-agents/<ADDRESS>.json`, with
+  `"enabled": true`, once the agent answers with seat.pub's key (on a fresh
+  install and on one that was already in place). The file carries the label,
+  the agent, both verbs and the `call` hazard. `--uninstall` keeps the file
+  and writes `"enabled": false`; an address with no job and no file gets
+  none (SM-1006).
+- **`message setup --pull` declares the puller** in
+  `~/.sessionkit/mail/services/puller.json` once its job is loaded, only for
+  a `pull.label` under `dev.sessionkit.mail.`; a host on another label gets no
+  file. A puller already running from a current plist gets the file on the
+  next run, with no restart. The puller has no uninstall verb, so nothing
+  writes `false` for it (SM-1006).
+- The `services/` folder sits beside `settings/`, never in it. Each file is
+  written whole: a temp file in the same folder, then one rename. A write
+  that fails names the file and leaves the old one as it was; the launchd
+  act it goes with is never undone, and a re-run writes the file.
+- **Exit 3: the job is up, its service file is not written.** `message seat
+  agent --install` and `--uninstall` and `message setup --pull` exit 3, not
+  1, when the launchd act is done but the file could not be written, so a
+  caller never reads a working install as a failed one. `--install` prints
+  its five `SEAT_*` lines whole on 3, as on 0. 0, 1, 2 and setup's 4 keep
+  their meanings; when 3 and 4 both apply, setup exits 3 (SM-1006).
+- The test suite's use of `jsonschema` is declared in the `dev` dependency
+  group; it was only ever installed by another package (SM-1006).
+
+### Fixed: `message seat agent --install` renders a path holding `--`
+
+- **A seat agent installs when a path it names holds `--`.** The
+  LaunchAgent template's XML comment names its placeholders, and the
+  render filled them there too. `--` is legal in a `<string>` and never in
+  an XML comment, so a checkout, home, socket, log or key path holding it
+  made the install refuse its own render as not a valid plist (SM-1052).
+  Now that comment is left as written when a value would put `--` in it
+  or end it on `-`. The plist's values are filled exactly as before and
+  the render is still checked with plistlib. A render with no such value
+  is byte for byte what it was, so a seat agent an older sessionmail
+  installed still reads as already installed.
+
+### Fixed: the pager hooks never ask a one-shot `claude -p` to arm a listener
+
+- **A one-shot `claude -p` exits again with the hooks on.** A one-shot is
+  a session whose claude has `-p`, `--print` or `--print=...` on its
+  command line, and that is not required to listen. The Stop hook told
+  it `pager is not listening` with exit 2, which keeps its turn going,
+  and a seat that obeyed by backgrounding `pager listen` never exited.
+  Now the Stop hook exits 0 and says nothing to a one-shot, PostToolBatch
+  gives it no not-listening line, and the deaf check never says DEAF to
+  it. Its mail still rides along. When `ps` cannot say how claude was
+  launched, the seat is not a one-shot and keeps every line it had. This
+  fixes the known issue named under 0.3.3: scripted print-mode runs no
+  longer need `"hooks": false`.
+- **For a `claude -p` seat, a host-file `pager_required` no longer
+  counts.** `"pager_required": true` in the host `mail.json` now reaches
+  interactive seats only. A long-lived headless seat that means to listen
+  opts in by `SESSIONMAIL_PAGER_REQUIRED=1` or by its own seat or session
+  layer, and is then nagged, and told DEAF, as before.
+- **`pager status`'s `required:` line** says when the host layer was not
+  counted, and names a one-shot: ``a one-shot (`claude -p`): the Stop and
+  PostToolBatch hooks never ask it to arm``. The settings schema,
+  `docs/settings.md`, `docs/pager-monitor.md`, the README and the pager
+  skill say the same.
+- Known limit: claude's command line is read from `ps`, which joins its
+  words with spaces, so an interactive claude started with a first prompt
+  that holds a bare `-p` or `--print` word reads as a one-shot, and is not
+  nagged when nothing listens.
+
+### Fixed: a moved `$HOME` no longer writes into the account's live mail
+
+- **A split home is said, once.** When `$HOME` is not the account's home
+  (the password database's), the hooks file follows `$HOME` while
+  `mail.json`'s keys (`root`, `sendmail`, `host`, ...) are read under the
+  account's home. A process with a scratch `$HOME` used to read the live
+  account's mail root and MTA and write there, with no word. Now `message
+  setup`, a send, a box birth, a map rebuild and `pager settings hooks`
+  each print one `home SPLIT` line per process naming both homes, and
+  `message setup --dry-run` shows it as a `home  SPLIT` plan row.
+- **The live tree is refused.** Under a split home, a write into the
+  account's mail tree (`~/.sessionkit/mail`, `~/.mail`, or the root its
+  `mail.json` files) and a send through the MTA its `mail.json` files are
+  refused, in each verb's own refusal words, unless `SESSIONMAIL_ROOT` or
+  `SESSIONMAIL_SENDMAIL` names the target: a set variable is a deliberate
+  act. Setup never writes the host pin into the account's file from a
+  split home. Nothing changes where the two homes are one folder.
+- Which home each setting is read from is unchanged. The locked rules, the
+  operator, the registry and the puller's state dir and lock stay on the
+  account's home.
+
+### Added: `message address` prints the address this shell sends from
+
+- **`message address [-r ID] [--json]`** prints the address a `message
+  send` from this shell would carry in `From:`, and nothing else: the
+  declared plus address, else the seat word, else the session id, at the
+  mail origin. It uses the functions `send` uses, so a tool that needs this
+  shell's From asks here and keeps no copy of the rule. `-r ID` answers for
+  a reply to ID. `--json` adds the kind, the variable that named it, the
+  session id and the notes. It exits 2, with stdout empty, where a send
+  would have no From: no seat or session (a shell that only inherited a
+  seat's words included), or no carrier. Read-only and hidden: on no
+  `message --help` page and no MCP tool. `docs/message-address.md` has the
+  rest. (SM-1012)
+
+### Changed: the pages say which box a bare `message list` reads
+
+- **`message list`, `read`, `path` and `box path` `-h`** each say, near the
+  top, which box a call with no BOX reads: this session's box once it
+  exists (the session-start hook or `pager listen` makes it), else the
+  seat's box, and stderr says so while the session has none. Name a BOX to
+  read another. `path` and `box path` said "BOX defaults to your seat",
+  which stopped being true once a session box exists. No behaviour changed.
+- **The README's quick start has a self-test** that makes a box, sends it a
+  message and lists that same box (`message setup --box claude`, `message
+  send claude -s hi --no-body`, `message list claude`), and says why a bare
+  `message list` under Claude Code does not show it.
 ## [0.3.3] - 2026-11-08
 
 **Needs sessiontools 0.3.3 or newer** (was 0.3.2).

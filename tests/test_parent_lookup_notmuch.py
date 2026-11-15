@@ -41,9 +41,9 @@ def world(tmp_path, monkeypatch):
     walked = []
     real_walk = _sender.find_messages
 
-    def watched_walk(r, ids):
+    def watched_walk(r, ids, **kw):
         walked.append(set(ids))
-        return real_walk(r, ids)
+        return real_walk(r, ids, **kw)
 
     monkeypatch.setattr(_sender, "find_messages", watched_walk)
 

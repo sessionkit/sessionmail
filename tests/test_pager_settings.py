@@ -2,7 +2,7 @@
 `$HOME/.sessionkit/mail/settings/mail.json` (SM-873; until session-settings
 3.1, `$HOME/.session/mail/settings.json`).
 
-SM-450, openspec/changes/pager-settings-file, tasks.md 2.1-2.5 (slice 1).
+SM-450, OpenSpec change pager-settings-file, tasks.md 2.1-2.5 (slice 1).
 Only the module and its two lines are tested here; what the hooks DO with
 them is slice 2 (tasks.md 3.x, `tests/test_pager_hook.py`).
 
@@ -461,7 +461,7 @@ def test_the_hermetic_HOME_is_a_sandbox_not_the_real_one(tmp_path, monkeypatch):
 
 
 # ── session-settings 3.1: the move from ~/.session/mail/settings.json ────
-# sessiontools openspec/changes/session-settings, tasks 3.1; the move rule
+# sessiontools OpenSpec change session-settings, tasks 3.1; the move rule
 # (RULED): a conversion, the new
 # writer and a symlink at the old path, shipped together.
 

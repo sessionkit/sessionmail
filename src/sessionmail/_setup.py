@@ -19,6 +19,11 @@ What it does, in this order:
 
 The steps, in this order:
 
+- `home`: only when $HOME is not the account's home (`_operator.home_split`),
+  one SPLIT row naming both, before anything is written. It is a fact, never
+  a step left: with it, a root in the account's live mail tree that no
+  variable names refuses the whole plan, and the host pin is never written
+  into the account's file.
 - `mail-root`: the agents root, made 0700. When the readers' root
   (`_maildir.root`) and the drop's (`_drop.mail_root(env)`, one resolver now)
   differ, setup REFUSES before applying anything: the drop would deliver into
@@ -45,21 +50,29 @@ The steps, in this order:
   database (MANUAL), and never writes over a file. A notmuch config that is
   not sessionmail's, `~/.notmuch-config` included, is never read or written.
 - `notmuch-index`: sessionmail's own index, built ONCE. DONE when notmuch
-  reports a `database.hook_dir` for the profile (it opened a database).
-  Otherwise it runs `notmuch --config=<profile> new --no-hooks`, and only
-  on an EMPTY index: the profile is written in this same run (over a mail
-  root with no database, by `notmuch-profile`'s own rule), or notmuch
-  reports no hook dir AND no `.notmuch` is at the `database.path` it
-  reports. A database already there is BLOCKED: setup runs no `new` over
-  it. With no binary the step is BLOCKED and still names the `new` setup
-  will run once notmuch is found, so one run names every link left.
+  opens a database for the profile (`notmuch count '*'` exits 0) and
+  reports its `database.hook_dir`. A hook dir alone proves nothing: a
+  profile that pins `hook_dir` reports it with no database. Otherwise it
+  runs `notmuch --config=<profile> new --no-hooks`, and only on an EMPTY
+  index: the profile is written in this same run (over a mail root with no
+  database, by `notmuch-profile`'s own rule), or no database opens AND no
+  `.notmuch/xapian` is at the `database.path` notmuch reports. A database
+  already there is BLOCKED: setup runs no `new` over it. With no binary the
+  step is BLOCKED and still names the `new` setup will run once notmuch is
+  found, so one run names every link left.
 - `notmuch-hook:post-new` and `notmuch-hook:post-insert`: links to the
   packaged post-new hook, in the `database.hook_dir` notmuch reports for
   that profile, asked with `--config=<profile>` and notmuch's own override
   variables dropped. When the hook dir cannot be known while the plan is
   built, ONE `notmuch-hook` step waits on `notmuch-index`: it asks the hook
   dir after the index is built, in the same run. With no profile nothing is
-  linked anywhere. A different file there is never replaced.
+  linked anywhere. A different file there is never replaced. A hook dir
+  outside the profile's `database.path` is linked into only when the
+  profile file itself pins `hook_dir`. Unpinned, it is notmuch's fallback,
+  `$XDG_CONFIG_HOME/notmuch/default/hooks`, the folder the user's own
+  notmuch runs too: ONE `notmuch-hook` step is BLOCKED, links nothing, and
+  names the pin to add (and an `rm` for any sessionmail link already
+  there). Setup never edits the profile itself.
 - `delivery`: the pipe(8) wrapper `nm-deliver`, installed or refreshed at
   `/usr/local/etc/postfix-agents/nm-deliver` ($SESSIONMAIL_NM_DELIVER_DIR
   moves it) with the kit's notmuch profile path (`_index.profile_config`)
@@ -85,8 +98,14 @@ The steps, in this order:
   at the target holds exactly the rendered bytes and the job is loaded. A
   plist there that is not a sessionmail puller, or a job loaded under the
   label with no plist, is BLOCKED: never overwritten, never booted out.
+  Once the job is loaded, the step writes its service file,
+  ~/.sessionkit/mail/services/puller.json, for a label under
+  `dev.sessionkit.mail.` only; a job that runs from a current plist with no
+  current file is TODO for the file alone, and no launchctl write is made.
   Otherwise the listener must answer (BLOCKED if not), then apply writes,
   lints (`plutil -lint`), boots out our loaded job and bootstraps it.
+  A service file that cannot be written leaves the job loaded: the step is
+  FAILED, the run goes on, and setup exits 3 (a re-run writes the file).
 
 When steps are left, the run ends with ONE next-steps block: every step not
 DONE, numbered, in plan order, with its detail, then the line to re-run.
@@ -131,15 +150,22 @@ VERB = "setup"
 #: How every printed line names the verb.
 COMMAND = f"message {VERB}"
 
-#: Exit codes (this verb's own page; 3 is avoided because on the `message`
-#: page it means "the MTA did not accept it").
+#: Exit codes (this verb's own page). 3 is not send's "the MTA did not accept
+#: it" here: like `message subscription`'s 3, it says the act stands and only
+#: its follow-up write is missing. Precedence: 1, then 3, then 4, then 0.
 EX_OK = 0          # every step is DONE
 EX_FAILED = 1      # a step failed while applying; what ran before it stays
 EX_USAGE = 2       # usage, or refused before anything was applied
+EX_UNDECLARED = 3  # a job is installed and loaded, but its service file was not written
 EX_REMAINS = 4     # what setup can do is done; MANUAL/BLOCKED/privileged steps remain
 
 #: A step's state, as `check` reads it.
 DONE, TODO, BLOCKED, MANUAL = "DONE", "TODO", "BLOCKED", "MANUAL"
+#: The `home` row's state when $HOME is not the account's home: a fact the
+#: plan says before anything is written, never a step left for anyone.
+SPLIT = "SPLIT"
+#: The states that leave nothing to do.
+SETTLED = (DONE, SPLIT)
 
 #: The packaged post-new hook (it ships 0755 in the wheel; `hooks/notmuch-post-new`
 #: in the repo is a link to it). Linked as both of these hook names.
@@ -154,12 +180,19 @@ OUR_HOOK_TAILS = ("sessionmail/notmuch/post-new", "hooks/notmuch-post-new")
 #: Python minor moves site-packages). Anything else dangling is not ours.
 REPAIRABLE_TAIL = "sessionmail/notmuch/post-new"
 
-#: What notmuch is asked for the hook dir. It reads empty until the first
-#: `notmuch new`.
+#: What notmuch is asked for the hook dir. Unpinned, it reads empty until the
+#: first `notmuch new`; a profile that pins `hook_dir` reads it with no
+#: database at all, so an answer here never proves a database opened.
 HOOK_DIR_KEY = "database.hook_dir"
-#: Where the profile's database is. Asked only when the hook dir reads empty:
-#: a notmuch older than 0.32 has no `database.hook_dir` key at all.
+#: Where the profile's database is: the hook dir must lie under it, unless the
+#: profile pins one. A notmuch older than 0.32 has no `database.hook_dir` key.
 DATABASE_PATH_KEY = "database.path"
+#: The probe for "notmuch opened a database": `count` exits 0 only when one
+#: opens, and 1 when there is none (measured, notmuch 0.40).
+OPENS_ARGS = ("count", "*")
+#: Under `database.path`, what makes a notmuch database: its Xapian folder. A
+#: `.notmuch` holding only `hooks/` is no database.
+DATABASE_PARTS = (".notmuch", "xapian")
 NOTMUCH_TIMEOUT = 10.0
 #: The one `notmuch new` setup runs indexes the mail root, so it gets minutes,
 #: not NOTMUCH_TIMEOUT's seconds.
@@ -254,6 +287,13 @@ class Failed(Exception):
     """A step's apply failed; its message is the line to print."""
 
 
+class Undeclared(Failed):
+    """A step's apply did its job (a LaunchAgent is installed and loaded) but
+    could not write the job's service file. The step's row says FAILED with
+    this line; the run goes on, since no later step reads the file, and ends
+    with exit 3 unless a later step fails outright (exit 1)."""
+
+
 class Left(Exception):
     """A step's apply could not finish it, and nothing after it depends on
     it: the step is BLOCKED with this line, and the run goes on (exit 4)."""
@@ -292,7 +332,7 @@ def run_plan(steps: list[Step], env: Mapping[str, str], out: TextIO, *, dry_run:
     todo = [s for s in steps if s.state == TODO]
     if dry_run:
         print(f"dry run: nothing applied ({len(todo)} step(s) TODO)", file=out)
-        human = [s for s in steps if s.state not in (DONE, TODO)]
+        human = [s for s in steps if s.state not in (*SETTLED, TODO)]
         last = (f"run `{COMMAND}` to apply the {len(todo)} TODO step(s)." if todo
                 else f"then run `{COMMAND}` again.")
         if human:
@@ -302,6 +342,7 @@ def run_plan(steps: list[Step], env: Mapping[str, str], out: TextIO, *, dry_run:
         return EX_OK if not todo and _all_done(steps) else EX_REMAINS
     if todo:
         print("applying:", file=out)
+    undeclared: list[Step] = []
     for s in todo:
         if s.privileged:
             # Its apply, when it has one, PREPARES the line (writes what the
@@ -329,6 +370,11 @@ def run_plan(steps: list[Step], env: Mapping[str, str], out: TextIO, *, dry_run:
             s.state, s.detail = BLOCKED, str(exc)
             print(f"  {s.id:<{width}}  BLOCKED: {exc}", file=out)
             continue
+        except Undeclared as exc:
+            s.detail = str(exc)
+            undeclared.append(s)
+            print(f"  {s.id:<{width}}  FAILED: {exc}", file=out)
+            continue
         except (OSError, Failed) as exc:
             print(f"  {s.id:<{width}}  FAILED: {exc}", file=out)
             print(f"{COMMAND}: stopped at {s.id}; what ran before it stays. Re-run "
@@ -336,10 +382,18 @@ def run_plan(steps: list[Step], env: Mapping[str, str], out: TextIO, *, dry_run:
             return EX_FAILED
         s.state = DONE
         print(f"  {s.id:<{width}}  {line}", file=out)
-    left = [s for s in steps if s.state != DONE]
+    left = [s for s in steps if s.state not in SETTLED and s not in undeclared]
     if left:
         next_steps(left, out, f"{COMMAND}: done what it can; {len(left)} step(s) left for you:",
                    f"then run `{COMMAND}` again.")
+    if undeclared:
+        # 3 over 4: the job is up and only its file is missing, so a re-run
+        # is the whole repair; any steps left are listed above all the same.
+        print(f"{COMMAND}: {', '.join(s.id for s in undeclared)} installed and loaded, but its "
+              f"service file was not written; re-run {COMMAND} with the same options to "
+              f"write it", file=out)
+        return EX_UNDECLARED
+    if left:
         return EX_REMAINS
     print(f"{COMMAND}: every step DONE", file=out)
     return EX_OK
@@ -357,7 +411,7 @@ def next_steps(left: Sequence[Step], out: TextIO, head: str, last: str) -> None:
 
 
 def _all_done(steps: Sequence[Step]) -> bool:
-    return all(s.state == DONE for s in steps)
+    return all(s.state in SETTLED for s in steps)
 
 
 def _apply_privileged(step: Step, env: Mapping[str, str], tty: bool) -> str:
@@ -384,6 +438,21 @@ def roots(env: Mapping[str, str]) -> Path:
     variable that is still set is NAMED by the mail-root step, not acted on."""
     from . import _maildir
     return _maildir.root(dict(env))
+
+
+def home_steps(env: Mapping[str, str]) -> list[Step]:
+    """`home`: one SPLIT row when $HOME is not the account's home
+    (`_operator.home_split`), naming both, so a walk sees it before
+    anything is written; none when they are one folder."""
+    from . import _operator
+    split = _operator.home_split(env)
+    if split is None:
+        return []
+    home, account = split
+    line = (f"$HOME is {home}, the account's home is {account}: {_operator.SPLIT_FOLLOWS}. "
+            f"A write into the account's live mail tree is refused unless $SESSIONMAIL_ROOT "
+            f"or $SESSIONMAIL_SENDMAIL names it")
+    return [Step("home", line, check=lambda: (SPLIT, line))]
 
 
 def mail_root_step(agents: Path, env: Mapping[str, str] | None = None) -> Step:
@@ -422,7 +491,8 @@ def host_step(env: Mapping[str, str]) -> Step:
       $SESSIONMAIL_HOST still beats the pin, and the line says so.
     - MANUAL: the host file's `host` is there but is not a non-empty string.
     - BLOCKED: the live hostname is empty, or the host file cannot be read or
-      is not a JSON object. Never written."""
+      is not a JSON object, or $HOME is not the account's home (the file is
+      the account's: `_operator.split_write_refusal`). Never written."""
     from . import _host, _operator, _settings
     target = _operator.settings_home() / _settings.RELATIVE
     shown = _settings.SHOWN
@@ -456,6 +526,12 @@ def host_step(env: Mapping[str, str]) -> Step:
         return Step("host", why, check=lambda: (BLOCKED, why))
     var = _host._variable(env)
     beaten = f" (${_host.VAR}={var} still wins while it is set)" if var else ""
+    refused = _operator.split_write_refusal(target, env, fix=(
+        f"a split home never writes the account's file. Run {COMMAND} with HOME at the "
+        f"account's home to pin it there"))
+    if refused:
+        why = f"the host pin is not written: {refused}"
+        return Step("host", why, check=lambda: (BLOCKED, why))
 
     def check() -> tuple[str, str]:
         return TODO, f'write "{_settings.HOST_KEY}": "{live}" in {shown}{beaten}'
@@ -646,12 +722,110 @@ def config_get(prefix: Sequence[str], child: Mapping[str, str], key: str) -> str
     return proc.stdout.strip()
 
 
+def database_opens(prefix: Sequence[str], child: Mapping[str, str]) -> bool:
+    """Guard (i): whether notmuch OPENS a database for the profile,
+    `<prefix> count '*'` exiting 0. Raises NotAsked when it cannot run. A
+    hook dir is no such proof: a profile that pins one reports it with no
+    database at all (measured, notmuch 0.40)."""
+    argv = [*prefix, *OPENS_ARGS]
+    shown = " ".join(shlex.quote(a) for a in argv)
+    try:
+        proc = subprocess.run(argv, capture_output=True, text=True, env=dict(child),
+                              timeout=NOTMUCH_TIMEOUT, check=False)
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise NotAsked(f"`{shown}` could not run: {exc}") from None
+    return proc.returncode == 0
+
+
+def database_at(path: str) -> bool:
+    """Guard (ii): whether a notmuch database is at PATH, `.notmuch/xapian`.
+    A `.notmuch` holding only `hooks/` is none: setup's own hook link makes
+    that folder."""
+    return os.path.lexists(Path(path).expanduser().joinpath(*DATABASE_PARTS))
+
+
+def pins_hook_dir(profile: Path) -> bool:
+    """Whether the profile FILE sets a non-empty `hook_dir` under
+    `[database]`. Read from the file, never asked of notmuch: notmuch
+    answers its XDG fallback exactly as it answers a pin. A file that
+    cannot be read pins nothing, so the hook step refuses."""
+    try:
+        text = profile.read_text()
+    except (OSError, UnicodeDecodeError):
+        return False
+    section = ""
+    for raw in text.splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.startswith("[") and line.endswith("]"):
+            section = line[1:-1].strip()
+            continue
+        key, eq, value = line.partition("=")
+        if eq and section == "database" and key.strip() == "hook_dir" and value.strip():
+            return True
+    return False
+
+
+def _inside(directory: Path, root: Path) -> bool:
+    """DIRECTORY is ROOT or under it, links followed."""
+    return Path(os.path.realpath(directory)).is_relative_to(os.path.realpath(root))
+
+
+def foreign_hook_dir(directory: Path, prefix: Sequence[str], child: Mapping[str, str],
+                     name: str) -> str:
+    """"" when setup may link into DIRECTORY, the hook dir notmuch reported
+    for the profile; else the line that refuses it.
+
+    It may when DIRECTORY lies under the profile's `database.path`, or when
+    the profile file itself pins `hook_dir` (the profile is the user's to
+    edit). Otherwise it is notmuch's fallback, `$XDG_CONFIG_HOME/notmuch/
+    default/hooks` (the profile is `default` because the override variables
+    are dropped): the folder the user's own notmuch runs too. Setup links
+    nothing there and never edits the profile. The line names the pin to
+    add, and an `rm` for any sessionmail link already there, which setup
+    never removes itself."""
+    profile = Path(prefix[1].partition("=")[2])
+    try:
+        path = config_get(prefix, child, DATABASE_PATH_KEY)
+    except NotAsked as exc:
+        return f"{exc}: setup cannot tell whether {directory} is sessionmail's; no hook is linked"
+    if not path:
+        return (f"notmuch reports no {DATABASE_PATH_KEY} for {prefix[1]}: setup cannot tell "
+                f"whether {directory} is sessionmail's; no hook is linked")
+    root = Path(path).expanduser()
+    if _inside(directory, root) or pins_hook_dir(profile):
+        return ""
+    ours = root.joinpath(*DATABASE_PARTS[:1], "hooks")
+    pin = f"{name} --config={shlex.quote(str(profile))} config set {HOOK_DIR_KEY} " \
+          f"{shlex.quote(str(ours))}"
+    line = (f"notmuch reports {directory} as the hook dir for {profile}, outside its database "
+            f"({root}), and the profile pins no hook_dir: that is notmuch's fallback, which "
+            f"the user's own notmuch runs too. Setup links nothing there. Pin sessionmail's "
+            f"own (`{pin}`, or add `hook_dir={ours}` under [database] by hand), then run "
+            f"`{COMMAND}` again")
+    linked = []
+    for hook in HOOK_NAMES:
+        step = hook_step(directory, hook)
+        step.read()
+        # A sessionmail hook by hook_step's own test: DONE, or our own
+        # dangling link (TODO, to repair).
+        if step.state == DONE or (step.state == TODO and os.path.islink(directory / hook)):
+            linked.append(shlex.quote(str(directory / hook)))
+    if linked:
+        line += (f". sessionmail's links already there run for the user's notmuch too; "
+                 f"remove them: `rm {' '.join(linked)}`")
+    return line
+
+
 def hook_dir(env: Mapping[str, str]) -> tuple[Path | None, str]:
     """The hook dir notmuch reports for the host's profile, or (None, why).
     Asked through the one resolution (`_notmuch._engine`): `--config=<the
     profile>`, with notmuch's own override variables out of the child's
     environment, so a notmuch config that is not sessionmail's is never
-    read. No profile is a refusal, never a fallback."""
+    read. No profile is a refusal, never a fallback. A hook dir outside the
+    profile's database that the profile does not pin is refused
+    (`foreign_hook_dir`)."""
     from . import _notmuch
     name, exe = notmuch_exe(env)
     if exe is None:
@@ -666,15 +840,20 @@ def hook_dir(env: Mapping[str, str]) -> tuple[Path | None, str]:
         return None, str(exc)
     if not got:
         return None, f"notmuch reports no {HOOK_DIR_KEY} for {prefix[1]}: it opened no database"
-    return Path(got).expanduser(), ""
+    directory = Path(got).expanduser()
+    refused = foreign_hook_dir(directory, prefix, child, name)
+    if refused:
+        return None, refused
+    return directory, ""
 
 
 def existing_database(path: str) -> str:
     """The line for guard (ii): a database is there, so setup runs no `new`."""
     database = Path(path).expanduser() / ".notmuch"
-    return (f"a notmuch database is at {database}, and notmuch reports no {HOOK_DIR_KEY} for "
-            f"it (a notmuch older than 0.32 has no such key): setup runs no `notmuch new` over "
-            "an existing database. Link post-new and post-insert into its hook dir by hand")
+    return (f"a notmuch database is at {database}, and notmuch does not open it or reports "
+            f"no {HOOK_DIR_KEY} for it (a notmuch older than 0.32 has no such key): setup runs "
+            "no `notmuch new` over an existing database. Link post-new and post-insert into "
+            "its hook dir by hand")
 
 
 def build_index(env: Mapping[str, str]) -> str:
@@ -684,9 +863,10 @@ def build_index(env: Mapping[str, str]) -> str:
     Everything is asked again here, after the profile step's apply: the
     binary, the one resolution (`_notmuch._engine`: `--config=<profile>`,
     notmuch's override variables dropped, so `~/.notmuch-config` is never
-    read), then the database path. A `.notmuch` already at that path is
-    `Left` (BLOCKED, the run goes on): setup never runs `new` over a
-    database. A `new` that fails, times out or cannot start is `Failed`."""
+    read), then the database path. A database already at that path
+    (`database_at`: `.notmuch/xapian`) is `Left` (BLOCKED, the run goes on):
+    setup never runs `new` over a database. A `new` that fails, times out or
+    cannot start is `Failed`."""
     from . import _notmuch
     name, exe = notmuch_exe(env)
     if exe is None:
@@ -703,7 +883,7 @@ def build_index(env: Mapping[str, str]) -> str:
         raise Left(f"notmuch reports no {DATABASE_PATH_KEY} for {prefix[1]}: setup does not "
                    "guess where the index is")
     database = Path(path).expanduser() / ".notmuch"
-    if os.path.lexists(database):
+    if database_at(path):
         raise Left(existing_database(path))
     argv = [*prefix, *NEW_ARGS]
     shown = " ".join(shlex.quote(a) for a in argv)
@@ -733,6 +913,13 @@ def hook_step(directory: Path, name: str) -> Step:
             if os.path.exists(link):
                 if there.endswith(OUR_HOOK_TAILS):
                     return DONE, f"{link} -> {there} (a sessionmail hook; left as is)"
+                # A relative link, or a link to a link, is judged by where its
+                # chain ENDS. Resolved only here: the chain exists, so
+                # it holds no loop (Path.resolve raises on one under 3.11).
+                end = Path(link).resolve()
+                if end == PACKAGED_HOOK.resolve() or str(end).endswith(OUR_HOOK_TAILS):
+                    return DONE, (f"{link} -> {there} (resolves to {end}; a sessionmail hook; "
+                                  "left as is)")
                 return BLOCKED, (f"{link} links to {there}, not a sessionmail hook: setup "
                                  "never replaces a different file")
             if there.endswith(REPAIRABLE_TAIL):
@@ -810,10 +997,13 @@ def notmuch_steps(env: Mapping[str, str], profile: Step) -> list[Step]:
 
     The index step runs `notmuch --config=<profile> new --no-hooks` once
     (`build_index`), and only when the index is EMPTY by both guards: (i)
-    notmuch reports no `database.hook_dir` (or the profile is being written
-    this run, over a mail root with no `.notmuch`: `profile_step` refuses
-    otherwise), and (ii) no `.notmuch` is at the `database.path` notmuch
-    reports. Every check here reads only."""
+    notmuch opens no database for the profile (`database_opens`; or the
+    profile is being written this run, over a mail root with no `.notmuch`:
+    `profile_step` refuses otherwise), and (ii) no `.notmuch/xapian` is at
+    the `database.path` notmuch reports (`database_at`). A database that
+    opens, with a hook dir, is DONE; the hook dir is then judged
+    (`foreign_hook_dir`) before anything is linked. Every check here reads
+    only."""
     from . import _notmuch
     name, exe = notmuch_exe(env)
     if exe is None:
@@ -842,13 +1032,16 @@ def notmuch_steps(env: Mapping[str, str], profile: Step) -> list[Step]:
         index = Step(INDEX_STEP, line, check=lambda: (BLOCKED, line))
         return [index, deferred_hook_step(env, index)]
     try:
-        got = config_get(prefix, child, HOOK_DIR_KEY)
+        got = config_get(prefix, child, HOOK_DIR_KEY) if database_opens(prefix, child) else ""
     except NotAsked as exc:
         return blocked(str(exc))
     if got:
         directory = Path(got).expanduser()
         index = Step(INDEX_STEP, "", check=lambda: (
             DONE, f"the database notmuch opened for {prefix[1]} (hook dir {directory})"))
+        refused = foreign_hook_dir(directory, prefix, child, name)
+        if refused:
+            return [index, Step("notmuch-hook", refused, check=lambda: (BLOCKED, refused))]
         return [index, *(hook_step(directory, n) for n in HOOK_NAMES)]
     try:
         path = config_get(prefix, child, DATABASE_PATH_KEY)
@@ -857,7 +1050,7 @@ def notmuch_steps(env: Mapping[str, str], profile: Step) -> list[Step]:
     if not path:
         return blocked(f"notmuch reports no {HOOK_DIR_KEY} and no {DATABASE_PATH_KEY} for "
                        f"{prefix[1]}: setup does not guess where the index is")
-    if os.path.lexists(Path(path).expanduser() / ".notmuch"):
+    if database_at(path):
         return blocked(existing_database(path))
     new_line = f"{name} {prefix[1]} {' '.join(NEW_ARGS)}"
     database = Path(path).expanduser() / ".notmuch"
@@ -944,6 +1137,125 @@ def service_argv(line: str) -> tuple[str, str]:
     return prog, user
 
 
+#: Where nm-deliver looks for postmap when no seam names it (its `pick` list).
+POSTMAP_PATHS = ("/usr/sbin/postmap", "/opt/homebrew/sbin/postmap", "/usr/local/sbin/postmap")
+
+
+def nm_deliver_safe(value: str) -> bool:
+    """Whether nm-deliver delivers to a map VALUE: its first line is a
+    maildir under `agents/` or `stores/`, relative, with no `.`/`..` step,
+    no empty step and no character outside its set. Mirrors the wrapper's
+    case tests (postfix/nm-deliver, after `value=$(... | head -n 1)`); an
+    unsafe value defers 4.3.5 there."""
+    v = value.split("\n", 1)[0]
+    if v.startswith(("/", "./", "../")) or any(s in v for s in ("//", "/./", "/../")):
+        return False
+    return (re.fullmatch(r"(?:stores|agents)/.+/", v) is not None
+            and re.fullmatch(r"[A-Za-z0-9._@+=/-]+", v) is not None)
+
+
+class Unproven(Exception):
+    """The swap guard could not ask postfix what it needs; its message says
+    what failed. A swap that cannot be proven safe is refused."""
+
+
+def swap_defers(env: Mapping[str, str]) -> str:
+    """"" when a wrapper the nminsert service runs could be swapped for the
+    kit's without deferring any address that delivers today; else the line
+    naming each address that would. Raises Unproven when a map
+    cannot be listed or postfix cannot be asked. Reads only; never runs a
+    wrapper (a hand-made one may insert).
+
+    - Addresses: every key holding an `@` in each map of
+      `postconf -xh virtual_mailbox_maps`, listed with `postmap -s`.
+    - Delivers today: some single map holds a safe value for it (the old
+      wrapper's order is unknowable; a safe value is how it delivered).
+    - Would defer: the kit's lookup (the address, then user@domain cut at
+      any recipient_delimiter, then @domain, each with `postmap -q` over
+      every map in order, the first hit) is not safe (`nm_deliver_safe`),
+      or finds nothing.
+    An address no map delivers today does not block: the swap changes
+    nothing for it. Seams: $NM_DELIVER_POSTCONF and $NM_DELIVER_POSTMAP, the
+    wrapper's own."""
+    postconf = env.get("NM_DELIVER_POSTCONF") or shutil.which("postconf", path=env.get("PATH"))
+    if not postconf:
+        raise Unproven("no postconf to ask for virtual_mailbox_maps")
+
+    def ask(argv: list[str], what: str) -> subprocess.CompletedProcess[str]:
+        try:
+            return subprocess.run(argv, capture_output=True, text=True, env=dict(env),
+                                  timeout=NOTMUCH_TIMEOUT, check=False)
+        except (OSError, subprocess.SubprocessError) as exc:
+            raise Unproven(f"`{' '.join(argv)}` could not run ({what}): {exc}") from None
+
+    def setting(name: str) -> str:
+        proc = ask([postconf, "-xh", name], name)
+        if proc.returncode != 0:
+            raise Unproven(f"`{postconf} -xh {name}` exited {proc.returncode}: "
+                           f"{proc.stderr.strip()[:200]}")
+        return proc.stdout.strip()
+    maps = setting("virtual_mailbox_maps").replace(",", " ").split()
+    if not maps:
+        return ""       # no map delivers anything today
+    postmap = (env.get("NM_DELIVER_POSTMAP")
+               or next((p for p in POSTMAP_PATHS if os.access(p, os.X_OK)), None)
+               or shutil.which("postmap", path=env.get("PATH")))
+    if not postmap:
+        raise Unproven("no postmap to list virtual_mailbox_maps")
+    listed: list[dict[str, str]] = []
+    for spec in maps:
+        proc = ask([postmap, "-s", spec], f"list {spec}")
+        if proc.returncode != 0:
+            raise Unproven(f"{spec} cannot be listed (`postmap -s` exited {proc.returncode}: "
+                           f"{proc.stderr.strip()[:200]})")
+        rows: dict[str, str] = {}
+        for row in proc.stdout.splitlines():
+            parts = row.split(None, 1)
+            if len(parts) == 2:
+                rows.setdefault(parts[0].lower(), parts[1].strip())
+        listed.append(rows)
+    delims = setting("recipient_delimiter")
+
+    def lookup(address: str) -> tuple[str, str] | None:
+        """(the key that hit, its value) as the kit's wrapper looks ADDRESS up."""
+        local, _, domain = address.rpartition("@")
+        base = local
+        for c in delims:
+            base = base.split(c, 1)[0]
+        keys = [address] if not local else [address, f"{base}@{domain}", f"@{domain}"]
+        for key in dict.fromkeys(keys):
+            proc = ask([postmap, "-q", key, *maps], f"look up <{key}>")
+            if proc.returncode == 0 and proc.stdout.strip():
+                return key, proc.stdout.strip()
+            if proc.returncode > 1 or "fatal" in proc.stderr:
+                raise Unproven(f"`postmap -q` failed for <{key}>: {proc.stderr.strip()[:200]}")
+        return None
+    deferred = []
+    for address in dict.fromkeys(k for rows in listed for k in rows if "@" in k):
+        safe = [(spec, rows[address]) for spec, rows in zip(maps, listed)
+                if address in rows and nm_deliver_safe(rows[address])]
+        if not safe:
+            continue        # it defers (or bounces) today too: the swap changes nothing
+        hit = lookup(address)
+        if hit is not None and nm_deliver_safe(hit[1]):
+            continue
+        today = f"{safe[0][1]!r} in {safe[0][0]}"
+        if hit is None:
+            deferred.append(f"{address} (no mapping found; delivers today by {today})")
+            continue
+        key, value = hit
+        where = next((s for s, rows in zip(maps, listed) if key in rows), "a map")
+        via = "" if key == address else f" via <{key}>"
+        deferred.append(f"{address} -> {value.splitlines()[0]!r}{via}, the first hit, in "
+                        f"{where} (delivers today by {today})")
+    if not deferred:
+        return ""
+    return (f"the kit's nm-deliver would defer {len(deferred)} address(es) that deliver "
+            f"today (4.3.5): {'; '.join(deferred)}. Fix the maps or their order in "
+            "virtual_mailbox_maps (setup never edits postfix), then run "
+            f"{COMMAND} again; the installed wrapper is left as it is")
+
+
 def staged_nm_deliver(env: Mapping[str, str]) -> Path:
     """Where a privileged install stages the rendered wrapper: the kit's own
     settings folder (`$HOME/.sessionkit/mail/settings/postfix/nm-deliver`),
@@ -983,7 +1295,11 @@ def delivery_step(env: Mapping[str, str], profile: Step) -> Step:
       profile's file is not there and PROFILE (the `notmuch-profile` step,
       read before this one) will not write it. A wrapper that bakes in a
       file that is not there defers every delivery, so setup never installs
-      one, and its apply checks again after PROFILE's has run.
+      one, and its apply checks again after PROFILE's has run. And: the
+      write would SWAP a wrapper the service runs for one that defers an
+      address that delivers today (`swap_defers`), or a map cannot
+      be listed to prove it would not. Each address is named; nothing is
+      written, and apply asks again.
     - DONE: the installed copy is byte for byte what setup would write, and
       the service's `argv=` runs it.
     - MANUAL: it is current, but the service runs another path (repoint
@@ -1057,6 +1373,33 @@ def delivery_step(env: Mapping[str, str], profile: Step) -> Step:
     def present() -> None:
         if not config.is_file():
             raise Left(waits())
+
+    def swap_problem() -> str:
+        """"" unless writing BODY where the service runs would defer an
+        address that delivers today (or that cannot be proven): the BLOCKED
+        line. A path the service does not run changes no delivery."""
+        if not points or current == body:
+            return ""
+        try:
+            why = swap_defers(env)
+        except Unproven as exc:
+            return (f"{exc}: setup cannot prove the kit's wrapper delivers what {target} "
+                    "delivers today, so it is left as it is")
+        return f"{why}; {target}" if why else ""
+
+    def guarded(state: str, line: str) -> Callable[[], tuple[str, str]]:
+        check = gated(state, line)
+
+        def guard() -> tuple[str, str]:
+            why = swap_problem()
+            return (BLOCKED, why) if why else check()
+        return guard
+
+    def safe() -> None:
+        present()
+        why = swap_problem()
+        if why:
+            raise Left(why)
     if current == body:
         if points:
             done = f"{target}, {baked}; {runs}"
@@ -1070,20 +1413,20 @@ def delivery_step(env: Mapping[str, str], profile: Step) -> Step:
     todo = f"{verb} {target}, {baked}; {report}"
     if os.access(target_dir, os.W_OK):
         def apply() -> str:
-            present()
+            safe()
             _write_file(target, body, 0o755)
             return f"installed {target}, {baked}"
-        return Step(DELIVERY_STEP, todo, check=gated(TODO, todo), apply=apply)
+        return Step(DELIVERY_STEP, todo, check=guarded(TODO, todo), apply=apply)
     staged = staged_nm_deliver(env)
     what = f"{todo}. Setup writes {staged} first, then this line installs it"
 
     def stage() -> str:
         from . import _maildir
-        present()
+        safe()
         _maildir.make_private_dirs(staged.parent)
         _write_file(staged, body, 0o644)
         return f"wrote {staged}"
-    return Step(DELIVERY_STEP, what, privileged=True, check=gated(TODO, what), apply=stage,
+    return Step(DELIVERY_STEP, what, privileged=True, check=guarded(TODO, what), apply=stage,
                 argv=(INSTALL, "-m", "0755", str(staged), str(target)))
 
 
@@ -1139,8 +1482,12 @@ def plan(env: Mapping[str, str], boxes: Sequence[str], *, write_maps: bool = Fal
         if problem:
             raise PlanRefused(f"--box {name!r}: {problem}")
     job = pull_job(env) if pull else None
+    from . import _operator
+    refused = _operator.split_root_refusal(env)
+    if refused:
+        raise PlanRefused(refused)
     agents = roots(env)
-    steps = [mail_root_step(agents, env), host_step(env)]
+    steps = [*home_steps(env), mail_root_step(agents, env), host_step(env)]
     names: list[str] = []
     op, op_why = operator_box()
     if op is None:
@@ -1179,11 +1526,12 @@ def pull_job(env: Mapping[str, str]) -> "_pull_agent.Job":
 
 
 def pull_step(job: "_pull_agent.Job", env: Mapping[str, str]) -> Step:
-    """`pull-agent`: the puller's LaunchAgent. `check` reads only; the
-    listener is asked only when the step would be TODO."""
+    """`pull-agent`: the puller's LaunchAgent and its service file. `check`
+    reads only; the listener is asked only when the job needs installing."""
     from . import _pull_agent
     cfg = job.config
     host, port = cfg.listener
+    only_file = [False]         # check's word to apply: the job runs; write the file alone
 
     def check() -> tuple[str, str]:
         if not _pull_agent.on_macos():
@@ -1197,7 +1545,12 @@ def pull_step(job: "_pull_agent.Job", env: Mapping[str, str]) -> Step:
             return BLOCKED, (f"{seen.foreign}: pick another pull.label, or remove it by hand. "
                              "Setup never overwrites it or boots it out")
         if seen.current == job.body and seen.loaded:
+            only_file[0] = not _pull_agent.service_current(job)
+            if only_file[0]:
+                return TODO, (f"write {_pull_agent.service_target(job)} ({job.target} is "
+                              f"loaded from {job.plist}, which is current)")
             return DONE, f"{job.target} loaded from {job.plist}"
+        only_file[0] = False
         if not _pull_agent.listening(host, port):
             return BLOCKED, (f"nothing listens on {host}:{port}: the puller hands mail to a "
                              "local-only smtpd (pull.listener); see docs/pull.md")
@@ -1211,10 +1564,18 @@ def pull_step(job: "_pull_agent.Job", env: Mapping[str, str]) -> Step:
         return TODO, todo
 
     def apply() -> str:
+        # The service file is written once the job is loaded: after the
+        # install, or alone when the job already runs from a current plist
+        # (nothing launchd runs is touched then). A write that fails leaves
+        # the job as it is, and the step FAILED: Undeclared, so exit 3.
         try:
-            return _pull_agent.install(job, env)
+            did = [] if only_file[0] else [_pull_agent.install(job, env)]
+            did.append(_pull_agent.declare(job))
+        except _pull_agent.Undeclared as exc:
+            raise Undeclared(f"{exc}. Re-run {COMMAND} {PULL} once the cause is fixed") from None
         except _pull_agent.Failed as exc:
             raise Failed(f"{exc}. Re-run {COMMAND} {PULL} once the cause is fixed") from None
+        return "; ".join(did)
     return Step("pull-agent", f"the puller's LaunchAgent, {job.label}", check=check,
                 apply=apply)
 
@@ -1244,6 +1605,8 @@ def main(argv: Sequence[str] | None = None, env: Mapping[str, str] | None = None
         print(f"{COMMAND}: unknown argument(s): {' '.join(extra)} (see {COMMAND} --help)",
               file=err)
         return EX_USAGE
+    from . import _operator
+    _operator.say_split(env, err)
     try:
         steps, notes = plan(env, args.box, write_maps=args.write_maps, pull=args.pull)
     except PlanRefused as exc:

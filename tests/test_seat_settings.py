@@ -1,6 +1,6 @@
 """session-settings 3.2: a SEAT's subscriptions in the new tree.
 
-sessiontools `openspec/changes/session-settings`, task 3.2. A seat's
+sessiontools OpenSpec change `session-settings`, task 3.2. A seat's
 subscriptions are the `subscriptions` map of
 `~/.session/seats/<seat>/settings/mail.json` (then `mail.d/*.json`), read
 PER OWNER (call 1 (A)): `true` is a box,

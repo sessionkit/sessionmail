@@ -1,4 +1,4 @@
-"""spike/pager-imap-idle: the IMAP puller (openspec/changes/pager-over-imap).
+"""spike/pager-imap-idle: the IMAP puller (OpenSpec change pager-over-imap).
 
 Hermetic: a fake IMAP server on a loopback port that takes a connection
 per run, serves whole messages, and can change its UIDVALIDITY. What it

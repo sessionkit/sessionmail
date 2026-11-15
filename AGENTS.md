@@ -5,8 +5,9 @@ messages, `pager` alerts, `memory` is the maildir as a filesystem.
 
 ## REFER TO THE SPECS BEFORE BUILDING ANYTHING
 
-The specs are the record of what this package is meant to do. They live in
-the git repository, beside this file; the release archive leaves them out.
+The specs are the record of what this package is meant to do. They are
+kept in the project's OpenSpec store, outside this tree: neither the
+repository nor the release archive carries them.
 **Read them before you design, before you build, and before you report that
 something is not specified.** The specs are what let a change be discussed:
 "this isn't a spec", "the spec needs to change", "the spec doesn't seem to
@@ -26,14 +27,21 @@ Three rules that have each been broken on this repo already:
    address and nothing about what a tag MEANS; naming vocabularies belong
    to the project that mints them.
 
+```sh
+make install
+make
+make progress
 ```
-make install     # uv tool install -e . — editable, so an edit is live
-make             # check, then test
-make progress    # how much of the CLI is built, counted by running it
-```
+
+- `make install` runs `uv tool install -e .`: editable, so an edit is live.
+- `make` checks, then tests.
+- `make progress` counts how much of the CLI is built, by running it.
 
 The slipbox notes cited by name in the specs and docs live in a private
 slipbox; none of them ships in this tree. The pager's concept note is a doc
-here: [`docs/pager.md`][pager-doc].
+here: [`docs/pager.md`][pager-doc]. The other two commands have a page
+each: [`docs/message.md`][message-doc] and [`docs/memory.md`][memory-doc].
 
 [pager-doc]: docs/pager.md
+[message-doc]: docs/message.md
+[memory-doc]: docs/memory.md

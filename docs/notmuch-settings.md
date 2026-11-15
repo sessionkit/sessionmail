@@ -85,6 +85,7 @@ empty environment apart from `HOME` and `PATH`):
 ```ini
 [database]
 path=/Users/alice/.mail
+hook_dir=/Users/alice/.mail/.notmuch/hooks
 
 [new]
 tags=unread;inbox;
@@ -108,8 +109,10 @@ header.XSupersedes=X-Supersedes
 - `[new]`, `[search]` and `[maildir]` are the settings in use today, kept as
   they were in the store-profile template
   (`src/sessionmail/notmuch/notmuch-config.store.template:18-30 @ c854322`).
-- The template has no `hook_dir` line: notmuch's default,
-  `<mail root>/.notmuch/hooks`, is where `message setup` links the hook.
+- `hook_dir` is pinned to `<mail root>/.notmuch/hooks`, where `message
+  setup` links the hook. Unpinned, notmuch would take
+  `$XDG_CONFIG_HOME/notmuch/default/hooks` whenever that folder exists (see
+  the post-new hook, below).
 - The two `index.header` lines are the ones the post-new hook needs
   (`README.md:44-51 @ c854322`). The template indexes more headers (`Task`,
   `Type`, `X-Session-From` and others) for queries
@@ -138,12 +141,13 @@ header.XSupersedes=X-Supersedes
   reports (`database.hook_dir`), never over a different file.
   Or link it by hand (`README.md:41-52 @ c854322`). The first
   `notmuch new` makes `<mail root>/.notmuch/` but no `hooks/` in it, so make
-  that first (measured; the README at `c854322` left the `mkdir` out):
+  that first (measured; the README at `c854322` left the `mkdir` out).
+  `REPO` is the folder of your sessionmail clone:
 
   ```sh
   R="$(message path --root)"; mkdir -p "$R/.notmuch/hooks"
-  ln -s <repo>/hooks/notmuch-post-new "$R/.notmuch/hooks/post-new"
-  ln -s <repo>/hooks/notmuch-post-new "$R/.notmuch/hooks/post-insert"
+  ln -s REPO/hooks/notmuch-post-new "$R/.notmuch/hooks/post-new"
+  ln -s REPO/hooks/notmuch-post-new "$R/.notmuch/hooks/post-insert"
   ```
 
 - It needs the two indexed headers (the `[index]` lines above). On a
@@ -172,7 +176,10 @@ header.XSupersedes=X-Supersedes
   unless `$XDG_CONFIG_HOME/notmuch/default/hooks` exists: then notmuch runs
   the hooks there instead, whichever config file it read. The profile there
   is `default` because sessionmail drops `NOTMUCH_PROFILE` from notmuch's
-  environment (measured, `notmuch config get database.hook_dir`).
+  environment (measured, `notmuch config get database.hook_dir`). That is
+  why the profile pins `hook_dir`. On a profile that pins none, `message
+  setup` links nothing into a folder outside the profile's `database.path`,
+  and prints the setting to add instead.
 - The hook finds notmuch (`src/sessionmail/notmuch/post-new:21-50
   @ 93ad8d6`): `SESSIONMAIL_NOTMUCH` (a bare name is looked up on `PATH`),
   else `notmuch` on `PATH`, else the first runnable of `NOTMUCH_PATHS`:

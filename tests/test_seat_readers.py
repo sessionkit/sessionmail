@@ -1,4 +1,4 @@
-"""SM-748 do-001 (openspec/changes/message-receipt, tasks 2.1; design D7, D8).
+"""SM-748 do-001 (OpenSpec change message-receipt, tasks 2.1; design D7, D8).
 
 A refactor with no new verb, pinned three ways:
 

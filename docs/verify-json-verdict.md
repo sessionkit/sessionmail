@@ -154,9 +154,8 @@ MCP tool is not changed by this work.
 
 ## Status
 
-`--json` is a PROPOSED requirement, in the message-verify change
-(`openspec/changes/message-verify/`, in the git repository; the release
-archive leaves `openspec/` out). It is not ratified yet. The byte-exact
+`--json` is a PROPOSED requirement, in the OpenSpec change `message-verify`
+(kept in the project's OpenSpec store, outside this tree). It is not ratified yet. The byte-exact
 cases are in the [golden files][golden], checked by the
 [verifier tests][json-tests].
 

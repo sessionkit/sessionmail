@@ -1,7 +1,7 @@
 """tasks.md 3.1: voice is recognised by `Ears-Kind`, in three states (SM-782).
 
 Proves *Voice arrives as mail in the ears box, and the pager treats it as
-mail* (openspec/changes/pager-genie/specs/pager/spec.md): the pager
+mail* (OpenSpec change pager-genie, specs/pager/spec.md): the pager
 recognises a voice mail by the keeper's header `Ears-Kind` (read through
 3.22, so `X-Ears-Kind` too). From the keeper's address, ONE named value
 `heard`: `heard@<host>` or `heard+<tag>@<host>`, in either host form (P-2; any

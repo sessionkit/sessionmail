@@ -1,4 +1,4 @@
-"""The built-in renderer - task 4b of openspec/changes/send-in-python.
+"""The built-in renderer - task 4b of OpenSpec change send-in-python.
 
 `_render.py` is session-mail-render's engine COPIED into the package
 (RULED decision 2). These are the pins of its

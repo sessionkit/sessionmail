@@ -8,8 +8,9 @@ The release archive ships AGENTS.md and leaves CLAUDE.md out (SM-820):
 `claude plugin validate --strict` fails on a CLAUDE.md at the plugin root.
 So AGENTS.md must stand alone in `git archive`: every relative link or path
 it names is in the archive, and it names no host, task id, person or seat.
-The map of the specs (openspec/, which the archive leaves out) lives in
-CLAUDE.md, below the import.
+The map of the specs (the `openspec/config.yaml` pointer, which the archive
+leaves out, and the OpenSpec store it names) lives in CLAUDE.md, below the
+import.
 
 Until SM-820 this file asserted that AGENTS.md was export-ignored too (SM-755).
 Inverting that assertion is a deliberate contract change (SK-101).
@@ -46,10 +47,16 @@ def test_agents_md_carries_the_spec_rule():
 
 
 def test_claude_md_carries_the_map_of_the_specs():
-    """The openspec/ paths moved here from AGENTS.md: CLAUDE.md never ships."""
+    """The map of the specs lives here, not in AGENTS.md: CLAUDE.md never
+    ships. The specs are in the project's OpenSpec store, so the one link
+    is to the pointer, and no link reaches into an in-tree specs/ or
+    changes/ that is no longer there."""
     claude = export_ignored("CLAUDE.md").read_text()
-    for target in ("openspec/specs/", "openspec/changes/", "openspec/RATIFICATION.md"):
-        assert f"]: {target}" in claude, target
+    assert "]: openspec/config.yaml" in claude
+    for gone in ("openspec/specs", "openspec/changes", "openspec/RATIFICATION.md"):
+        assert gone not in claude, gone
+    for kept in ("specs/<area>/spec.md", "changes/<name>/", "RATIFICATION.md"):
+        assert kept in claude, kept
 
 
 # --- the release archive --------------------------------------------------

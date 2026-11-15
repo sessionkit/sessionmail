@@ -9,5 +9,9 @@ the split stays flexible and may be reviewed.
 
 The notes the specs cite by name live in a private slipbox and are not
 part of this tree. The pager's concept note is a doc here, [pager.md][pager].
+The other two commands have a page each: [message.md][message] and
+[memory.md][memory].
 
 [pager]: pager.md
+[message]: message.md
+[memory]: memory.md

@@ -72,7 +72,7 @@ cannot_listen = "pager cannot listen on {platform}: select.kqueue is missing, an
 # paths, monitor and no monitor. Never `pager stop` a monitor: Claude Code
 # does not restart one. {arm} as above, never restated.
 not_yet = "pager cannot be listening yet: claude is not running for this session - that is expected, not deaf. Once claude is up, {arm}. If this session's pager monitor is already listening, that arm is refused and says so: then there is nothing to arm, and never `pager stop` it."
-# openspec/changes/pager-settings-file: the two lines
+# OpenSpec change pager-settings-file: the two lines
 # about the settings file. Each is formatted where it is said, with {path}
 # (and {error}); neither restates the arm instruction.
 # settings_created: said ONCE, only by the ride-along run that CREATED the

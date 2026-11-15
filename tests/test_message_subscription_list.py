@@ -1,4 +1,4 @@
-"""message subscription list [BOX] (openspec/changes/message-subscriptions,
+"""message subscription list [BOX] (OpenSpec change message-subscriptions,
 tasks 3.3, design D6, specs/message "What reaches me, and who hears this
 box").
 

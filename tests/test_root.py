@@ -330,7 +330,7 @@ def test_two_labels_of_one_canonical_name_are_a_fork(box, env, keyed, twin):
 # ── the one live-node rule: ONE table, BOTH graphs, the requirement's 33 rows ─
 #
 # The delta's "One live-node rule resolves every Supersedes: graph, the root's
-# and the labels' alike" (openspec/changes/memory-init/specs/memory/spec.md:446
+# and the labels' alike" (OpenSpec change memory-init, specs/memory/spec.md:446
 # @ 85513d2) and its shape table. Each row below is ONE abstract shape, and the
 # test puts it into a box twice: once as the ROOT graph (every node a `[ROOT]`,
 # threaded nowhere unless the row says so) and once as the LABEL graph (every

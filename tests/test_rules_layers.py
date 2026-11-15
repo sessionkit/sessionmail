@@ -1,4 +1,4 @@
-"""The built-in defaults and the layers: `openspec/changes/pager-filters`,
+"""The built-in defaults and the layers: OpenSpec change `pager-filters`,
 tasks 2.3 and 2.4.
 
 D4 step 3 (RULED, good defaults): `wake! from:judy@*`, `wake

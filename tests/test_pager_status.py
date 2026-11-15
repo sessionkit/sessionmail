@@ -540,7 +540,7 @@ def test_page_age_is_zero_when_idle_and_sixty_otherwise(seat, monkeypatch):
 
 
 # ── the scoop takes the queue (the-queue-chain, G2) ───────────────────────
-#: openspec/changes/the-queue-chain: the scoop takes <session>/ride/new
+#: OpenSpec change the-queue-chain: the scoop takes <session>/ride/new
 #: by directory swap, gives each entry once from the file's own headers,
 #: records the giving, files the link in done/. No query, no baseline, no
 #: remind-window arithmetic. Entries are written straight into the queue
@@ -1093,7 +1093,9 @@ def test_pre_claude_exit_0_never_reaches_plain_status_or_an_in_claude_run(seat, 
     r = run()
     assert r.exit_code == EX_NOTHING, r.output
     assert pager.LINE_NOT_YET not in r.output
-    assert pre_claude == []
+    # Asked once, by the `required:` line (is this a `claude -p` seat?),
+    # never for the not-yet answer: no claude found keeps every layer.
+    assert pre_claude == [SESSION]
 
 
 def test_the_status_page_says_pre_claude_exits_0():

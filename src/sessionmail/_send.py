@@ -7,7 +7,7 @@ here is checked BEFORE anything is written. Everything after - signing,
 multipart rendering, threading-id lookup, the deliverability preflight, the
 transport - is the package's own sender (`_sender`). The bash
 `session-mail-send` sends only when a seat names it in
-$SESSIONMAIL_SEND_ORACLE, for one release (openspec/changes/send-in-python
+$SESSIONMAIL_SEND_ORACLE, for one release (OpenSpec change send-in-python
 step 5).
 """
 
@@ -268,7 +268,7 @@ def oracle(env: dict[str, str] | None = None) -> list[str] | None:
     otherwise - the package's own sender sends (one core function sends
     mail, and in a Python package it is Python). The two PATH
     fallbacks (`session-mail-send`, `session mail send`) are retired with it
-    (openspec/changes/send-in-python)."""
+    (OpenSpec change send-in-python)."""
     env = os.environ if env is None else env
     named = env.get(ORACLE_VAR)
     return [named] if named else None

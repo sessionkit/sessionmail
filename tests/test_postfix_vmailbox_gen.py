@@ -8,7 +8,7 @@ module is the net under that move, so a later port or tidy-up cannot change
 the map's text without a test going red first.
 
 **It ships as PACKAGE DATA, not a fourth command.**
-`openspec/specs/package/spec.md` RATIFIES "no fourth top-level command and no
+OpenSpec spec `package` RATIFIES "no fourth top-level command and no
 umbrella command the three hang off", so there is deliberately no
 `vmailbox-gen` console script. Whether it later becomes a `pager`/`message`
 subcommand is not settled here.

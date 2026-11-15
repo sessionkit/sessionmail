@@ -1,6 +1,6 @@
 """SM-538 do-003: the subject shortener, PURE (`sessionmail._shorten`).
 
-The contract is openspec/changes/subject-shorten (requirements "With the
+The contract is OpenSpec change subject-shorten (requirements "With the
 shortener on, an over-limit or non-ASCII subject is shortened and sent" and
 "A subject that folding would gut is still refused") and SM-538's design.md
 section 3. No environment, file or clock is read here: the door (do-005)

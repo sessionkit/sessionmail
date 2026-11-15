@@ -2,7 +2,7 @@
 
 Ported from session's `skills/session/scripts/test_session_hooks_mail_guard.py`
 (groups A-D, at session commit 453ccda) when the hook moved here with the
-`session` project's retirement (openspec/changes/mail-leaves-session item 23).
+`session` project's retirement (OpenSpec change mail-leaves-session item 23).
 The case names keep their session ids (A1, B7, C13 ...) so a reader can line
 the two suites up.
 

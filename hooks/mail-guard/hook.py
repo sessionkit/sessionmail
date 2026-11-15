@@ -1164,7 +1164,7 @@ def decide(command_text):
 
 # ── the deny's row in the session's pager inject log ────────────────────────
 #
-# openspec/changes/pager-inject-log, "The mail-guard's deny is logged from
+# OpenSpec change pager-inject-log, "The mail-guard's deny is logged from
 # stdlib, and fails open" (its form: `event: inject, via: pretooluse-deny`). The deny reason is text fed to the
 # agent, so it is an injection like any other, and gets the same row in the
 # same file - written by THIS stdlib copy of sessionmail's `_injectlog`

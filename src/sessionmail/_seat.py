@@ -2,14 +2,14 @@
 
 A seat is the durable half of an agent, and outlives the sessions that
 come and go. Its MARKS do not: they are per session. "Read is not terminal"
-(`openspec/specs/pager/spec.md`) still holds inside a session - `pager
+(OpenSpec spec `pager`) still holds inside a session - `pager
 status` says "you read this and never finished it" - and a successor
 starts with none of it.
 
 Three things live here because three commands need them and none of them
 owns them:
 
-- **identity** - `openspec/specs/pager/spec.md`, "Identity comes from the
+- **identity** - OpenSpec spec `pager`, "Identity comes from the
   environment": first hit wins, the source is printed, none of them set
   means refuse. Nothing is ever passed as an address.
 - **the seat directory** - `<seat>/subscriptions/` is named on the
@@ -53,7 +53,7 @@ from pathlib import Path
 from . import _settings as _mail_settings   # not `_settings`: that is sessiontools', below
 from ._maildir import make_maildir
 
-#: The seat-ish variables, in the order `openspec/specs/pager/spec.md`
+#: The seat-ish variables, in the order OpenSpec spec `pager`
 #: fixes them, then the session id. MEASURED DIVERGENCE, reported not
 #: silently patched: the retired `session-mail-arm` consults
 #: `SESSION_SEAT` ahead of these two and `CLAUDE_CODE_SESSION_ID` ahead of
@@ -92,7 +92,7 @@ ADDRESS_FILE = "address"
 #: `<seat>/marks`, until marks moved under the session) without ever
 #: saying where `<seat>` is. Two candidates
 #: were live: inside the maildir (`<boxes root>/<name>/`) and beside it.
-#: Beside it wins on one measured argument - `openspec/specs/pager/spec.md`
+#: Beside it wins on one measured argument - OpenSpec spec `pager`
 #: "Reading is harmless" promises a human may open the maildir in Mail.app,
 #: neomutt or notmuch and change nothing, and a `subscriptions/` directory
 #: sitting between `new/` and `cur/` is not a maildir. Override with
@@ -118,7 +118,7 @@ _UNSAFE_ADDRESS = re.compile(r"[^a-z0-9._+-]+")
 
 # ── inherited identity ──────────────────────────────────────────────
 #
-# PROPOSED, not ratified: openspec/changes/inherited-identity/. Claude puts
+# PROPOSED, not ratified: OpenSpec change inherited-identity. Claude puts
 # CLAUDE_PID=<its own pid> into every child's environment (MEASURED,
 # the change's proposal). A tmux server started from inside a seat copies the
 # seat's whole environment into its global one, so every plain pane on it
@@ -1191,7 +1191,7 @@ sidecar_dir = sessiontools.sidecar_dir
 #: release with `Session.state`) says `busy`, `idle with children` or `idle`
 #: in `Session.state`: a seat whose turn ended while a background agent runs
 #: keeps a busy sidecar, and the Stop hook's turn-ended mark says the turn
-#: is over. Two rules, one word (openspec/changes/idle-with-children):
+#: is over. Two rules, one word (OpenSpec change idle-with-children):
 #:
 #: - WAKE: `idle with children` is IDLE, idle since the turn end. The library
 #:   already returns that number, so `idle_seconds` and `is_idle` need no
@@ -1584,7 +1584,8 @@ def _required_layers(seat: "Seat | None", session: str,
 
 
 def pager_required(seat: "Seat | None", session: str,
-                   env: dict[str, str] | None = None) -> Required:
+                   env: dict[str, str] | None = None, *,
+                   headless: bool | None = None) -> Required:
     """`SESSIONMAIL_PAGER_REQUIRED` (1/true/on, 0/false/off)
     wins over every layer, both ways; any other value is ignored and said.
     Otherwise the most specific layer that holds a boolean `pager_required`
@@ -1592,7 +1593,14 @@ def pager_required(seat: "Seat | None", session: str,
     (`mail.json`, then `mail.d/*.json`). A layer that cannot be read is
     skipped and said. When the layered reader itself is missing (no
     sessiontools.settings), the host file alone is read and that is said.
-    Missing everywhere means NOT required. Never raises."""
+    Missing everywhere means NOT required. Never raises.
+
+    HEADLESS is True for a seat whose claude runs with `-p`/`--print`
+    (`claude_headless`): then the HOST layer is not counted, and that is
+    said. A host-wide default reaches interactive seats only; a headless
+    seat that means to listen opts in by the variable or its own seat or
+    session layer. None (not measured, or `ps` cannot say) and False count
+    every layer, as before."""
     from . import _layer
     from . import _settings as host_settings
     env = os.environ if env is None else env
@@ -1622,7 +1630,15 @@ def pager_required(seat: "Seat | None", session: str,
             if _layer.NOT_INSTALLED in str(exc):
                 reader_missing = True
                 break
+            if headless and name == "host":
+                ignored.append(_host_not_counted())
+                continue
             ignored.append(f"the {name} layer is skipped: {exc}")
+            continue
+        if headless and name == "host":
+            ignored.append(_host_not_counted(
+                (values[REQUIRED_KEY], origins.get(REQUIRED_KEY) or str(directory / _layer.FILE))
+                if REQUIRED_KEY in values else None))
             continue
         if REQUIRED_KEY not in values:
             continue
@@ -1638,7 +1654,10 @@ def pager_required(seat: "Seat | None", session: str,
         ignored.append("the layered reader (sessiontools.settings) is not installed, so only "
                        "the host file was read")
         present, value, why = host_settings.host_value(REQUIRED_KEY, env)
-        if why:
+        if headless:
+            ignored.append(_host_not_counted(
+                (value, str(host_settings.path(env))) if present and not why else None))
+        elif why:
             ignored.append(why)
         elif present and isinstance(value, bool):
             found = Required(value, f'"{REQUIRED_KEY}": {json.dumps(value)} in '
@@ -1649,6 +1668,47 @@ def pager_required(seat: "Seat | None", session: str,
     if found is not None:
         return Required(found.on, found.source, tuple(ignored))
     return Required(False, "the default: no setting says required", tuple(ignored))
+
+
+def _host_not_counted(held: tuple[object, str] | None = None) -> str:
+    """The words `pager_required` adds for a headless seat: the host layer
+    was not counted. HELD is the host's (value, file) when it set the key."""
+    rule = (f"for a headless seat (`claude -p`) only {REQUIRED_VAR} and the seat and "
+            "session layers decide")
+    if held is None:
+        return f"the host layer is not counted: {rule}"
+    value, where = held
+    return f'"{REQUIRED_KEY}": {json.dumps(value)} in {where} is not counted: {rule}'
+
+
+def claude_headless(session: str, ps=None, claude: int | None = None) -> bool | None:
+    """Does this session's claude run with `-p`/`--print` (`headless`)?
+    None when `ps` cannot say: no claude is found for SESSION, or its
+    command line cannot be read. CLAUDE is its pid when the caller already
+    has it; PS is a shared `ps` table callable."""
+    pid = claude_for(session, ps=ps) if claude is None else claude
+    if pid is None:
+        return None
+    _ppid, cmd = (ps or _ps_table)()
+    command = cmd.get(pid)
+    if command is None:
+        command = _ps_one(pid)[1].get(pid)
+    if command is None:
+        return None
+    return headless(command)
+
+
+def one_shot(seat: Seat | None, session: str, ps=None,
+             env: dict[str, str] | None = None, claude: int | None = None) -> bool:
+    """A ONE-SHOT seat: its claude runs with `-p`/`--print` and it is not
+    required, the host layer not counted (`pager_required`, HEADLESS). The
+    hooks never ask a one-shot to arm a listener: a Stop hook that exits 2
+    keeps its turn going, and a listener it starts keeps it alive. False
+    whenever `ps` cannot say (`claude_headless` is None), so an unknown seat
+    keeps every line it had. CLAUDE and PS as `claude_headless`."""
+    if claude_headless(session, ps=ps, claude=claude) is not True:
+        return False
+    return not pager_required(seat, session, env, headless=True).on
 
 
 #: Touched by `pager listen --monitor` when it arms, beside
@@ -1696,8 +1756,10 @@ def plugin_monitors(env: dict[str, str] | None = None) -> bool | None:
 def headless(command: str) -> bool:
     """A claude command line run with `-p`/`--print` (F2: `!isInteractive()`
     never arms a monitor). Read from `ps`, whose argv is joined by spaces: a
-    prompt that holds a bare ` -p ` reads as headless - the safe side, as it
-    only gives the plain not-listening line instead of naming the monitor."""
+    prompt that holds a bare ` -p ` or ` --print ` word reads as headless.
+    That is NOT the safe side: such a seat counts as a one-shot (`one_shot`)
+    unless something requires it, so when nothing listens the hooks drop the
+    not-listening nag for it entirely instead of asking it to arm."""
     for token in command.split():
         if token in ("-p", "--print") or token.startswith("--print="):
             return True
@@ -1717,8 +1779,9 @@ def monitor_expected(session: str, ps=None, env: dict[str, str] | None = None,
                      claude: int | None = None) -> MonitorExpected:
     """True when all three hold: the switch is on (`monitor_switch`), the
     plugin carries `monitors/monitors.json` (`plugin_monitors`), and this
-    session's claude is interactive (no `-p`/`--print` on its argv). CLAUDE
-    is this session's claude pid when the caller already has it."""
+    session's claude is interactive (`claude_headless` says False: no
+    `-p`/`--print` on its argv). CLAUDE is this session's claude pid when
+    the caller already has it."""
     switch = monitor_switch(env)
     if not switch.on:
         return MonitorExpected(False, f"the pager monitor is switched off ({switch.source})")
@@ -1727,13 +1790,12 @@ def monitor_expected(session: str, ps=None, env: dict[str, str] | None = None,
     pid = claude_for(session, ps=ps) if claude is None else claude
     if pid is None:
         return MonitorExpected(False, "claude is not running for this session")
-    _ppid, cmd = (ps or _ps_table)()
-    command = cmd.get(pid)
-    if command is None:
-        command = _ps_one(pid)[1].get(pid)
-    if command is None:
+    # The one reading of "headless" (`claude_headless`), shared with the
+    # one-shot test, so the two can never disagree about one seat.
+    is_headless = claude_headless(session, ps=ps, claude=pid)
+    if is_headless is None:
         return MonitorExpected(False, "`ps` cannot say how claude was launched")
-    if headless(command):
+    if is_headless:
         return MonitorExpected(False, "this is a headless seat (`claude -p`), which runs "
                                       "no monitor")
     return MonitorExpected(True)
@@ -1804,7 +1866,7 @@ def write_listening(seat: Seat, session: str, pid: int) -> Path:
 #: "re-arm" - among them to settled seats that had just run `pager stop` by
 #: the book, so a Stop hook telling them to re-arm wasted their turns.
 #: sessionmail reads no role to decide who is nagged
-#: (openspec/changes/pager-settings-file D8): the settings file
+#: (OpenSpec change pager-settings-file D8): the settings file
 #: decides whether the hooks speak, and this stamp says a stop was meant.
 
 #: `pager stop` / `pager off` leaves this beside the listening stamp: the
@@ -1844,7 +1906,7 @@ def stopped_on_purpose(seat: Seat, session: str) -> bool:
 #: 177 batches in one. The ride-along keeps the TEXT of
 #: the last state line (or a settings fault's line) it gave this session
 #: here, beside `off` and `ride-along`, and gives the line again only when
-#: it differs (openspec/changes/pager-settings-file). Text,
+#: it differs (OpenSpec change pager-settings-file). Text,
 #: not a state name: a new fault reason, or a reworded arm.txt after an
 #: upgrade, is a change too.
 #:
@@ -2203,10 +2265,10 @@ def is_monitor(pid: int, ps=None) -> bool | None:
 
 
 # ── the ride-along queue: links in, a rename per entry out ───────────────
-#: openspec/changes/the-queue-chain, wiring D07/D08/D09: the detector hardlinks each arrival into the
+#: OpenSpec change the-queue-chain, wiring D07/D08/D09: the detector hardlinks each arrival into the
 #: session's own queue; the scoop CLAIMS by renaming each entry out of new/
 #: into its taking directory (exactly once; new/ is never removed -
-#: PROPOSED in openspec/changes/the-scoop-keeps-new, amending D08's whole-
+#: PROPOSED in OpenSpec change the-scoop-keeps-new, amending D08's whole-
 #: directory swap, whose window killed listeners); a leftover `taking.*` is the
 #: recovery record; `done/` keeps the link as the exactly-once memory. The
 #: queue lives beside the session's stamps, OUTSIDE any maildir notmuch
@@ -2299,7 +2361,7 @@ def take_queue(seat: Seat, session: str, pid: int) -> Taken:
     claimed from any maildir. Returns what is now this scoop's to give;
     nothing has been given or moved yet.
 
-    A PROPOSED amendment of D08 (openspec/changes/the-scoop-keeps-new):
+    A PROPOSED amendment of D08 (OpenSpec change the-scoop-keeps-new):
     new/ itself is NEVER renamed or removed. The claim used to be `mv new
     taking.* && mkdir new`, two syscalls, O(1) in depth. Between those two
     syscalls new/ did not exist, and the listener in another process died
@@ -2776,6 +2838,14 @@ def _run_generator(root: Path, env: dict[str, str] | None,
     if carrier.kind == "refused":           # never a map on a carrier that is not one
         return False, f"generator not run: {carrier.why}"
     mailroot = root.parent
+    from . import _maildir, _operator
+    _operator.say_split(env)                # once in this process, on stderr
+    pinned = _maildir.env_root(env)
+    refused = _operator.split_write_refusal(
+        mailroot, env, pinned=pinned is not None
+        and os.path.realpath(pinned) == os.path.realpath(mailroot))
+    if refused:
+        return False, f"generator not run: {refused}"
     found = _generator.find(env, mailroot, packaged=False)
     if found is None:
         return False, (f"generator not found ({_generator.expected(env, mailroot)}) - "

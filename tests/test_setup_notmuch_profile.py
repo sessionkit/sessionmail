@@ -35,9 +35,14 @@ from sessionmail import _index, _operator, _setup
 NOTMUCH = shutil.which("notmuch")
 OVERRIDES = ("NOTMUCH_CONFIG", "NOTMUCH_DATABASE", "NOTMUCH_PROFILE")
 
-#: notmuch, as far as setup asks it. Under `--config=FILE`: `database.path`
-#: is FILE's; the hook dir is `<path>/.notmuch/hooks`, notmuch's own default,
-#: once that database exists (empty before); `new --no-hooks` makes it. With
+#: notmuch, as far as setup asks it, in notmuch 0.40's order (measured).
+#: Under `--config=FILE`: `database.path` is FILE's; the database is
+#: `<path>/.notmuch/xapian`, which `new --no-hooks` makes; `count '*'` exits
+#: 0 only when it exists. The hook dir is FILE's `hook_dir=` when it pins one
+#: (with or without a database); else, once the database exists,
+#: `$XDG_CONFIG_HOME/notmuch/<profile>/hooks` when that folder exists (the
+#: profile is `default` unless NOTMUCH_PROFILE is set; XDG_CONFIG_HOME
+#: defaults to `~/.config`), else `<path>/.notmuch/hooks`; empty before. With
 #: no `--config` the hook dir is the stranger's (the default config's). It
 #: logs its argv and the overrides it was handed to a baked-in log.
 FAKE = """#!{python}
@@ -54,17 +59,32 @@ if config is None:
         print(@DEFAULT_HOOKS@)
         sys.exit(0)
     sys.exit(1)
-path = ""
+path = pin = ""
 for line in open(config):
     if line.startswith("path="):
         path = line.strip()[len("path="):]
+    if line.startswith("hook_dir="):
+        pin = line.strip()[len("hook_dir="):]
 database = os.path.join(path, ".notmuch")
+opens = os.path.isdir(os.path.join(database, "xapian"))
+xdg = os.environ.get("XDG_CONFIG_HOME") or os.path.join(os.environ["HOME"], ".config")
+fallback = os.path.join(xdg, "notmuch", os.environ.get("NOTMUCH_PROFILE") or "default", "hooks")
 if args == ["config", "get", "database.path"]:
     print(path)
 elif args == ["config", "get", "database.hook_dir"]:
-    print(os.path.join(database, "hooks") if os.path.isdir(database) else "")
+    if pin:
+        print(pin)
+    elif opens:
+        print(fallback if os.path.isdir(fallback) else os.path.join(database, "hooks"))
+    else:
+        print("")
+elif args == ["count", "*"]:
+    if not opens:
+        sys.stderr.write("Error: Cannot open database\\n")
+        sys.exit(1)
+    print(0)
 elif args == ["new", "--no-hooks"]:
-    os.makedirs(database, exist_ok=True)
+    os.makedirs(os.path.join(database, "xapian"), exist_ok=True)
 else:
     sys.exit(1)
 """
@@ -143,7 +163,7 @@ class Host:
         if self.env["SESSIONMAIL_NOTMUCH"] == NOTMUCH:
             self._index(path)
         else:
-            (self.mailroot / ".notmuch").mkdir(parents=True, exist_ok=True)
+            (self.mailroot / ".notmuch" / "xapian").mkdir(parents=True, exist_ok=True)
         return path
 
     def calls(self) -> list[dict]:
@@ -210,8 +230,12 @@ def test_setup_never_touches_stranger_hook_dir(tmp_path, engine, profile):
         assert rc == _setup.EX_OK, (out, err)
         if engine == "fake":
             calls = host.calls()
-            assert calls and all(c["argv"] == [f"--config={path}", "config", "get",
-                                               "database.hook_dir"] for c in calls)
+            # Reads only: does a database open, its hook dir, and its path
+            # (the hook dir must lie under it).
+            assert [c["argv"] for c in calls] == [
+                [f"--config={path}", "count", "*"],
+                [f"--config={path}", "config", "get", "database.hook_dir"],
+                [f"--config={path}", "config", "get", "database.path"]], calls
             assert all(c["env"] == {} for c in calls), "an inherited override reached notmuch"
     else:
         # SM-899: the run that writes our profile builds OUR empty index once
@@ -229,7 +253,7 @@ def test_setup_never_touches_stranger_hook_dir(tmp_path, engine, profile):
             calls = host.calls()
             assert [c["argv"][1:] for c in calls] == [
                 ["config", "get", "database.path"], ["new", "--no-hooks"],
-                ["config", "get", "database.hook_dir"]], calls
+                ["config", "get", "database.hook_dir"], ["config", "get", "database.path"]], calls
             assert all(c["argv"][0] == f"--config={path}" for c in calls)
             assert all(c["env"] == {} for c in calls), "an inherited override reached notmuch"
 
@@ -262,8 +286,10 @@ def test_setup_adopts_no_database(tmp_path):
 
 def test_setup_writes_the_profile_from_the_template(tmp_path):
     """No profile and no database in the mail root: setup writes the
-    profile from the package template, its database the mail root, with no
-    hook_dir line and no hooks dir beside it. A second run is DONE."""
+    profile from the package template, its database the mail root, with
+    hook_dir pinned to `<mail root>/.notmuch/hooks` (unpinned, notmuch would
+    take the user's own XDG hooks folder whenever it exists), and no hooks
+    dir beside it. A second run is DONE."""
     host = Host(tmp_path, "fake")
     path = _index.profile_config(env=host.env)
     rc, out, _err = setup(host.env, "--dry-run")
@@ -272,7 +298,10 @@ def test_setup_writes_the_profile_from_the_template(tmp_path):
     rc, out, _err = setup(host.env)
     text = path.read_text()
     assert f"\npath={host.mailroot}\n" in text
-    assert "\nhook_dir=" not in text and "${" not in text
+    database = text.split("\n[database]\n", 1)[1].split("\n[", 1)[0]
+    assert f"\nhook_dir={host.mailroot}/.notmuch/hooks\n" in database
+    assert _setup.pins_hook_dir(path)
+    assert text.count("\nhook_dir=") == 1 and "${" not in text
     for section in ("[new]", "[search]", "[maildir]", "[index]", "[query]"):
         assert section in text, section
     assert "\n[sessionmail]\n" not in text, "the hook's own path defaults fit the mail root"
@@ -297,3 +326,199 @@ def test_an_existing_profile_is_never_replaced(tmp_path):
 def test_the_template_ships_in_the_package():
     assert _setup.PROFILE_TEMPLATE.is_file()
     assert _setup.PROFILE_TEMPLATE.name == "notmuch-config.sessionkit.template"
+
+
+# ── the XDG fallback: notmuch's hook dir for the user's OWN notmuch ─────────
+#
+# notmuch's hook-dir order: `database.hook_dir`, else
+# `$XDG_CONFIG_HOME/notmuch/<profile>/hooks` when that folder EXISTS, else
+# `<database.path>/.notmuch/hooks`. sessionmail drops NOTMUCH_PROFILE, so the
+# profile is `default`: the folder the user's own notmuch runs its hooks from,
+# whichever config file it read. Setup must never link there unasked.
+
+
+def fallback(host: Host, xdg: str) -> Path:
+    """Plant the user's own XDG hooks folder, holding a hook of their own.
+    XDG: under $XDG_CONFIG_HOME, or under `~/.config` with the variable unset."""
+    if xdg == "unset":
+        del host.env["XDG_CONFIG_HOME"]
+        base = host.home / ".config"
+    else:
+        base = host.xdg
+    folder = base / "notmuch" / "default" / "hooks"
+    folder.mkdir(parents=True)
+    (folder / "pre-new").write_text("#!/bin/sh\n# the user's own\n")
+    return folder
+
+
+def database(host: Host) -> Path:
+    """Where OUR index lives: notmuch's Xapian folder under the mail root."""
+    return host.mailroot / ".notmuch" / "xapian"
+
+
+XDGS = ["XDG_CONFIG_HOME", "unset"]
+
+
+@pytest.mark.parametrize("engine", ENGINES)
+@pytest.mark.parametrize("xdg", XDGS)
+def test_a_fresh_host_never_links_into_the_users_xdg_hooks(tmp_path, engine, xdg):
+    """A fresh host whose user has an XDG hooks folder: setup writes the
+    profile with hook_dir PINNED, builds the index, and links the hooks
+    under the mail root. The user's folder keeps exactly its own hook."""
+    host = Host(tmp_path, engine)
+    theirs = fallback(host, xdg)
+    rc, out, err = setup(host.env)
+    assert rc == _setup.EX_OK, (out, err)
+    assert sorted(os.listdir(theirs)) == ["pre-new"], out
+    for name in _setup.HOOK_NAMES:
+        assert os.readlink(host.ours / name) == str(_setup.PACKAGED_HOOK)
+    assert database(host).is_dir()
+    host.stranger_untouched()
+
+
+@pytest.mark.parametrize("engine", ENGINES)
+@pytest.mark.parametrize("xdg", XDGS)
+def test_an_unpinned_profile_is_refused_never_edited(tmp_path, engine, xdg):
+    """A profile written before the pin (no hook_dir), indexed, and the
+    user's XDG hooks folder there: notmuch reports that folder. Setup links
+    nothing, never edits the profile, and the ONE `notmuch-hook` step is
+    BLOCKED with a line naming the folder and the pin to add."""
+    host = Host(tmp_path, engine)
+    path = host.profile()
+    before = path.read_bytes()
+    theirs = fallback(host, xdg)
+    rc, out, err = setup(host.env)
+    assert rc == _setup.EX_REMAINS, (out, err)
+    assert state(out, "notmuch-index") == "DONE", out
+    assert state(out, "notmuch-hook") == "BLOCKED", out
+    line = detail(out, "notmuch-hook")
+    assert line.startswith(f"notmuch reports {theirs} as the hook dir for {path}, "), line
+    assert (f"config set database.hook_dir {host.mailroot}/.notmuch/hooks`" in line
+            and f"add `hook_dir={host.mailroot}/.notmuch/hooks` under [database]" in line), line
+    assert "rm " not in line, "nothing of ours is there to remove"
+    assert sorted(os.listdir(theirs)) == ["pre-new"]
+    assert not host.ours.exists()
+    assert path.read_bytes() == before, "setup edited the profile"
+    host.stranger_untouched()
+
+
+@pytest.mark.parametrize("engine", ENGINES)
+def test_links_already_in_the_fallback_are_named_never_removed(tmp_path, engine):
+    """An older setup linked our hooks into the user's folder. They are
+    reported with the `rm` that removes exactly them, and left in place:
+    the folder is the user's, so setup deletes nothing there."""
+    host = Host(tmp_path, engine)
+    host.profile()
+    theirs = fallback(host, "XDG_CONFIG_HOME")
+    for name in _setup.HOOK_NAMES:
+        (theirs / name).symlink_to(_setup.PACKAGED_HOOK)
+    rc, out, err = setup(host.env)
+    assert rc == _setup.EX_REMAINS, (out, err)
+    assert state(out, "notmuch-hook") == "BLOCKED", out
+    assert detail(out, "notmuch-hook").endswith(
+        f"remove them: `rm {theirs / 'post-new'} {theirs / 'post-insert'}`"), out
+    assert sorted(os.listdir(theirs)) == ["post-insert", "post-new", "pre-new"]
+    assert all(os.readlink(theirs / n) == str(_setup.PACKAGED_HOOK) for n in _setup.HOOK_NAMES)
+
+
+def test_a_dangling_link_of_ours_in_the_fallback_is_named_too(tmp_path):
+    """Our own link left dangling there (a rebuilt tool venv) is ours as
+    well: named in the `rm`, never repaired in the user's folder."""
+    host = Host(tmp_path, "fake")
+    host.profile()
+    theirs = fallback(host, "XDG_CONFIG_HOME")
+    gone = "/nowhere/site-packages/sessionmail/notmuch/post-new"
+    (theirs / "post-new").symlink_to(gone)
+    rc, out, _err = setup(host.env)
+    assert state(out, "notmuch-hook") == "BLOCKED", out
+    assert detail(out, "notmuch-hook").endswith(f"remove them: `rm {theirs / 'post-new'}`"), out
+    assert os.readlink(theirs / "post-new") == gone
+    assert sorted(os.listdir(theirs)) == ["post-new", "pre-new"]
+
+
+@pytest.mark.parametrize("engine", ENGINES)
+def test_the_deferred_hook_step_refuses_the_fallback_too(tmp_path, engine):
+    """An unpinned profile with no index yet: the index is built in this
+    run, then the hook dir is asked. notmuch now reports the user's folder,
+    so the deferred step is left BLOCKED with the same line."""
+    host = Host(tmp_path, engine)
+    path = _index.profile_config(env=host.env)
+    path.parent.mkdir(parents=True)
+    path.write_text(f"[database]\npath={host.mailroot}\n")
+    theirs = fallback(host, "XDG_CONFIG_HOME")
+    rc, out, err = setup(host.env)
+    assert rc == _setup.EX_REMAINS, (out, err)
+    assert state(out, "notmuch-index") == "TODO" and database(host).is_dir(), out
+    assert f"notmuch-hook      BLOCKED: notmuch reports {theirs} as the hook dir" in out, out
+    assert sorted(os.listdir(theirs)) == ["pre-new"]
+    host.stranger_untouched()
+
+
+@pytest.mark.parametrize("engine", ENGINES)
+def test_a_hook_dir_the_profile_pins_outside_the_root_is_honoured(tmp_path, engine):
+    """The profile is the user's to edit: a hook_dir it pins outside its
+    database is theirs to choose, and setup links there, even with the XDG
+    folder planted."""
+    host = Host(tmp_path, engine)
+    path = host.profile()
+    chosen = tmp_path / "chosen" / "hooks"
+    path.write_text(f"[database]\npath={host.mailroot}\nhook_dir={chosen}\n")
+    theirs = fallback(host, "XDG_CONFIG_HOME")
+    rc, out, err = setup(host.env)
+    assert rc == _setup.EX_OK, (out, err)
+    for name in _setup.HOOK_NAMES:
+        assert os.readlink(chosen / name) == str(_setup.PACKAGED_HOOK)
+    assert sorted(os.listdir(theirs)) == ["pre-new"]
+    host.stranger_untouched()
+
+
+@pytest.mark.parametrize("engine", ENGINES)
+def test_a_pinned_profile_with_no_index_still_builds_it(tmp_path, engine):
+    """notmuch reports a PINNED hook_dir with no database at all, so a hook
+    dir proves nothing. The first run has no notmuch (the profile is
+    written, the index is left); the next run, with notmuch, must build the
+    index, not call it DONE."""
+    host = Host(tmp_path, engine)
+    gone = {**host.env, "SESSIONMAIL_NOTMUCH": str(tmp_path / "no-notmuch-here")}
+    rc, out, _err = setup(gone)
+    path = _index.profile_config(env=host.env)
+    assert rc == _setup.EX_REMAINS and "\nhook_dir=" in path.read_text(), out
+    assert state(out, "notmuch-index") == "BLOCKED"
+    rc, out, err = setup(host.env)
+    assert rc == _setup.EX_OK, (out, err)
+    assert state(out, "notmuch-index") == "TODO", out
+    assert database(host).is_dir(), "the index was never built"
+    for name in _setup.HOOK_NAMES:
+        assert os.readlink(host.ours / name) == str(_setup.PACKAGED_HOOK)
+    host.stranger_untouched()
+
+
+@pytest.mark.parametrize("engine", ENGINES)
+def test_a_hooks_folder_is_no_database(tmp_path, engine):
+    """A pinned profile, no index, and `<root>/.notmuch/hooks` already made
+    (setup's own link makes it): that `.notmuch` is no database, so the
+    index is built."""
+    host = Host(tmp_path, engine)
+    path = _index.profile_config(env=host.env)
+    path.parent.mkdir(parents=True)
+    path.write_text(f"[database]\npath={host.mailroot}\nhook_dir={host.ours}\n")
+    host.ours.mkdir(parents=True)
+    rc, out, err = setup(host.env)
+    assert rc == _setup.EX_OK, (out, err)
+    assert state(out, "notmuch-index") == "TODO", out
+    assert database(host).is_dir()
+
+
+@pytest.mark.parametrize("text, pinned", [
+    ("[database]\npath=/m\nhook_dir=/m/.notmuch/hooks\n", True),
+    ("[database]\npath=/m\n  hook_dir = /h  \n", True),
+    ("[database]\npath=/m\n# hook_dir=/h\n", False),
+    ("[database]\npath=/m\nhook_dir=\n", False),
+    ("[database]\npath=/m\n[new]\nhook_dir=/h\n", False),
+    ("hook_dir=/h\n[database]\npath=/m\n", False),
+])
+def test_the_pin_is_read_from_the_file(tmp_path, text, pinned):
+    profile = tmp_path / "config"
+    profile.write_text(text)
+    assert _setup.pins_hook_dir(profile) is pinned
+    assert _setup.pins_hook_dir(tmp_path / "not-there") is False

@@ -76,19 +76,22 @@ host born after the move; `~/.mail/agents/` on one born before it).
 ## Setup (once, with sudo)
 
 Three steps need root, once: the map directory, the `main.cf` lines and
-the reload. The maps, written in between, are yours. `<you>` is the account
-that owns the mail root (`message path --root`). Check each step before the next.
+the reload. The maps, written in between, are yours. `YOU`, in the
+commands below, is the account that owns the mail root (`message path
+--root`); the `main.cf` lines write it `<you>`. Check each step before the
+next.
 
 1. **Make the map directory**, owned by you, group `_postfix` (the group
    postfix's daemons run as: `id -gn $(postconf -h mail_owner)`), mode
    `2750`:
 
    ```sh
-   sudo install -d -o <you> -g _postfix -m 2750 /usr/local/etc/postfix-agents
-   ls -ld /usr/local/etc/postfix-agents    # drwxr-s---  <you>  _postfix
+   sudo install -d -o YOU -g _postfix -m 2750 /usr/local/etc/postfix-agents
+   ls -ld /usr/local/etc/postfix-agents
    ```
 
-   Check the `ls`. Without root, where it can make the directory at all,
+   Check the `ls`: it shows `drwxr-s---`, owner `YOU`, group `_postfix`.
+   Without root, where it can make the directory at all,
    `install` cannot set the group: it prints `Operation not permitted`,
    leaves the directory with its parent's group, not `_postfix`, and still
    exits 0 (measured, macOS `/usr/bin/install`).
@@ -128,12 +131,16 @@ that owns the mail root (`message path --root`). Check each step before the next
 
    ```sh
    GEN="$("$(uv tool dir)/sessionmail/bin/python" -c 'import sessionmail, pathlib; print(pathlib.Path(sessionmail.__file__).parent / "postfix" / "vmailbox-gen")')"
-   R="$(message path --root)"                     # the mail root: postfix's virtual_mailbox_base
+   R="$(message path --root)"
    mkdir -p "$R/.postfix"
    ln -sfn "$GEN" "$R/.postfix/vmailbox-gen"
-   "$R/.postfix/vmailbox-gen" --root "$R"         # writes vmailbox and valias, and their .db
-   ls -l /usr/local/etc/postfix-agents            # -rw-r-----  <you>  _postfix, four files
+   "$R/.postfix/vmailbox-gen" --root "$R"
+   ls -l /usr/local/etc/postfix-agents
    ```
+
+   `R` is the mail root, postfix's `virtual_mailbox_base`. The generator
+   writes `vmailbox` and `valias`, and their `.db`. The `ls` shows four
+   files, each `-rw-r-----`, owner `YOU`, group `_postfix`.
 
    Exit 3, with only `vmailbox` and its `.db` written, means the generator
    would not write the alias map. The stderr line with
@@ -169,8 +176,10 @@ that owns the mail root (`message path --root`). Check each step before the next
 
    ```sh
    sudo postfix reload
-   postconf -n | grep '^virtual_'          # the lines above, as postfix reads them
+   postconf -n | grep '^virtual_'
    ```
+
+   The second line prints the lines from step 2, as postfix reads them.
 
 5. **Name postfix as this host's carrier**, as you (no sudo): set the
    `sendmail` key in `~/.sessionkit/mail/settings/mail.json`. Until you

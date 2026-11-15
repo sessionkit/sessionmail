@@ -6,7 +6,7 @@ when it pages, and the two flags. The internals (the queue path, the
 hardlinks, the stamps, the reminder window) moved to the README, and from
 there (SM-755) to docs/pager-listen-internals.md, which is where a person
 reads how it works. D10 is a draft in
-`openspec/changes/message-subscriptions/design.md`; its lines are pinned here
+OpenSpec change `message-subscriptions`, `design.md`; its lines are pinned here
 rather than read from there, because an archived change moves that file.
 """
 

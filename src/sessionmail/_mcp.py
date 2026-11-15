@@ -5,7 +5,7 @@ same underlying model as far as possible, so the code is never duplicated
 and nothing drifts out of sync.
 
 So nothing here declares a tool - BUT ONE. `message_send` is hand-written
-(openspec/changes/agents-send-door: the point of the MCP tool is that a
+(OpenSpec change agents-send-door: the point of the MCP tool is that a
 body can carry backticks, so there is a body box): an agent has WORDS, not
 a file, so it takes `body` where the page takes `-f FILE`. It still RUNS the
 click command, in a fresh process, so the model is one; see `_send_handler`.

@@ -53,7 +53,7 @@ PERL=/usr/bin/perl
 POST_NEW_TIMEOUT=300
 
 # The two path queries are config keys, read like post_new_command below
-# (openspec/changes/store-index, notmuch-hook). Unset or empty, each is the
+# (OpenSpec change store-index, notmuch-hook). Unset or empty, each is the
 # host index's query: `path:<boxes>/**`, where <boxes> is the folder under
 # database.path that holds the boxes (`stores`, or `agents` while only that
 # one is there: `_maildir.boxes_name`, inline). A store index's paths are

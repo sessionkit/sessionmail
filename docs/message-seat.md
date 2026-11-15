@@ -7,12 +7,22 @@ MCP tool (one mints an identity and the other replaces its own process),
 so this page and `message seat --help` are where you find it.
 
 ```sh
-message seat init --registry DIR ADDRESS        # mint the key + birth cert into DIR
-message seat agent ADDRESS [SOCKET]             # the seat's ssh-agent, for launchd
-message seat agent --install ADDRESS [SOCKET]   # load it as a LaunchAgent (macOS)
-message seat agent --uninstall ADDRESS          # unload it and remove its plist
-message seat agent --template                   # print the LaunchAgent template
+message seat init --registry DIR ADDRESS
+message seat agent ADDRESS
+message seat agent --install ADDRESS
+message seat agent --uninstall ADDRESS
+message seat agent --template
 ```
+
+- `init` mints the seat's key and birth certificate into `DIR`.
+- `agent` is the seat's ssh-agent, for launchd. `--install` loads it as a
+  LaunchAgent (macOS), and `--uninstall` unloads it and removes its plist.
+  `agent` and `agent --install` each take an optional socket path after
+  `ADDRESS`; without one, the socket is `agent.sock` beside the key.
+  `--uninstall` takes `ADDRESS` alone.
+- `--template` prints the LaunchAgent template.
+
+In more detail:
 
 - `init` has no default `--registry`, so it never touches a live registry
   by accident, and it never blesses the seat: it prints the bless command.
@@ -101,6 +111,9 @@ registry or the cert.
    <plist>`.
 5. **Verify the effect.** For up to 10 s it polls `ssh-add -L` on SOCKET, in a
    clean env, until the agent lists `seat.pub`'s key.
+6. **Declare it.** Only once the agent answers, a re-run's included, it
+   writes the job's service file (see "The service file", below) with
+   `"enabled": true`.
 
 **stdout**, on success only: exactly these five lines, values shell-quoted,
 so `eval "$(message seat agent --install bot.alice)"` sets them:
@@ -118,7 +131,8 @@ The sender's seam is `CLAUDE_SESSION_AGENT_SOCK=$SEAT_SOCKET` and
 
 **stderr**: one narration line,
 `message seat agent: installed and loaded <label>; the agent answers on <socket>`
-or `message seat agent: <label> already installed; the agent answers on <socket>`.
+or `message seat agent: <label> already installed; the agent answers on <socket>`,
+then `message seat agent: service <file> (enabled: true)`.
 A refusal is `message seat agent: REFUSED - <why>. Nothing was written.`, and a
 failure is `message seat agent: FAILED - <why>; <what was put back>`.
 
@@ -127,8 +141,9 @@ failure is `message seat agent: FAILED - <why>; <what was put back>`.
 | code | meaning |
 | --- | --- |
 | 0 | loaded, and the agent answers on SEAT_SOCKET holding seat.pub's key. A re-run that finds it so is 0 too, and loads nothing. |
-| 1 | `launchctl` failed, the plist could not be written, or the agent never answered. A job this run loaded is booted out, and a plist this run wrote is removed. A job that was already loaded and does not answer is reported and left as found. The job's last log lines are quoted. |
+| 1 | `launchctl` failed, the plist could not be written, or the agent never answered. A job this run loaded is booted out, and a plist this run wrote is removed. A job that was already loaded and does not answer is reported and left as found. The job's last log lines are quoted. No service file is written. |
 | 2 | usage or refused, nothing written: not macOS; the seat is not minted; the socket is relative, over 103 bytes or has no directory; `message` is not on PATH; another plist or job holds the label; or `--install`, `--uninstall` and `--template` combined. |
+| 3 | the job is installed and its agent answers, but its service file could not be written. stdout carries the five lines, whole, exactly as on 0, and stderr says FAILED for the file. The job is up: use it, and run the same `--install` again to write the file. |
 
 ### `message seat agent --uninstall ADDRESS`
 
@@ -137,15 +152,61 @@ up to 5 s for the job to go. Then it removes the plist, but only one whose
 `Label` is ours. The agent removes its own socket as it stops. It never
 deletes or moves a log, in `~/.sessionkit/mail/log/` or in `~/Library/Logs`.
 
+Then it keeps the job's service file and writes it with `"enabled": false`:
+for a job it took away, and for a file that is already there. An address
+with neither gets no file.
+
 **stdout**: nothing. **stderr**: `message seat agent: booted out <label>; removed <plist>`
 (either part alone when only that was there), or
-`message seat agent: nothing installed for <ADDRESS>`.
+`message seat agent: nothing installed for <ADDRESS>`, then
+`message seat agent: service <file> (enabled: false)` when it wrote one.
 
 **Exit**: 0 gone, or nothing was there (so a second run is 0) · 1 the
 bootout failed, the job did not go, or the plist could not be removed; the
-plist is kept · 2 usage or
+plist is kept, and so is the service file, unchanged · 2 usage or
 refused: a plist at our path whose `Label` is not ours, or not macOS. Nothing
-is changed.
+is changed · 3 the job is gone, but its service file could not be written
+with `"enabled": false`; run the same `--uninstall` again to write it.
+
+### The service file
+
+`sessionkit service` finds the kit's jobs by reading one JSON file per
+service, in the kit's own schema. For the seat agent it is
+`~/.sessionkit/mail/services/seat-agents/<ADDRESS>.json`, one per seat. The
+`services/` folder sits beside `settings/`, never inside it, so no settings
+reader sees it. For `bot.alice`:
+
+```json
+{
+  "service": 1,
+  "name": "seat-agent.bot.alice",
+  "label": "dev.sessionkit.mail.seat-agent.bot.alice",
+  "enabled": true,
+  "install": "message seat agent --install bot.alice",
+  "uninstall": "message seat agent --uninstall bot.alice",
+  "hazard": [
+    "call"
+  ],
+  "agent": "bot.alice"
+}
+```
+
+- `hazard: ["call"]`: a phone seat signs through this agent, so the kit
+  refuses to restart it during a live call unless forced.
+- There is no `port`: the agent listens on a socket.
+- `install` names no SOCKET. A seat installed with its own SOCKET is
+  re-installed by hand, with that SOCKET.
+
+The file is written whole, every time: a temp file in the same folder, then
+one rename, so a reader sees the old file or the new one. Nothing is merged
+from the old file; a hand edit is replaced. A symlink at the path is
+replaced, not followed. The file is mode 0644 and holds no secret.
+
+A write that fails never undoes the launchd act it goes with. stderr says
+`message seat agent: FAILED - service could not write <file>: <reason>; the
+previous file is unchanged.`, then whether the job is installed or
+uninstalled, and the exit is 3: its own code, so a caller never reads it as
+a failed install or uninstall. Run the same verb again to write the file.
 
 ### The log
 

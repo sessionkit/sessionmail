@@ -68,6 +68,7 @@ import anyio
 CONSTANT_FNS = {
     ("sessionmail._operator", "settings_home"),
     ("sessionmail._operator", "account_name"),
+    ("sessionmail._operator", "home_split"),
     ("sessionmail.rules", "locked_path"),
     ("sessionmail.message", "_live_sessions"),
 }

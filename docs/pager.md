@@ -200,9 +200,8 @@ seat shares one queue.
 
 ## See also
 
-- `openspec/specs/pager/spec.md` - the contract, in the git repository; the
-  release archive leaves `openspec/` out. When the help and the spec disagree,
-  the help is the bug.
+- The OpenSpec spec `pager` - the contract, kept in the project's OpenSpec store, outside this tree.
+  When the help and the spec disagree, the help is the bug.
 - The slipbox note `mail-hierarchy-standard` - the mailbox as a filesystem,
   which is what the pager is watching. Private: not in this tree.
 - The slipbox note `project-conventions` - the thin spine for building here.

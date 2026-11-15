@@ -1,6 +1,6 @@
 """SM-998: a reader trusts an identity word only from a claude it runs under.
 
-PROPOSED, not ratified: `openspec/changes/inherited-identity/`. Claude puts
+PROPOSED, not ratified: OpenSpec change `inherited-identity`. Claude puts
 `CLAUDE_PID=<its own pid>` into every child's environment. A tmux server
 started from inside a seat copies that environment, seat words and all, into
 every plain pane, whose chain is `shell -> tmux -> 1`: no claude in it. So a
@@ -322,6 +322,30 @@ def test_message_list_in_a_plain_pane_lists_no_box_of_the_seat(tmp_path, sibling
     assert p.returncode != 0, p.stdout + p.stderr
     assert SID not in p.stdout and " x:" not in p.stdout, p.stdout
     assert f"inherited from claude pid {sibling}" in p.stderr, p.stderr
+
+
+def test_message_address_in_a_plain_pane_has_no_address(tmp_path, sibling):
+    """SM-1012 (changes/message-address): `address` prints the From a send
+    would write, so in a plain pane it prints none. The pane carries the
+    seat's word and session id, and a plus EMAIL; it is never told it is
+    that seat, which is the answer a second copy of the rule gave."""
+    env = run_env(tmp_path, sibling, EMAIL="proj+t-1.foreman@hq")
+    p = subprocess.run([str(MESSAGE), "address"], capture_output=True, text=True,
+                       env=env, timeout=60, stdin=subprocess.DEVNULL)
+    assert p.returncode == 2, p.stdout + p.stderr
+    assert p.stdout == "", p.stdout
+    assert "message address: no seat in the environment to send From" in p.stderr, p.stderr
+    assert f"inherited from claude pid {sibling}" in p.stderr, p.stderr
+
+
+def test_message_address_under_claude_is_the_seat(tmp_path):
+    """The same environment with CLAUDE_PID an ancestor (this test process
+    stands in for claude): the seat's address, as `send` would write it."""
+    p = subprocess.run([str(MESSAGE), "address"], capture_output=True, text=True,
+                       env=run_env(tmp_path, os.getpid()), timeout=60,
+                       stdin=subprocess.DEVNULL)
+    assert p.returncode == 0, p.stderr
+    assert p.stdout.partition("@")[0] == "x", p.stdout
 
 #: The process shapes the super named, each with this test process standing
 #: in for claude (CLAUDE_PID = our pid, an ancestor of every shape).

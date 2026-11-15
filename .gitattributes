@@ -5,9 +5,12 @@
 # The `**` line is the contract: gitattributes documents that a directory
 # pattern does not match the paths inside it, so a per-file reader
 # (`git check-attr`) needs `/openspec/**`. The directory line beside it lets
-# `git archive` prune the directory itself. Both RATIFICATION.md files sit
-# under openspec/, so they need no line of their own. docs/internal/ does not
-# exist yet: add `/docs/internal/** export-ignore` here when it does.
+# `git archive` prune the directory itself. openspec/ holds one file,
+# config.yaml, `store: sessionmail`: a pointer that sends the openspec CLI to
+# the project's OpenSpec store, where the specs live. It names a store a
+# reader of the archive does not have, so the archive leaves it out.
+# docs/internal/ does not exist yet: add `/docs/internal/** export-ignore`
+# here when it does.
 /openspec/ export-ignore
 /openspec/** export-ignore
 # Root-only: `claude plugin validate --strict` fails on a CLAUDE.md at the

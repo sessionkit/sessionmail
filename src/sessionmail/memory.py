@@ -282,8 +282,9 @@ def wake(box: str | None, dry_run: bool) -> None:
 
 
 #: `memory init` is specified in a PROPOSED change, not yet in the ratified
-#: spec: the change's delta, and the requirement its page cites.
-INIT_SPEC = "openspec/changes/memory-init/specs/memory/spec.md"
+#: spec: the change's delta, and the requirement its page cites. The path is
+#: relative to the project's OpenSpec root, which `openspec/config.yaml` names.
+INIT_SPEC = "changes/memory-init/specs/memory/spec.md"
 INIT_REQUIREMENT = "init prints the root a box has, or mints one with the standard labels"
 
 
@@ -368,7 +369,7 @@ attach(cli, CAPABILITY)
 
 # `python -m sessionmail.memory` IS `memory`. Without this the module imports,
 # does nothing and exits 0, and the MCP send
-# door starts its child exactly this way (openspec/changes/agents-send-door,
+# door starts its child exactly this way (OpenSpec change agents-send-door,
 # "Running the module sends, or says why not - it never does nothing").
 # `prog_name`, or the page says `Usage: memory.py ...`.
 if __name__ == "__main__":

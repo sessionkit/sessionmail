@@ -1,7 +1,7 @@
 """The IMAP puller: a box on another host, mirrored into a LOCAL maildir.
 
 SPIKE (spike/pager-imap-idle). PROPOSED, nothing here is ruled:
-openspec/changes/pager-over-imap/.
+OpenSpec change pager-over-imap.
 
 The ask: a seat on another host should have the same mail. The first cut
 put IMAP in `pager listen`, which made the page exit all the time; the

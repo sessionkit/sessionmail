@@ -1,6 +1,6 @@
 """`message receipt ID --session SID [--json]` (SM-748 do-002).
 
-openspec/changes/message-receipt (PROPOSED): specs/message/spec.md there is
+OpenSpec change message-receipt (PROPOSED): specs/message/spec.md there is
 the contract, and design.md's "Test strategy" names the twenty-four cases
 below by number. Two more groups come from the design review's notes for
 the build (design-001, session b9e4ce99): M1, an unnamed failure exits 2,

@@ -1,7 +1,7 @@
 """pager-genie 3.29: a SEAT subscription to `heard` refuses (the PROPOSED
 reading of N8, design D13/D14).
 
-openspec/changes/pager-genie, tasks.md 3.29: `message subscription add ears
+OpenSpec change pager-genie, tasks.md 3.29: `message subscription add ears
 --seat` and `add heard+<device> --seat` exit 2, name N8, and write nothing,
 for every caller, Ivan and Judy included (although `--seat` is otherwise
 theirs). The `heard` name is ONE named value, shared with 3.1. A SESSION

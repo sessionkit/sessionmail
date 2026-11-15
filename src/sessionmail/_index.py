@@ -1,6 +1,6 @@
 """Which notmuch index a call reads: one switch, one resolver.
 
-PROPOSED, not ratified: `openspec/changes/store-index/specs/package/spec.md`.
+PROPOSED, not ratified: OpenSpec change `store-index`, `specs/package/spec.md`.
 
 `SESSIONMAIL_INDEX` picks the index:
 

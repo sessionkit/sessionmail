@@ -1,6 +1,6 @@
 """The pager's rules: the grammar and its parser.
 
-`openspec/changes/pager-filters`, tasks 2.1 (the conditions) and
+OpenSpec change `pager-filters`, tasks 2.1 (the conditions) and
 D3 (the grammar).
 
 One rule per line, and the VERB is the rule::
@@ -135,7 +135,7 @@ from pathlib import Path
 from types import MappingProxyType
 from typing import Literal
 
-from sessionmail import _headers, _operator, _parsers, _seat, _settings, _voice
+from sessionmail import _headers, _operator, _outside, _parsers, _seat, _settings, _voice
 
 Verb = Literal["start", "wake", "ride", "wake!", "carry", "carry!"]
 Action = Literal["start", "wake", "ride"]
@@ -608,7 +608,10 @@ class Facts:
     `headers` holds each header's FIRST occurrence (D2: `<header>:` reads
     the first), decoded, under its name folded to lower case. Build it with
     `from_bytes()` or `from_message()`; the conditions read it through
-    `recipients()`, `sender()` and `header()`.
+    `recipients()`, `sender()` and `header()`. For OUTSIDE mail (a
+    `Source` header: an importer's) `subject` holds the pointer words
+    (`_outside.words`), never the stranger's Subject: a rule is judged on
+    the same words the page prints, and `source:` names the mail itself.
 
     The parsed facts, each defaulted so `Facts(headers)` is still a
     mail with no level, no call and no draft:
@@ -645,12 +648,16 @@ class Facts:
         host for the keeper test (os.environ when None), as the parsers'
         `calls(msg, env)` takes it. SIGNED is the keeper-signature verdict
         seam (`_voice.signed_file` for a mail on disk); without it a voice
-        mail is UNVERIFIED. Never a draft: only the draft watch makes one."""
+        mail is UNVERIFIED. Never a draft: only the draft watch makes one.
+        Outside mail's `subject` is its pointer words (see the class)."""
         headers: dict[str, str] = {}
         for name, raw in msg.raw_items():
             key = name.strip().lower()
             if key not in headers:
                 headers[key] = _decode(key, raw if isinstance(raw, str) else str(raw))
+        shown = _outside.words(msg)
+        if shown:
+            headers["subject"] = shown
         rec = _voice.recognise(msg, env, signed)
         return cls(headers, _parsers.priority(msg).level, _parsers.calls(msg, env, voice=rec),
                    voice=rec.state)
@@ -1015,7 +1022,7 @@ def judge(facts: Facts, layers: Sequence[Layer], me: Me,
     - `from:` the From address, not its display name (`Facts.sender`).
     - `subject:` and any other name: that header's first occurrence,
       decoded; a header the mail does not carry matches nothing, not even
-      `*`.
+      `*`. Outside mail's subject is its pointer words (`Facts`).
     - `$me` is `Me.owns`: mine, or one of my `+tag` forms, on this host.
     - Globs are `*` and `?` (a `[` is literal), anchored, and
       case-insensitive; a bare local part is an address on this host

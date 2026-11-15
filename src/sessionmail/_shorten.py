@@ -4,7 +4,7 @@ becomes, or that it declines. PURE: no environment, no file, no clock.
 Whether it runs at all is the door's (`_send.shorten_on`): the tool's
 default is ON; the host's locked file (`set subject-shorten off`), a seat or
 one mail turns it off. With it off, `message send` refuses as it always did. The contract is
-openspec/changes/subject-shorten.
+OpenSpec change subject-shorten.
 
 A shortener that mechanically shortens a subject that is too long; the tool
 then replies, saying what the subject was shortened to and why.

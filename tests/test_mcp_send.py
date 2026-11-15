@@ -1,6 +1,6 @@
 """The agents' send door: `message_send`, the one hand-written MCP tool.
 
-openspec/changes/agents-send-door. RED ON PURPOSE, written before the
+OpenSpec change agents-send-door. RED ON PURPOSE, written before the
 handler exists (tasks 3, before 4 and 8). What each test ASSERTS rests only
 on text that is RULED, ALREADY TRUE of the live `mail_send`, or MEASURED.
 Not asserted anywhere here, because they are not ruled: that `from` leaves

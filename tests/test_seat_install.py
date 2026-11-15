@@ -61,11 +61,12 @@ def alive(pid: int) -> bool:
 
 
 @pytest.fixture
-def scratch(launchctl_fake):
+def scratch(request, launchctl_fake):
     """A short scratch dir under /tmp (the default socket must fit macOS's 103
     bytes), a HOME and a SESSIONMAIL_HOME in it, and an env built from nothing
-    that carries the fake launchctl."""
-    d = Path(tempfile.mkdtemp(prefix="sm-in-", dir="/tmp"))
+    that carries the fake launchctl. An indirect parameter names the dir's
+    prefix (SM-1052: one holding '--')."""
+    d = Path(tempfile.mkdtemp(prefix=getattr(request, "param", "sm-in-"), dir="/tmp"))
     (d / "u").mkdir()
     env = {"PATH": f"{VENV_BIN}:/usr/bin:/bin", "HOME": str(d / "u"),
            "SESSIONMAIL_HOME": str(d / "h"), "GIT_CONFIG_GLOBAL": os.devnull,
@@ -128,8 +129,11 @@ def test_install_loads_the_agent_reinstall_is_idempotent_uninstall_takes_it_away
     assert report == {"SEAT_LABEL": LABEL, "SEAT_PLIST": str(seat["plist"]),
                       "SEAT_SOCKET": seat["sock"], "SEAT_PUB": str(seat["pub"]),
                       "SEAT_LOG": str(seat["log"])}
+    service = (Path(env["HOME"]) / ".sessionkit" / "mail" / "services" / "seat-agents"
+               / f"{ADDRESS}.json")
     assert done.stderr == (f"message seat agent: installed and loaded {LABEL}; "
-                           f"the agent answers on {seat['sock']}\n")
+                           f"the agent answers on {seat['sock']}\n"
+                           f"message seat agent: service {service} (enabled: true)\n")
     # the effect: the agent answers, holding seat.pub's key
     held = subprocess.run(["ssh-add", "-L"], capture_output=True, text=True,
                           env={"PATH": "/usr/bin:/bin", "SSH_AUTH_SOCK": seat["sock"]})
@@ -165,7 +169,8 @@ def test_install_loads_the_agent_reinstall_is_idempotent_uninstall_takes_it_away
     gone = message(env, "seat", "agent", "--uninstall", ADDRESS)
     assert gone.returncode == 0, gone.stderr
     assert gone.stdout == ""
-    assert gone.stderr == f"message seat agent: booted out {LABEL}; removed {seat['plist']}\n"
+    assert gone.stderr == (f"message seat agent: booted out {LABEL}; removed {seat['plist']}\n"
+                           f"message seat agent: service {service} (enabled: false)\n")
     assert not seat["plist"].exists()
     assert not os.path.exists(seat["sock"]), "the wrapper's TERM trap removes the socket"
     assert not alive(pid)
@@ -175,7 +180,22 @@ def test_install_loads_the_agent_reinstall_is_idempotent_uninstall_takes_it_away
 
     twice = message(env, "seat", "agent", "--uninstall", ADDRESS)
     assert twice.returncode == 0 and twice.stdout == ""
-    assert twice.stderr == f"message seat agent: nothing installed for {ADDRESS}\n"
+    assert twice.stderr == (f"message seat agent: nothing installed for {ADDRESS}\n"
+                            f"message seat agent: service {service} (enabled: false)\n")
+
+
+@darwin
+@pytest.mark.parametrize("scratch", ["sm--in-"], indirect=True)
+def test_install_from_a_home_whose_path_holds_two_hyphens(seat, launchctl_fake):
+    """SM-1052: the socket, the log dir and seat.pub all sit under a path holding
+    '--', which an XML comment cannot hold. The install still renders, loads and
+    answers."""
+    assert "--" in str(seat["dir"])
+    done = message(seat["env"], "seat", "agent", "--install", ADDRESS)
+    assert done.returncode == 0, done.stderr
+    assert answers(seat["sock"]) == 0
+    parsed = plistlib.loads(seat["plist"].read_bytes())
+    assert parsed["ProgramArguments"][-1] == seat["sock"]
 
 
 @darwin
@@ -207,6 +227,51 @@ def test_render_fills_every_placeholder_and_escapes_each_value():
     assert parsed["Label"] == LABEL
     assert parsed["EnvironmentVariables"]["SESSIONMAIL_HOME"] == odd
     assert parsed["ProgramArguments"] == ["/x/bin/message", "seat", "agent", ADDRESS, odd + "/s"]
+
+
+def test_render_leaves_the_comment_as_written_when_a_value_holds_two_hyphens():
+    """SM-1052: '--' is legal in a <string> and illegal in an XML comment, and the
+    template's comment names the placeholders. Every value lands in the dict;
+    the comment, which a filled '--' would break, is left as written."""
+    odd = "/x/repro--1052"
+    out = _launchd.render(TEMPLATE.read_bytes(), job(
+        message=odd + "/bin/message", socket=odd + "/a.sock", log_dir=odd + "/l",
+        pub=odd + "/seat.pub", sessionmail_home=odd + "/h"))
+    parsed = plistlib.loads(out)
+    assert parsed["Label"] == LABEL
+    assert parsed["ProgramArguments"] == [odd + "/bin/message", "seat", "agent", ADDRESS,
+                                          odd + "/a.sock"]
+    assert parsed["EnvironmentVariables"]["SESSIONMAIL_HOME"] == odd + "/h"
+    comment = re.search(rb"<!--(.*?)-->", out, re.S).group(0)
+    assert comment == re.search(rb"<!--(.*?)-->", TEMPLATE.read_bytes(), re.S).group(0)
+
+
+@pytest.mark.parametrize("field", ["message", "socket", "log_dir", "pub", "sessionmail_home"])
+def test_render_survives_two_hyphens_in_any_one_value(field):
+    value = {"message": "/x/a--b/message", "socket": "/x/a--b.sock", "log_dir": "/x/a--b",
+             "pub": "/x/a--b/seat.pub", "sessionmail_home": "/x/a--b"}[field]
+    assert plistlib.loads(_launchd.render(TEMPLATE.read_bytes(), job(**{field: value})))
+
+
+def test_render_leaves_the_comment_as_written_when_a_value_would_end_it_on_a_hyphen():
+    """A comment may not end in '-' either ('--->' is not a close)."""
+    template = TEMPLATE.read_bytes().replace(b"\n-->", b" @SOCKET@-->", 1)
+    out = _launchd.render(template, job(socket="/x/a-"))
+    assert plistlib.loads(out)["ProgramArguments"][-1] == "/x/a-"
+    assert b" @SOCKET@-->" in out
+
+
+def test_render_fills_the_comment_when_it_can_byte_for_byte_as_before():
+    """A plist an older sessionmail installed must still read as already
+    installed, so a value with no '--' renders exactly as one fill of the whole
+    text did, the comment included."""
+    template = TEMPLATE.read_bytes()
+    j = job()
+    values = {"ADDRESS": j.address, "MESSAGE": j.message, "SOCKET": j.socket,
+              "LOG_DIR": j.log_dir, "SEAT_PUB": j.pub, "SESSIONMAIL_HOME": j.sessionmail_home}
+    whole = _launchd.PLACEHOLDER.sub(lambda m: values[m.group(1)], template.decode())
+    assert _launchd.render(template, j) == whole.encode()
+    assert b"/x/bin/message" in re.search(rb"<!--(.*?)-->", whole.encode(), re.S).group(0)
 
 
 def test_render_is_one_pass_a_value_is_never_read_for_a_placeholder():
@@ -476,7 +541,10 @@ def test_uninstall_removes_a_plist_that_was_never_loaded(seat, launchctl_fake):
     seat["plist"].write_bytes(plistlib.dumps({"Label": LABEL}))
     done = message(seat["env"], "seat", "agent", "--uninstall", ADDRESS)
     assert done.returncode == 0
-    assert done.stderr == f"message seat agent: removed {seat['plist']}\n"
+    service = (Path(seat["env"]["HOME"]) / ".sessionkit" / "mail" / "services" / "seat-agents"
+               / f"{ADDRESS}.json")
+    assert done.stderr == (f"message seat agent: removed {seat['plist']}\n"
+                           f"message seat agent: service {service} (enabled: false)\n")
     assert "bootout" not in launchctl_fake.verbs()
 
 

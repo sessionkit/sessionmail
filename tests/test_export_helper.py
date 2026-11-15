@@ -199,7 +199,7 @@ def test_the_check_attr_reader_sees_this_repos_export_ignore_lines():
         pytest.skip("not a git checkout (the git-archive release export): "
                     ".gitattributes cannot be asked")
     root = _export.ROOT
-    ignored = root / "openspec" / "changes" / "message-receipt"
+    ignored = root / "openspec" / "config.yaml"
     claude = root / "CLAUDE.md"
     shipped = [root / "docs" / "message-receipt.md", root / "AGENTS.md"]
     outside = root.parent / "elsewhere.md"

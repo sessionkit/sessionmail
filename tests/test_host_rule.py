@@ -1,5 +1,5 @@
 """SM-941 (folds SM-326): ONE host rule, `_host`, checked against the spec's
-table of cases (openspec/changes/host-rule/proposal.md, rows N1-N12 NAME and
+table of cases (OpenSpec change host-rule, proposal.md, rows N1-N12 NAME and
 I1-I14 IS-ME), plus the pin `_settings.ensure` writes at creation and the
 writer `message setup` adds a missing `host` with.
 

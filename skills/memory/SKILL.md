@@ -42,5 +42,4 @@ today): the by-hand recipe is `docs/memory-first-root.md` in this plugin.
 Nothing is ever edited: an item changes by a reply that supersedes it.
 
 References (flat, 40 lines / 400 tokens each): `references/`.
-Specs: `openspec/specs/memory/spec.md`, in the git repository; the release
-archive leaves `openspec/` out.
+Specs: the OpenSpec spec `memory`, kept in the project's OpenSpec store, outside this tree.

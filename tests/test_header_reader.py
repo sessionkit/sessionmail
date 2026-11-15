@@ -1,7 +1,7 @@
 """tasks.md 3.22: the header reader (design D16, the migration DECISION).
 
 Proves *A header this change mints carries no X-, and the reader takes both
-spellings* (openspec/changes/pager-genie/specs/pager/spec.md): a header this
+spellings* (OpenSpec change pager-genie, specs/pager/spec.md): a header this
 change defines is read by its unprefixed name first, else its `X-` form;
 when both are present the unprefixed one wins, whatever either says; the
 reader records which spelling it read.

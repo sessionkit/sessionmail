@@ -12,7 +12,7 @@ LaunchAgent, no systemd unit). The readers refresh the index themselves:
 - `message mark` refreshes on a MISS only, once per invocation, after the
   seat's own boxes have not answered either.
 
-PROPOSED, not ratified: `openspec/changes/index-refresh/`.
+PROPOSED, not ratified: OpenSpec change `index-refresh`.
 
 One refresh is `notmuch --config=<profile> new --no-hooks --quiet`, host mode
 only, bounded by `notmuch.refresh` (`SESSIONMAIL_NOTMUCH_REFRESH`, seconds,

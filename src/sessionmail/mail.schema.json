@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "mail.schema.json",
   "title": "mail",
-  "description": "Settings of the mail tool (message, pager, memory), at any layer: ~/.sessionkit/mail/settings/mail.json (host), seats/<seat>/settings/mail.json (seat), sessions/<sid>/settings/mail.json or mail.d/*.json (session). A layer file holds only the keys it sets. sessiontools openspec/changes/session-settings.",
+  "description": "Settings of the mail tool (message, pager, memory), at any layer: ~/.sessionkit/mail/settings/mail.json (host), seats/<seat>/settings/mail.json (seat), sessions/<sid>/settings/mail.json or mail.d/*.json (session). A layer file holds only the keys it sets. sessiontools OpenSpec change session-settings.",
   "type": "object",
   "properties": {
     "version": {
@@ -35,7 +35,7 @@
       "type": "boolean"
     },
     "pager_required": {
-      "description": "Whether this seat's pager is REQUIRED to be listening. When true, the plugin's Stop and PostToolBatch hooks say DEAF (with the reason and the two ways out) when nothing listens for the session - even with \"hooks\": false, where that is the only thing they say. Missing means not required: the check runs and stays silent. A muted seat (`pager mute`) is never nagged. Read at every layer (host, seat, session; the most specific wins); SESSIONMAIL_PAGER_REQUIRED (1/true/on or 0/false/off) wins over every layer, both ways, and SESSIONMAIL_PAGER=off beats it.",
+      "description": "Whether this seat's pager is REQUIRED to be listening. When true, the plugin's Stop and PostToolBatch hooks say DEAF (with the reason and the two ways out) when nothing listens for the session - even with \"hooks\": false, where that is the only thing they say. Missing means not required: the check runs and stays silent. A muted seat (`pager mute`) is never nagged. Read at every layer (host, seat, session; the most specific wins), except that for a claude -p seat the host layer is not counted, so a host-wide true reaches interactive seats only; SESSIONMAIL_PAGER_REQUIRED (1/true/on or 0/false/off) wins over every layer, both ways, and SESSIONMAIL_PAGER=off beats it.",
       "type": "boolean",
       "x-env": "SESSIONMAIL_PAGER_REQUIRED"
     },

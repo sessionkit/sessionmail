@@ -1,6 +1,6 @@
 """SESSIONMAIL_HEARS retires (message-subscriptions tasks.md 4.8, design D9).
 
-Design D9 (openspec/changes/message-subscriptions/design.md:300-301): *"the
+Design D9 (OpenSpec change message-subscriptions, design.md:300-301): *"the
 HEARS variable retires with BOX. It only let a seat listen on its own base
 box, and a subscription does that job."* Proposal: *"`_seat.py`: HEARS_VAR
 and its readers retire."*

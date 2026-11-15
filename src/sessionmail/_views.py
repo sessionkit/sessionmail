@@ -1,6 +1,6 @@
 """The ride-along gives each message as a VIEW, by kind.
 
-openspec/changes/pager-genie, tasks.md 3.2a and 3.2b. The spec requirement
+OpenSpec change pager-genie, tasks.md 3.2a and 3.2b. The spec requirement
 they prove is *The ride-along carries a view of each message, by kind*:
 an appropriate view of each message.
 
@@ -50,7 +50,7 @@ import shlex
 from pathlib import Path
 from typing import Callable, Mapping, Sequence
 
-from . import _maildir
+from . import _maildir, _outside
 from ._headers import read_header
 from ._parsers import NORMAL, priority
 from ._voice import CEILING, TRUSTED, UNVERIFIED, Signed, Voice, host_forms, recognise, whole
@@ -90,6 +90,10 @@ BATCH_BUDGET = 8_000
 
 TEXT = "text"
 WHOLE = "whole"
+#: An outside mail's view (`_outside`: it carries a `Source` header): no
+#: word of its body, one line of ours that says what it is and how to read
+#: it. It gives 0 characters and cuts all of them.
+POINTER = "pointer"
 
 
 def load(path: Path) -> EmailMessage:
@@ -274,6 +278,9 @@ class View:
     textless: bool = False
     heard: Heard | None = None
     unverified: bool = False
+    #: True for the POINTER view: the mail's words are a stranger's and none
+    #: was given, so it is never `given_whole`, even with an empty body.
+    outside: bool = False
 
     @property
     def given_whole(self) -> bool:
@@ -281,7 +288,7 @@ class View:
         nothing cut, and a text part to carry. An EMPTY text part is whole
         (there is nothing left to read); a message with NO text part is not
         (its words, whatever they are, are still in the file)."""
-        return self.cut == 0 and not self.textless
+        return self.cut == 0 and not self.textless and not self.outside
 
 
 def view(msg: Message, pointer: "str | Callable[[], str]",
@@ -299,6 +306,23 @@ def view(msg: Message, pointer: "str | Callable[[], str]",
     part at all gets one line naming its door, so it is not silently
     wordless. An EMPTY text part gets no line: an EOM subject carries no
     body, and that is what it says."""
+    def ptr() -> str:
+        return pointer() if callable(pointer) else pointer
+
+    if _outside.is_outside(msg):
+        # Outside words are never given by a page, whatever the mail is
+        # marked as: `Source` wins over `Ears-Kind`, so a voice mark on an
+        # imported mail buys it nothing. The view is our one line and no
+        # body; it earns `seen` only (never `given_whole`), spends none of
+        # the batch budget (0 characters), and the log reads `view:
+        # pointer` with the whole body counted as cut.
+        try:
+            unseen = len(text_part(msg) or "")
+        except Exception:  # noqa: BLE001 - the count is for the log only
+            unseen = 0
+        return View(POINTER, False, extras(msg, False),
+                    (f"{_outside.NOT_GIVEN} - message read {ptr()}",), 0, unseen,
+                    outside=True)
     rec = recognise(msg, env, signed)
     voice = rec.state == TRUSTED
     unverified = rec.state == UNVERIFIED
@@ -308,9 +332,6 @@ def view(msg: Message, pointer: "str | Callable[[], str]",
     fence = (UNVERIFIED_FENCE,) if unverified else ()
     words = text_part(msg)
     kind, cap = (WHOLE, CEILING) if voice else (TEXT, TEXT_CAP)
-    def ptr() -> str:
-        return pointer() if callable(pointer) else pointer
-
     if words is None:
         return View(kind, voice, add, (*fence, f"… no text part - message read {ptr()}"), 0, 0,
                     textless=True, heard=spoken, unverified=unverified)

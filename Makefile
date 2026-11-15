@@ -13,13 +13,20 @@
 #   make progress how much of the CLI is built, counted by running
 #                 every verb: a stub exits 69 and names its requirement
 #   make check    the two structural gates: `openspec validate --all --strict`
-#                 over openspec/, and `skill plugin validate .` over the
+#                 over the specs, and `skill plugin validate .` over the
 #                 plugin + skill. Green means well-formed, not correct.
-#                 The release archive leaves openspec/ out: there, and in a
-#                 clone of it, that leg SKIPS, saying so. In a checkout that
-#                 tracks openspec/ it stays strict.
+#                 openspec/ holds only config.yaml, a pointer to the
+#                 project's OpenSpec store; the CLI validates the store
+#                 through it. The release archive leaves openspec/ out:
+#                 there, and in a clone of it, that leg SKIPS, saying so. So
+#                 it does where the store is not registered on this machine.
+#                 In a checkout that tracks openspec/ it stays strict.
 #   make          check, then test
 #   make build    wheel + sdist into dist/ (uv build)
+#   make pypi-dist  the wheel + sdist PyPI gets: built from tag v<version>,
+#                 README links pinned to it, by sessionkit's README rewriter
+#                 (KIT_DIR=<sessionkit checkout>, default ../sessionkit).
+#                 The tag must be the same commit on PUBLIC_REMOTE.
 #   make release  cut a release: bump the ONE version (pyproject.toml, mirrored
 #                 into plugin.json and marketplace.json), stamp CHANGELOG.md,
 #                 commit, tag.
@@ -27,7 +34,7 @@
 
 SHELL := /usr/bin/env bash
 
-.PHONY: all install check test test-latency test-export build release progress help
+.PHONY: all install check test test-latency test-export build pypi-dist release progress help
 
 all: check test
 
@@ -38,9 +45,19 @@ install:
 # (no git, no repo, or a clone of the export, which never held it), its
 # absence is the release export's, and the leg skips. Absent but TRACKED is a
 # broken checkout, and the leg fails. Never keyed on .git alone.
+# Present, it is the pointer: config.yaml names the store (`store: <id>`).
+# A store this machine has not registered (its id is not in
+# `openspec store list --json`) cannot be validated, and the leg skips,
+# naming it. With no openspec on PATH at all the leg runs, and fails: the
+# tool is missing, not the store.
 check:
 	@echo "== openspec validate --all --strict"
-	@if [ -d openspec ]; then openspec validate --all --strict; \
+	@if [ -d openspec ]; then \
+	  store=$$(sed -n 's/^store: *//p' openspec/config.yaml 2>/dev/null); \
+	  if [ -n "$$store" ] && command -v openspec >/dev/null 2>&1 && \
+	     ! openspec store list --json 2>/dev/null | grep -Eq "\"id\": *\"$$store\""; then \
+	    echo "openspec/ points at store $$store, not registered here: skipped"; \
+	  else openspec validate --all --strict; fi; \
 	elif git ls-files --error-unmatch -- openspec >/dev/null 2>&1; then \
 	  echo "openspec/ is missing from this git checkout" >&2; exit 1; \
 	else echo "openspec/ not in this tree (release archive): skipped"; fi
@@ -80,6 +97,37 @@ progress:  ## How much of the CLI is built, counted by running every verb
 
 build:
 	@uv build
+
+# PyPI shows README.md, where the repo's RELATIVE links 404. pypi-dist builds
+# from the release TAG, never the checkout: `git archive` into a scratch stage,
+# pin the stage's README links to the tag, `uv build` there into dist/, then
+# check BOTH the wheel and the sdist for any relative link left. The links
+# point at the PUBLIC repo's tag, and the dists are built from the LOCAL one,
+# so the two must be the SAME COMMIT: it refuses unless the kit's
+# `pypi_readme.py tag-check` finds the tag on PUBLIC_REMOTE at the commit the
+# local tag names (a missing public tag, or a moved or stale local one,
+# refuses, naming both shas when they differ). A kit too old to have
+# tag-check refuses too.
+# The rewriter is sessionkit's scripts/pypi_readme.py, the family's one copy;
+# this repo keeps none. KIT_DIR is a sessionkit checkout (a sibling of this
+# one by default), and PYPI_README runs the script there. All three variables
+# are overridable (`make pypi-dist KIT_DIR=...`, or PYPI_README=... outright).
+# Left at its default, PYPI_README needs the script under KIT_DIR, and the
+# target refuses, naming KIT_DIR=, when it is not there.
+KIT_DIR ?= ../sessionkit
+PYPI_README ?= python3 $(KIT_DIR)/scripts/pypi_readme.py
+PUBLIC_REMOTE ?= https://github.com/sessionkit/sessionmail.git
+pypi-dist:  ## wheel + sdist from tag v<version>, README links pinned to it; the tag must be the same commit on PUBLIC_REMOTE
+	@if [ "$(origin PYPI_README)" = file ] && [ ! -f "$(KIT_DIR)/scripts/pypi_readme.py" ]; then \
+	  echo "pypi-dist: no $(KIT_DIR)/scripts/pypi_readme.py; set KIT_DIR= to a sessionkit checkout (or PYPI_README= to the rewriter)" >&2; exit 1; fi
+	@set -euo pipefail; v="v$$(uv version --short)"; \
+	$(PYPI_README) tag-check --tag "$$v" --remote "$(PUBLIC_REMOTE)"; \
+	stage="$$(mktemp -d)"; trap 'rm -rf "$${stage:?}"' EXIT; \
+	git archive "$$v" | tar -x -C "$$stage"; \
+	$(PYPI_README) rewrite --repo sessionkit/sessionmail --ref "$$v" --root "$$stage" "$$stage/README.md"; \
+	(cd "$$stage" && uv build --out-dir "$(CURDIR)/dist"); \
+	dist="dist/sessionmail-$${v#v}"; \
+	$(PYPI_README) check "$$dist"-*.whl "$$dist".tar.gz
 
 release:  ## Cut a release (bump the version, stamp the changelog, commit, tag)
 	@echo "Current version: $$(python3 scripts/release.py --current)"

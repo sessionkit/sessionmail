@@ -134,6 +134,136 @@ def settings_home() -> Path:
     return rules.account_home()
 
 
+# ── a split home: $HOME is not the account's home ────────────────────────────
+#
+# Two homes are read today: the hooks file, the mail root's default and a
+# variable's `~` follow `$HOME`; `mail.json`'s keys, the host pin, the locked
+# rules, the operator, the registry and the puller follow the account's home
+# (`settings_home`). Where the two are one folder (every live seat measured)
+# that is one tree. Where they differ, a process sees half of each, so it is
+# never silent: every writing verb says so once (`split_notice`), and a write
+# into the account's live mail tree is refused unless a SET variable names
+# the target (`split_write_refusal`), because a set variable is a deliberate
+# act and a moved HOME alone is not.
+
+#: Which settings follow which home, as the split line says it.
+SPLIT_FOLLOWS = ("$HOME holds the hooks file and the mail root's default; the account's home "
+                 "holds mail.json's keys (root, sendmail, host, ...), the host pin, the locked "
+                 "rules, the operator, the registry and the puller")
+
+#: The split line, said once in this process (`split_notice`).
+_SPLIT_SAID = False
+
+
+def _same_folder(a: Path, b: Path) -> bool:
+    """A and B are one folder: `os.path.samefile` when both can be stat'd,
+    else their absolute, normalised spellings compared."""
+    try:
+        return os.path.samefile(a, b)
+    except (OSError, ValueError):
+        return os.path.normpath(os.path.abspath(a)) == os.path.normpath(os.path.abspath(b))
+
+
+def home_split(env=None) -> tuple[Path, Path] | None:
+    """`($HOME, the account's home)` when ENV (default `os.environ`) sets
+    HOME and the two are not one folder; else None. THE one definition: every
+    line that names a split home, and every refusal of one, asks it. A
+    settings home that cannot be found is no split (nothing to compare)."""
+    env = os.environ if env is None else env
+    given = env.get("HOME")
+    if not given:
+        return None
+    try:
+        account = settings_home()
+    except Exception:  # noqa: BLE001 - no account home to find: nothing is split from it
+        return None
+    home = Path(given)
+    return None if _same_folder(home, account) else (home, account)
+
+
+def split_line(split: tuple[Path, Path]) -> str:
+    """The one line a split home is said in, naming both homes."""
+    home, account = split
+    return (f"home SPLIT - $HOME is {home}, not the account's home {account}. "
+            f"{SPLIT_FOLLOWS}. A write into the account's live mail tree is refused "
+            f"unless $SESSIONMAIL_ROOT or $SESSIONMAIL_SENDMAIL names it")
+
+
+def split_notice(env=None) -> str | None:
+    """`split_line` the FIRST time a split home is asked about in this
+    process, else None: a writing verb says it once, never per write."""
+    global _SPLIT_SAID
+    split = home_split(env)
+    if split is None or _SPLIT_SAID:
+        return None
+    _SPLIT_SAID = True
+    return split_line(split)
+
+
+def say_split(env=None, stream=None) -> None:
+    """`split_notice`, printed on STREAM (stderr) when there is one."""
+    import sys
+    line = split_notice(env)
+    if line is not None:
+        print(f"sessionmail: {line}", file=sys.stderr if stream is None else stream)
+
+
+def live_trees(env=None) -> tuple[Path, ...]:
+    """The account's live mail tree, as a split home must not write it: the
+    kit's tree under the account's home (`.sessionkit/mail`: the default
+    root and the settings), the old default root (`.mail`), and the root
+    the account's `mail.json` files, when it files one. Each with its
+    symlinks followed, as a write would follow them."""
+    from . import _maildir
+    account = settings_home()
+    trees = [account / _settings.ROOT / _settings.TOOL,
+             account / _maildir.OLD_DEFAULT_MAIL_ROOT[2:]]
+    filed = _settings.file_path("root", {k: v for k, v in (env or os.environ).items()
+                                         if k != _maildir.ROOT_VAR})
+    if filed is not None and Path(filed).is_absolute():
+        trees.append(Path(filed))
+    return tuple(dict.fromkeys(Path(os.path.realpath(t)) for t in trees))
+
+
+def split_write_refusal(target: Path, env=None, *, pinned: bool = False,
+                        var: str = "SESSIONMAIL_ROOT", fix: str | None = None) -> str | None:
+    """Why a write to TARGET is refused, or None. Refused only when the home
+    is split (`home_split`), TARGET (symlinks followed) is in the account's
+    live mail tree (`live_trees`), and no set variable named it (PINNED).
+    VAR is the variable that would pin it, named in the words; FIX replaces
+    that advice for a target no variable can move."""
+    if pinned:
+        return None
+    split = home_split(env)
+    if split is None:
+        return None
+    try:
+        real = Path(os.path.realpath(target))
+        trees = live_trees(env)
+    except Exception:  # noqa: BLE001 - a tree that cannot be named refuses nothing new
+        return None
+    for tree in trees:
+        if real == tree or tree in real.parents:
+            home, account = split
+            advice = fix or (f"a split home writes there only when ${var} names it (set it, "
+                             f"or run with HOME at the account's home)")
+            return (f"{target} is in the account's live mail tree ({tree}), and $HOME is "
+                    f"{home}, not the account's home {account}: {advice}")
+    return None
+
+
+def split_root_refusal(env=None) -> str | None:
+    """`split_write_refusal` for the mail root the one resolver answers: a
+    root from `$SESSIONMAIL_ROOT` is pinned; one from the file or the
+    default is not."""
+    from . import _maildir
+    env = os.environ if env is None else env
+    if home_split(env) is None:          # the common case asks nothing more
+        return None
+    root, source = _maildir.mail_root_why(env)
+    return split_write_refusal(root, env, pinned=source == _maildir.FROM_VAR)
+
+
 def account_name() -> str | None:
     """The installing account's name: `pw_name` of this process's uid in the
     PASSWORD DATABASE, case-folded. Never `$USER`, `$LOGNAME` or
@@ -373,14 +503,22 @@ __all__ = [
     "NOTHING",
     "OPERATOR_KEY",
     "PRIVILEGED_KEY",
+    "SPLIT_FOLLOWS",
     "Operator",
     "account_name",
     "files",
+    "home_split",
     "host_sources",
     "host_values",
+    "live_trees",
     "read",
     "route",
+    "say_split",
     "settings_home",
+    "split_line",
+    "split_notice",
+    "split_root_refusal",
+    "split_write_refusal",
     "tilde",
     "who_may",
 ]

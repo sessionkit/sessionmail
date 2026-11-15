@@ -360,6 +360,12 @@ def ensure_session_box(session: str, seat: "Seat | None", *,
     birth = Birth(box=root / session if has_session else None)
     session_box = birth.box
     if session_box is not None and not (session_box / "new").is_dir():
+        from . import _operator
+        _operator.say_split(env)         # once in this process, on stderr
+        refused = _operator.split_root_refusal(env)
+        if refused:
+            birth.error = f"{refused} - no box born"
+            return birth
         if not make_root and not root.is_dir():
             birth.error = f"no mail root at {root} - no box born"
             return birth

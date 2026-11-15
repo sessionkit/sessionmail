@@ -1,4 +1,4 @@
-"""Focus modes: `openspec/changes/pager-filters`, tasks 3.1-3.3; design D5.
+"""Focus modes: OpenSpec change `pager-filters`, tasks 3.1-3.3; design D5.
 
 RULED (P4, P5, P14):
 

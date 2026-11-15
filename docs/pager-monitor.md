@@ -44,13 +44,29 @@ session, and each line it prints is a notification. Nothing has to arm it.
   and exits 0. `pager status` shows a `monitor:` line: armed, not armed or
   off, and the setting that decided.
 - **Headless seats run no monitor.** Claude Code arms monitors only in an
-  interactive session, so a `claude -p` seat arms by hand with `pager
-  listen` in the background, as before. The same holds when Claude Code's
-  own monitor gate (`tengu_amber_sentinel`) is off: nothing arms, and
-  nothing in Claude Code says so.
+  interactive session. The same holds when Claude Code's own monitor gate
+  (`tengu_amber_sentinel`) is off: nothing arms, and nothing in Claude
+  Code says so. A headless `claude -p` seat is one of two kinds:
+  - **A one-shot `claude -p`** answers and exits. It arms nothing, and the
+    hooks never ask it to: the Stop hook exits 0 and says nothing, and the
+    PostToolBatch hook gives it no not-listening line and no DEAF. Its
+    mail still rides along. A listener it started would keep it running,
+    so it would never exit.
+  - **A long-lived headless seat** stays up to hear mail. It opts in with
+    `SESSIONMAIL_PAGER_REQUIRED=1` in its launch environment, or
+    `"pager_required": true` in its seat or session layer, and arms by
+    hand with `pager listen` in the background, as before. The host layer
+    is not counted for a `claude -p` seat. Once required, it is told DEAF
+    when nothing listens, like any required seat.
+
+  The hooks know a `claude -p` seat by `-p` or `--print` on its claude's
+  command line. When `ps` cannot read that, the seat is not taken for a
+  one-shot, and the hooks say what they always said. On a one-shot,
+  `pager status` says so on its `required:` line.
 - **`pager_required`: say DEAF when nothing listens.** A boolean in the
   mail settings, read at the host, seat and session layers (the most
-  specific wins). `SESSIONMAIL_PAGER_REQUIRED` (`1`/`true`/`on` or
+  specific wins; for a `claude -p` seat the host layer is not counted).
+  `SESSIONMAIL_PAGER_REQUIRED` (`1`/`true`/`on` or
   `0`/`false`/`off`) wins over every layer, both ways, and
   `SESSIONMAIL_PAGER=off` beats it. Missing means not required. On a
   required seat, when nothing listens past a grace of about 10 seconds

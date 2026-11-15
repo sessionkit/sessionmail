@@ -10,13 +10,24 @@ holds seat.pub's key. `--uninstall` boots the job out and removes the plist.
 It never touches the key, the registry or the cert, and never deletes or
 moves a log, new or old (`_settings.log_dir`, `_settings.old_log_dir`).
 
+Once the agent answers, `--install` declares the job in its service file,
+`~/.sessionkit/mail/services/seat-agents/<address>.json` with `enabled:
+true`, so `sessionkit service` finds it (`_service_file`, the one writer).
+`--uninstall` keeps the file and writes `enabled: false`. A failed write
+never undoes the launchd act: it says so and exits 3, its own code, so a
+caller never reads it as a failed install or uninstall.
+
 Streams and exits follow `seat init`'s convention:
 
 - stdout: the success report only (`--install`'s KEY=VALUE lines).
 - stderr: narration, refusals (`REFUSED - ... Nothing was written.`) and
   failures (`FAILED - ...`, naming what was put back).
 - 0 done · 1 launchctl failed, a plist write or removal failed, or the
-  agent never answered, rolled back · 2 usage or refused, nothing written.
+  agent never answered, rolled back · 2 usage or refused, nothing written ·
+  3 the launchd act is done (`--install`: the job is loaded, its agent
+  answers and the report is on stdout, whole; `--uninstall`: the job is
+  gone) but the service file could not be written. Re-run the same verb
+  to write it.
 
 `launchctl` is `$SESSIONMAIL_LAUNCHCTL` when set and not empty, else
 `/bin/launchctl`: the same seam as `SESSIONMAIL_SENDMAIL`. The test suite
@@ -38,13 +49,16 @@ from dataclasses import dataclass
 from typing import IO, Mapping
 from xml.sax.saxutils import escape
 
-from . import _settings
+from . import _service_file, _settings
 
 PROG = "message seat agent"
 
 EX_OK = 0
 EX_FAILED = 1
 EX_REFUSED = 2
+#: The launchd act is done but the service file was not written: the job
+#: stands as the verb made it. Never a failed install: a re-run writes it.
+EX_UNDECLARED = 3
 
 #: The seam: a launchctl of the caller's choosing (a test's fake).
 LAUNCHCTL_VAR = "SESSIONMAIL_LAUNCHCTL"
@@ -64,6 +78,8 @@ LABEL_PREFIX = "dev.sessionkit.mail.seat-agent."
 ADDRESS_RE = re.compile(r"[a-z0-9][a-z0-9._-]*(?:\+[a-z0-9][a-z0-9._-]*)?\Z")
 SOCK_MAX = 103
 PLACEHOLDER = re.compile(r"@([A-Z_]+)@")
+#: One fill's tokens: a whole XML comment, or a placeholder outside one.
+FILL = re.compile(r"<!--(?P<comment>.*?)-->|@(?P<name>[A-Z_]+)@", re.S)
 #: The template's SESSIONMAIL_HOME entry, rendered only when the caller set
 #: SESSIONMAIL_HOME; else it is dropped whole.
 PINNED_HOME = ("    <key>SESSIONMAIL_HOME</key>\n"
@@ -112,6 +128,36 @@ class Job:
 
 def label_for(address: str) -> str:
     return LABEL_PREFIX + address
+
+
+#: The folder under `~/.sessionkit/mail/services/` that holds one service
+#: file per seat agent, `<address>.json` (the kit's per-agent depth).
+SERVICE_GROUP = "seat-agents"
+
+
+def service_record(address: str, *, enabled: bool) -> dict:
+    """The seat agent's service file, as `sessionkit service` reads it: its
+    label, the agent it serves, the two verbs as a user types them, and the
+    call hazard (a phone seat signs through this agent, so a restart during
+    a live call can drop it). No `port`: the agent listens on a socket."""
+    return _service_file.record(
+        enabled=enabled, label=label_for(address),
+        install=f"{PROG} --install {address}", uninstall=f"{PROG} --uninstall {address}",
+        hazard=["call"], agent=address)
+
+
+def _declare(address: str, home: str, *, enabled: bool, err: IO[str]) -> bool:
+    """Write the seat's service file, ENABLED, and say so on ERR. A write that
+    fails says so too, naming that the launchd act stands; False then."""
+    target = _service_file.path(address, group=SERVICE_GROUP, env={"HOME": home})
+    line, ok = _service_file.declare(service_record(address, enabled=enabled), target)
+    if ok:
+        err.write(f"{PROG}: {line}\n")
+    else:
+        stands = ("The job is installed and its agent answers; re-run --install"
+                  if enabled else "The job is uninstalled; re-run --uninstall")
+        err.write(f"{PROG}: FAILED - {line}. {stands} to write the file\n")
+    return ok
 
 
 def launchctl_path(env: Mapping[str, str]) -> str:
@@ -220,9 +266,11 @@ def render(template: bytes, job: Job) -> bytes:
     """The template with its placeholders filled, each value XML-escaped:
     ADDRESS, MESSAGE, SOCKET, LOG_DIR and SEAT_PUB always, SESSIONMAIL_HOME
     only when the caller set it (else its entry is dropped, PINNED_HOME).
-    One pass, so a value is never itself read for a placeholder. An unknown
-    placeholder, a render plistlib cannot read, or a Label that is not the
-    job's is refused."""
+    One pass, so a value is never itself read for a placeholder. The
+    template's comment is filled too, unless a value would put '--' in it or
+    end it on '-' (legal in a string, never in a comment): then that
+    comment is left as written. An unknown placeholder, a render plistlib
+    cannot read, or a Label that is not the job's is refused."""
     values = {"ADDRESS": job.address, "MESSAGE": job.message,
               "SOCKET": job.socket, "LOG_DIR": job.log_dir,
               "SEAT_PUB": job.pub}
@@ -240,7 +288,14 @@ def render(template: bytes, job: Job) -> bytes:
     if unknown:
         raise Refused("the packaged template holds a placeholder this sessionmail does not "
                       f"fill ({', '.join('@' + u + '@' for u in unknown)}): a broken install")
-    out = PLACEHOLDER.sub(lambda m: escape(values[m.group(1)]), text).encode("utf-8")
+
+    def fill(m: re.Match[str]) -> str:
+        if m.group("name") is not None:
+            return escape(values[m.group("name")])
+        body = PLACEHOLDER.sub(lambda p: escape(values[p.group(1)]), m.group("comment"))
+        return m.group(0) if "--" in body or body.endswith("-") else f"<!--{body}-->"
+
+    out = FILL.sub(fill, text).encode("utf-8")
     try:
         parsed = plistlib.loads(out)
     except Exception as exc:  # plistlib raises several kinds on a bad document
@@ -359,8 +414,7 @@ def _install(address: str, socket: str | None, env: Mapping[str, str],
                          f"with seat.pub's key; the job was left as found (this run did not "
                          f"load it). {_log_tail(job)}")
         err.write(f"{PROG}: {job.label} already installed; the agent answers on {job.socket}\n")
-        out.write(report(job))
-        return EX_OK
+        return _installed(job, env, out, err)
     if is_loaded:
         why = "with a different plist" if existing is not None else f"with no plist at {job.plist}"
         raise Refused(f"a job already holds {job.label} ({why}): run "
@@ -398,8 +452,15 @@ def _install(address: str, socket: str | None, env: Mapping[str, str],
                      f"seat.pub's key within {ANSWER_SECONDS:g} s; {booted}; {put_back}. "
                      f"{_log_tail(job)}")
     err.write(f"{PROG}: installed and loaded {job.label}; the agent answers on {job.socket}\n")
+    return _installed(job, env, out, err)
+
+
+def _installed(job: Job, env: Mapping[str, str], out: IO[str], err: IO[str]) -> int:
+    """The answer check passed: print the report, then declare the job in its
+    service file. The job is installed either way, and the report is the
+    same; a failed write is EX_UNDECLARED, never EX_FAILED."""
     out.write(report(job))
-    return EX_OK
+    return EX_OK if _declare(job.address, _home(env), enabled=True, err=err) else EX_UNDECLARED
 
 
 def _remove_ours(job: Job, wrote: bool) -> str:
@@ -468,4 +529,10 @@ def _uninstall(address: str, env: Mapping[str, str], err: IO[str]) -> int:
         err.write(f"{PROG}: nothing installed for {address}\n")
     else:
         err.write(f"{PROG}: {'; '.join(said)}\n")
-    return EX_OK
+    # The service file is kept, switched off. One is written for a job this
+    # run took away, and rewritten where one is already there; an address
+    # with neither gets none, so a typo leaves nothing behind.
+    target = _service_file.path(address, group=SERVICE_GROUP, env={"HOME": home})
+    if not said and not os.path.lexists(target):
+        return EX_OK
+    return EX_OK if _declare(address, home, enabled=False, err=err) else EX_UNDECLARED

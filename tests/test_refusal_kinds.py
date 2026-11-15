@@ -1,6 +1,6 @@
 """Every refusal carries a KIND, and the gate that holds the vocabulary.
 
-openspec/changes/agents-send-door, "A refusal says what KIND it is". RULED
+OpenSpec change agents-send-door, "A refusal says what KIND it is". RULED
 AS A STRUCTURE: three groups, and a test that forces every refusal to carry
 a kind. Review R2: a list in a spec holds nothing on its own, so the word is
 a REQUIRED argument, and this file walks every site in the package.

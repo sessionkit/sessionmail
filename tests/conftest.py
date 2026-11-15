@@ -14,10 +14,12 @@ nothing, on any machine, with or without notmuch installed.
 
 from __future__ import annotations
 
+import contextlib
 import dataclasses
 import datetime
 import json
 import os
+import signal
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -27,7 +29,7 @@ import pytest
 import _leaves
 import tool_call
 from fake_launchctl import FakeLaunchctl
-from fakes import fake_scutil_only, write_fake  # fake_scutil_only: re-exported (test_host_rule)
+from fakes import claude_interactive, fake_scutil_only, write_fake  # fake_scutil_only: re-exported (test_host_rule)
 from sessionmail import _launchd, _magicdns, _maildir, _mhs, _notmuch, _operator, _seat, _sig, _voice, pager, rules
 from sessionmail import _host, _settings
 
@@ -264,6 +266,16 @@ def hermetic(tmp_path_factory, monkeypatch):
     # fake name, so no test reads the real account: on a real host that can
     # be a live seat's name. `stranger(None)` is the host it shows on.
     monkeypatch.setattr(_operator, "account_name", lambda: ACCOUNT_DEFAULT)
+    # The SPLIT HOME guard. This sandbox's HOME (`user`) and its account home
+    # (`operator`) are two folders, so every test would run as a split home:
+    # every writing verb would say so and refuse the account's tree. That is
+    # a property of the sandbox, not of what a test means, so the guard's one
+    # definition, `_operator.home_split`, answers "not split" here. The tests
+    # that mean a split home (`tests/test_home_split.py`) restore the real
+    # function and build their own split, with a fake live account tree
+    # they snapshot before and after.
+    monkeypatch.setattr(_operator, "home_split", lambda env=None: None)
+    monkeypatch.setattr(_operator, "_SPLIT_SAID", False)
     # The macOS NAMES (SM-941): the drop's IS-ME set asks `scutil --get`
     # LocalHostName and ComputerName. Its one seam is `_host.scutil_binary`,
     # patched here so a test is answered by a fake `scutil` on the PATH it
@@ -402,6 +414,17 @@ def hermetic(tmp_path_factory, monkeypatch):
     # SESSION_SIDECAR_DIR: pointed at an empty sandbox dir, so no test can
     # ever read the runner's real `~/.claude/sessions`.
     monkeypatch.setattr(_seat, "claude_for", _claude_up)
+    # And that claude is INTERACTIVE, by default (SM-1034). The pin above
+    # names the runner's own pid, so the real `_seat.claude_headless` would
+    # read the RUNNER's argv from `ps`, and `_seat.headless` takes a bare
+    # `-p` there (pytest's plugin flag: `-p no:cacheprovider`, `-p xdist`)
+    # for `claude -p`: every test seat became a one-shot, and the Stop hook
+    # stopped nagging. How pytest was launched must not decide a test, so the
+    # measure is pinned to "not headless" (`fakes.claude_interactive`, which
+    # still asks `claude_for`, and says None when no claude is found). A test
+    # that measures an argv puts the real one back (REAL_CLAUDE_HEADLESS)
+    # beside its own `ps` table.
+    monkeypatch.setattr(_seat, "claude_headless", claude_interactive)
     monkeypatch.setenv("SESSION_SIDECAR_DIR", str(sandbox / "no-sidecars-here"))
     # And the runner's CLAUDE_PID (SM-998). Every verb drops the identity
     # words a CLAUDE_PID says were inherited from a claude it does not run
@@ -453,6 +476,41 @@ def launchctl_fake(hermetic, tmp_path_factory, monkeypatch):
     fake.stop_all()
 
 
+@contextlib.contextmanager
+def sigint_unignored():
+    """`sigint_at_its_default`'s body, as a context manager a test can drive:
+    an ignored SIGINT becomes Python's default handler inside, and SIG_IGN
+    again after. Anything else is left exactly as it is, and no other signal
+    is touched."""
+    if signal.getsignal(signal.SIGINT) is not signal.SIG_IGN:
+        yield
+        return
+    signal.signal(signal.SIGINT, signal.default_int_handler)
+    try:
+        yield
+    finally:
+        signal.signal(signal.SIGINT, signal.SIG_IGN)
+
+
+@pytest.fixture(autouse=True)
+def sigint_at_its_default():
+    """SM-1035: the runner's SIGINT disposition is not the suite's. A suite
+    started as an async job in a non-interactive shell (`( nohup make test & )`,
+    as SK-251's 0.3.3 cut did) starts with SIGINT IGNORED, and every child a
+    test spawns inherits that: bash cannot trap a signal ignored on entry,
+    Python installs no KeyboardInterrupt, notmuch ignores it on the lock. Six
+    tests that send a child ONE SIGINT went red that way and green in the
+    foreground, which read as host load (MEASURED: red at idle when launched
+    so, green in the foreground at load 15).
+
+    So while a test runs, an ignored SIGINT is Python's default handler, which
+    a child's exec turns back into SIG_DFL, and the runner's SIG_IGN is put
+    back after. A SIGINT this process already handles is left alone. Only
+    SIGINT: no test sends SIGQUIT, the other signal such a job ignores."""
+    with sigint_unignored():
+        yield
+
+
 #: The real `_seat.claude_for`, captured before any test patches it.
 REAL_CLAUDE_FOR = _seat.claude_for
 
@@ -460,6 +518,10 @@ REAL_CLAUDE_FOR = _seat.claude_for
 def _claude_up(session, ps=None, me=None, live=None):
     """The conftest pin: a claude is running for every session (our pid)."""
     return os.getpid()
+
+
+#: The real `_seat.claude_headless`, captured before any test patches it.
+REAL_CLAUDE_HEADLESS = _seat.claude_headless
 
 
 #: How a tool's child gets the conftest's own function seams (SM-926,
@@ -472,6 +534,7 @@ tool_call.CARRIED_FNS[_no_send] = ("returns", NO_SEND_ID, "SESSIONMAIL_SENDMAIL 
 # The macOS-names seam (SM-941) takes an ENV, so it is no constant: the child
 # imports the same function by reference (SM-964), from tests/fakes.py.
 tool_call.CARRIED_FNS[fake_scutil_only] = ("ref", "fakes:fake_scutil_only", None)
+tool_call.CARRIED_FNS[claude_interactive] = ("ref", "fakes:claude_interactive", None)
 
 
 @pytest.fixture
@@ -557,6 +620,42 @@ def pytest_collection_modifyitems(config, items):
     if drop:
         config.hook.pytest_deselected(items=drop)
         items[:] = keep
+
+
+# ── tests/fixtures is data, never collected (SM-1063) ───────────────────────
+#
+# `tests/fixtures/` holds golden vectors, and one script beside them that
+# mints them (`sig_v2/make_vectors.py`). Nothing under it is a test. A
+# directory walk never collects that script: its name does not match
+# `python_files`. But a file NAMED on the command line is collected
+# whatever its name, and importing it writes `__pycache__/` into the
+# vector folder (a gate that built its test list with `git grep` did that).
+#
+# `collect_ignore`, `collect_ignore_glob`, `norecursedirs`, `--ignore` and a
+# `pytest_ignore_collect` hook were each measured on pytest 9.1.1: none of
+# them stops a path named on the command line. This wrapper does. It runs
+# after every plugin's `pytest_collect_file` (python, doctest, any other)
+# and swaps whatever they built for one empty node. A node is built without
+# importing anything; this one never imports, so no bytecode is written.
+# The path is still "found", so a list that names it beside real tests
+# runs the real tests, as it did before.
+
+FIXTURES = Path(__file__).resolve().parent / "fixtures"
+
+
+class FixtureData(pytest.File):
+    """A file under `tests/fixtures/`: collected as nothing, never imported."""
+
+    def collect(self):
+        return []
+
+
+@pytest.hookimpl(wrapper=True)
+def pytest_collect_file(file_path, parent):
+    nodes = yield
+    if nodes and Path(file_path).resolve().is_relative_to(FIXTURES):
+        return [FixtureData.from_parent(parent, path=file_path)]
+    return nodes
 
 
 # ── the shell rail on BOTH bashes (SM-963) ──────────────────────────────────

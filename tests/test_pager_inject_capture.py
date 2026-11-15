@@ -1,6 +1,6 @@
 """SM-518 do-004: full-content capture beside the size rows.
 
-openspec/changes/pager-inject-log, "Full content is captured only when
+OpenSpec change pager-inject-log, "Full content is captured only when
 switched on" (RULED: Q3/Q4/Q8, the seq names, the modes). The switch is
 `capture`, layered host -> seat -> session through `_layer.read`, with `SESSIONMAIL_CAPTURE` winning both ways;
 off by default. One file per injection, `capture/<seq>.txt`, holding the

@@ -1,6 +1,6 @@
 """The mail tool's HOST settings file - `$HOME/.sessionkit/mail/settings/mail.json`.
 
-openspec/changes/pager-settings-file (PROPOSED): ONE file decides whether
+OpenSpec change pager-settings-file (PROPOSED): ONE file decides whether
 the plugin's pager hooks speak, and enabling them is ONE setting,
 `"hooks": true`. Beside it, each mail hook has its own switch
 (`SWITCH_KEYS`: `ride_along`, `stop_nag`, `mail_guard`, `birth`), on when
@@ -116,6 +116,16 @@ LOG_DIR = ROOT / PACKAGE / "log"
 
 #: How user text shows LOG_DIR.
 SHOWN_LOG_DIR = f"~/{LOG_DIR.as_posix()}/"
+
+#: The package's SERVICES folder, `$HOME/<SERVICES_DIR>`, beside DIR (package
+#: first) and never inside it, so no settings reader sees it: one JSON file
+#: per launchd job sessionmail installs, in the kit's service-file schema,
+#: for `sessionkit service` to find (`_service_file`). The ONE definition.
+#: Never under SESSIONMAIL_HOME: a declaration is not state.
+SERVICES_DIR = ROOT / PACKAGE / "services"
+
+#: How user text shows SERVICES_DIR.
+SHOWN_SERVICES_DIR = f"~/{SERVICES_DIR.as_posix()}/"
 
 #: The log dir's mode when this tool creates it: a seat log can name
 #: addresses and mail subjects.
@@ -386,6 +396,11 @@ def seat_keys_dir(env: Mapping[str, str] | None = None) -> Path:
 def log_dir(env: Mapping[str, str] | None = None) -> Path:
     """`$HOME/.sessionkit/mail/log`: where sessionmail's logs go."""
     return _home(env) / LOG_DIR
+
+
+def services_dir(env: Mapping[str, str] | None = None) -> Path:
+    """`$HOME/.sessionkit/mail/services`: where the service files go."""
+    return _home(env) / SERVICES_DIR
 
 
 def old_log_dir(env: Mapping[str, str] | None = None) -> Path:
@@ -1038,7 +1053,7 @@ def frozen(env: Mapping[str, str] | None = None) -> FrozenWatch:
 
 # ── the keys, and the ONE reader every key is read by ──────────────────────
 #
-# openspec/changes/infra-settings D2-D4. Each key names its variable in the
+# OpenSpec change infra-settings D2-D4. Each key names its variable in the
 # schema's `x-env`. `setting(key, env)` is the one reader: the variable when
 # it is set and not empty, else the value merged from the TEMPLATE and HOST
 # layers, else the key's default. The seat and session layers are never read
@@ -1246,7 +1261,10 @@ def carrier(env: Mapping[str, str] | None = None) -> Carrier:
     layers, else the drop. A value that is not a carrier (`carrier_why`) is
     REFUSED, never a fallback: a typo on a postfix host would otherwise
     stop mail across machines without a word. A host file that cannot be
-    read, with no variable set, is refused too. Never raises."""
+    read, with no variable set, is refused too. So is a FILED MTA while
+    the home is split (`_operator.home_split`): the file is the account's,
+    and only the variable may send a moved HOME through its MTA. Never
+    raises."""
     try:
         got = setting(CARRIER_KEY, env)
     except Exception as exc:  # noqa: BLE001 - never raises: an unknown failure is a refusal
@@ -1267,6 +1285,18 @@ def carrier(env: Mapping[str, str] | None = None) -> Carrier:
         return Carrier("refused", None, got.source, said)
     if got.value == CARRIER_DROP:
         return Carrier("drop", None, got.source)
+    if got.source != VARIABLE:
+        # A FILED MTA is the account's (the file is read under the account's
+        # home). A process whose $HOME is elsewhere sends through it only
+        # when the variable names it: a set variable is a deliberate act.
+        from . import _operator      # here, not at import: _operator imports this module
+        split = _operator.home_split(env)
+        if split is not None:
+            home, account = split
+            return Carrier("refused", None, got.source, (
+                f'"{CARRIER_KEY}": {json.dumps(got.value)} is the account\'s MTA, filed under '
+                f"its home {account}, and $HOME is {home}: a split home sends through it only "
+                f"when ${CARRIER_VAR} names it (set it, or {CARRIER_VAR}={CARRIER_DROP})"))
     return Carrier("mta", str(got.value), got.source)
 
 
@@ -1654,6 +1684,7 @@ REFUSED_COPIED = "copied"        # ... and the new one is real too
 REFUSED_UNCHECKED = "unchecked"  # either folder could not be stat'd
 REFUSED_FAULT = "fault"          # the file (or the old file) could not be read, judged or written
 REFUSED_READBACK = "readback"    # written, and the read-back disagrees: a race or a bug
+REFUSED_SPLIT = "split"          # $HOME is not the account's home, and the file is the account's
 
 #: How user text shows OLD_RELATIVE.
 SHOWN_OLD = f"~/{OLD_RELATIVE.as_posix()}"
@@ -1802,7 +1833,9 @@ def set_switch(key: str, on: bool, env: Mapping[str, str] | None = None) -> Hook
     file's sake; every refusal is a `HooksResult` with `refused` set, and
     the verb's own write never happened unless `wrote` is True.
 
-    0. Root, or sudo: refused (Q8), nothing written.
+    0. Root, or sudo: refused (Q8), nothing written. A split home
+       (`_operator.home_split`) is said once; when the file it would write
+       is in the account's live mail tree (a symlink there), refused.
     1. Stranded, or copied, or either folder could not be checked:
        refused, nothing written (`install`'s checks, in its order).
     2. Judged BEFORE anything is written: a file that is there and cannot
@@ -1829,6 +1862,13 @@ def set_switch(key: str, on: bool, env: Mapping[str, str] | None = None) -> Hook
     root = _as_root(env)
     if root:
         return HooksResult(on, p, refused=REFUSED_ROOT, why=root, key=key)
+    from . import _operator          # here, not at import: _operator imports this module
+    _operator.say_split(env)         # once in this process, on stderr
+    split = _operator.split_write_refusal(p, env, fix=(
+        "a split home never writes the account's settings. Run it with HOME at the account's "
+        "home, or point $HOME's settings folder at a folder of its own"))
+    if split:
+        return HooksResult(on, p, refused=REFUSED_SPLIT, why=split, key=key)
     try:
         is_stranded = stranded(env)
     except OSError as err:

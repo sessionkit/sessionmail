@@ -2,7 +2,7 @@
 
 Ruling (b): sessionmail keeps exactly three commands,
 and SM-590's seat-init and seat-agent ship as `message seat init` and `message seat
-agent`. The rest is the design (SM-715 design.md §1-§6, openspec/changes/message-seat):
+agent`. The rest is the design (SM-715 design.md §1-§6, OpenSpec change message-seat):
 the noun is HIDDEN (Q-F), `agent` EXECs the packaged bash with SIGPIPE
 and SIGXFSZ restored, a broken install exits 2, and `--template` prints the template.
 
